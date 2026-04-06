@@ -8,4 +8,4 @@ venv/
 review/*.md
 claude.md
 
-plan/*.md
+plan/*.mdreview/
