@@ -1,0 +1,38 @@
+from enum import Enum
+
+
+class SkinType(str, Enum):
+    DRY = "DRY"
+    OILY = "OILY"
+    COMBINATION = "COMBINATION"
+    SENSITIVE = "SENSITIVE"
+    NORMAL = "NORMAL"
+
+
+class Concern(str, Enum):
+    ACNE = "ACNE"
+    DRYNESS = "DRYNESS"
+    OILINESS = "OILINESS"
+    WRINKLE = "WRINKLE"
+    BRIGHTENING = "BRIGHTENING"
+    PORE = "PORE"
+    REDNESS = "REDNESS"
+    DARKSPOT = "DARKSPOT"
+
+
+class Effect(str, Enum):
+    MOISTURIZING = "MOISTURIZING"
+    SEBUM_CONTROL = "SEBUM_CONTROL"
+    ANTI_AGING = "ANTI_AGING"
+    WHITENING = "WHITENING"
+    SOOTHING = "SOOTHING"
+    PORE_CARE = "PORE_CARE"
+    ACNE_CARE = "ACNE_CARE"
+
+
+class Constraint(str, Enum):
+    FRAGRANCE_FREE = "FRAGRANCE_FREE"
+    ALCOHOL_FREE = "ALCOHOL_FREE"
+    VEGAN = "VEGAN"
+    HYPOALLERGENIC = "HYPOALLERGENIC"
+    EWG_GREEN = "EWG_GREEN"
