@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379"
 
+    openai_api_key: str = ""
     llm_timeout_seconds: int = 5
 
     class Config:
