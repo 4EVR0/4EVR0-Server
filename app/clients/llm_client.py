@@ -28,7 +28,7 @@ async def call_llm(message: str) -> UserProfile:
     )
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=settings.openai_model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": message},
