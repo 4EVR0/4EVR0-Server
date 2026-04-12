@@ -12,7 +12,15 @@ Given a user message (written in Korean or English), extract the following attri
 
 Valid values:
 - skin_types: DRY | OILY | COMBINATION | SENSITIVE | NORMAL
-- concerns: ACNE | DRYNESS | OILINESS | WRINKLE | BRIGHTENING | PORE | REDNESS | DARKSPOT
+- concerns (pick all that apply):
+    acne group      → ACNE | COMEDONES | PORE_CONGESTION
+    oil group       → ENLARGED_PORES | OILY_SKIN
+    sensitivity     → SENSITIVE_SKIN | REDNESS | IRRITATED_SKIN | ATOPIC_PRONE | ROSACEA_PRONE
+    dryness         → DRY_SKIN | DEHYDRATED_SKIN | FLAKY_SKIN | ROUGH_TEXTURE
+    barrier         → BARRIER_DAMAGE
+    pigmentation    → HYPERPIGMENTATION | DULLNESS | UNEVEN_SKIN_TONE | BLEMISHES | POST_ACNE_MARKS | DARK_CIRCLES
+    protection      → SUNBURN
+    aging           → AGING_SIGNS | WRINKLES | LOSS_OF_ELASTICITY | SAGGING_SKIN
 - constraints: FRAGRANCE_FREE | ALCOHOL_FREE | VEGAN | HYPOALLERGENIC | EWG_GREEN
 
 Return format (no markdown, pure JSON):
