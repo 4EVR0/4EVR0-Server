@@ -7,6 +7,20 @@ from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
 from app.services.taxonomy_normalization_service import infer_effects
 
+
+def make_llm_client() -> openai.AsyncOpenAI:
+    """LLM_PROVIDER 설정에 따라 OpenAI 또는 vLLM 클라이언트를 반환."""
+    if settings.llm_provider == "vllm":
+        return openai.AsyncOpenAI(
+            api_key="not-needed",
+            base_url=settings.llm_base_url,
+            timeout=float(settings.llm_timeout_seconds),
+        )
+    return openai.AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=float(settings.llm_timeout_seconds),
+    )
+
 _SYSTEM_PROMPT = """You are a skincare profile extractor.
 Given a user message (written in Korean or English), extract the following attributes and return JSON only.
 
