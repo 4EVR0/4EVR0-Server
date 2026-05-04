@@ -1,0 +1,132 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1777883726072,
+  "projectRoot": "/home/jaewon/jaewon/4EVR0-Server",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 2,
+      "lastAccessed": 1777883726069,
+      "keyFiles": [
+        "__init__.py",
+        "main.py"
+      ]
+    },
+    "review": {
+      "path": "review",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1777883726071,
+      "keyFiles": [
+        "2026-04-12.md"
+      ]
+    },
+    "app/api": {
+      "path": "app/api",
+      "purpose": "API routes",
+      "fileCount": 5,
+      "lastAccessed": 1777883726071,
+      "keyFiles": [
+        "__init__.py",
+        "health.py",
+        "profile.py"
+      ]
+    },
+    "app/schemas": {
+      "path": "app/schemas",
+      "purpose": "Schema definitions",
+      "fileCount": 4,
+      "lastAccessed": 1777883726072,
+      "keyFiles": [
+        "__init__.py",
+        "common.py",
+        "profile.py"
+      ]
+    },
+    "app/services": {
+      "path": "app/services",
+      "purpose": "Business logic services",
+      "fileCount": 5,
+      "lastAccessed": 1777883726072,
+      "keyFiles": [
+        "__init__.py",
+        "conversation_service.py",
+        "recommendation_service.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "app/main.py",
+      "accessCount": 2,
+      "lastAccessed": 1777884085933,
+      "type": "file"
+    },
+    {
+      "path": "app/static/index.html",
+      "accessCount": 1,
+      "lastAccessed": 1777884079309,
+      "type": "file"
+    },
+    {
+      "path": "Dockerfile",
+      "accessCount": 1,
+      "lastAccessed": 1777884129483,
+      "type": "file"
+    },
+    {
+      "path": "docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1777884129924,
+      "type": "file"
+    },
+    {
+      "path": "requirements.txt",
+      "accessCount": 1,
+      "lastAccessed": 1777884142338,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
