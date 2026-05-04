@@ -1,0 +1,92 @@
+<h2>프론트엔드 레이아웃 선택</h2>
+<p class="subtitle">API 흐름: 세션 생성 → 피부 고민 입력 → 성분 추천 카드 + LLM 응답</p>
+
+<div class="cards">
+  <div class="card" data-choice="chat" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0f172a;padding:16px;border-radius:8px;font-family:monospace">
+      <div style="background:#1e293b;border-radius:6px;padding:10px;margin-bottom:8px">
+        <div style="color:#94a3b8;font-size:11px;margin-bottom:6px">4EVR0 · 화장품 성분 추천</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="background:#334155;border-radius:4px;padding:6px 10px;font-size:11px;color:#e2e8f0;align-self:flex-end">건조한 피부에 좋은 성분 알려줘</div>
+          <div style="background:#1d4ed8;border-radius:4px;padding:6px 10px;font-size:11px;color:#e2e8f0;align-self:flex-start;max-width:80%">히알루론산(Confirmed)과 세라마이드를 추천합니다. PMID:12345 논문 기반으로...</div>
+          <div style="background:#1d4ed8;border-radius:4px;padding:6px 10px;font-size:11px;color:#e2e8f0;align-self:flex-start">
+            <div style="color:#93c5fd;font-size:10px;margin-bottom:4px">추천 성분</div>
+            <div>🧪 Hyaluronic Acid · Confirmed</div>
+            <div>🧪 Ceramide · Promising</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <div style="flex:1;background:#334155;border-radius:4px;padding:6px;font-size:10px;color:#64748b">메시지 입력...</div>
+          <div style="background:#1d4ed8;border-radius:4px;padding:6px 10px;font-size:10px;color:white">전송</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — 채팅 인터페이스</h3>
+      <p>ChatGPT 스타일. 대화 흐름이 자연스럽고 멀티턴에 최적. 성분 카드는 채팅 버블 안에 인라인으로 표시.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="split" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0f172a;padding:16px;border-radius:8px;font-family:monospace">
+      <div style="display:flex;gap:8px;background:#1e293b;border-radius:6px;padding:10px">
+        <div style="width:45%;font-size:10px;color:#e2e8f0">
+          <div style="color:#94a3b8;margin-bottom:6px;font-size:10px">피부 프로필</div>
+          <div style="background:#334155;border-radius:3px;padding:4px;margin-bottom:4px">피부 타입: 건성</div>
+          <div style="background:#334155;border-radius:3px;padding:4px;margin-bottom:4px">고민: 건조함, 민감성</div>
+          <div style="background:#1d4ed8;border-radius:3px;padding:4px;text-align:center;margin-top:8px;font-size:10px">추천 요청</div>
+          <div style="color:#94a3b8;margin-top:8px;margin-bottom:4px;font-size:10px">대화</div>
+          <div style="background:#334155;border-radius:3px;padding:4px;font-size:9px;color:#94a3b8">건조한 피부에...</div>
+        </div>
+        <div style="flex:1;font-size:10px;color:#e2e8f0">
+          <div style="color:#94a3b8;margin-bottom:6px;font-size:10px">추천 성분</div>
+          <div style="background:#1e3a5f;border-radius:3px;padding:6px;margin-bottom:4px">
+            <div style="color:#60a5fa;font-size:10px">Hyaluronic Acid</div>
+            <div style="color:#94a3b8;font-size:9px">보습 효과 · Confirmed</div>
+            <div style="color:#64748b;font-size:8px">PMID:12345</div>
+          </div>
+          <div style="background:#1e3a5f;border-radius:3px;padding:6px">
+            <div style="color:#60a5fa;font-size:10px">Ceramide</div>
+            <div style="color:#94a3b8;font-size:9px">장벽 강화 · Promising</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — 분할 패널</h3>
+      <p>왼쪽: 피부 프로필 입력 + 대화. 오른쪽: 성분 카드 패널. 성분 데이터를 한눈에 비교하기 좋음.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="dashboard" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0f172a;padding:16px;border-radius:8px;font-family:monospace">
+      <div style="background:#1e293b;border-radius:6px;padding:10px">
+        <div style="color:#94a3b8;font-size:10px;margin-bottom:8px">4EVR0 · 성분 추천</div>
+        <div style="background:#334155;border-radius:4px;padding:6px;margin-bottom:8px;font-size:10px;color:#64748b">
+          "건조한 피부에 추천 성분 알려줘" &nbsp;→&nbsp; <span style="color:#1d4ed8">분석</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+          <div style="background:#1e3a5f;border-radius:4px;padding:6px;font-size:9px;color:#e2e8f0">
+            <div style="color:#60a5fa">Hyaluronic Acid</div>
+            <div style="color:#22c55e;font-size:8px">✓ Confirmed</div>
+          </div>
+          <div style="background:#1e3a5f;border-radius:4px;padding:6px;font-size:9px;color:#e2e8f0">
+            <div style="color:#60a5fa">Ceramide</div>
+            <div style="color:#f59e0b;font-size:8px">◎ Promising</div>
+          </div>
+          <div style="background:#1e3a5f;border-radius:4px;padding:6px;font-size:9px;color:#e2e8f0">
+            <div style="color:#60a5fa">Niacinamide</div>
+            <div style="color:#22c55e;font-size:8px">✓ Confirmed</div>
+          </div>
+        </div>
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:4px;padding:6px;font-size:9px;color:#94a3b8">
+          히알루론산은 수분 보유량을 증가시켜 건조한 피부에...
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — 대시보드</h3>
+      <p>상단 검색창 → 성분 카드 그리드 → 하단 LLM 요약. 탐색·비교 중심. 대화보다 결과 중심 UX.</p>
+    </div>
+  </div>
+</div>
