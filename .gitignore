@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 
+.omc/
+.superpowers/
+
 review/*.md
 claude.md
 
