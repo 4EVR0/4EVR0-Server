@@ -1,8 +1,7 @@
 import logging
 import uuid
 
-import openai
-
+from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
 from app.clients.neo4j_client import query_ingredients_by_effects
 from app.core.config import settings
@@ -47,7 +46,7 @@ async def recommend(session_id: str, message: str) -> RecommendResponse:
         turn_id=turn_id,
         ingredients=ingredients,
         response_text=response_text,
-        model_used=settings.openai_model,
+        model_used=settings.gpu_model,
     )
 
 
@@ -62,12 +61,9 @@ async def _build_llm_response(message: str, ingredients: list[IngredientResult])
         user_content = f"사용자 메시지: {message}\n\n(현재 성분 데이터베이스에 해당 고민에 맞는 성분 데이터가 없습니다. 일반적인 추천을 제공해 주세요.)"
 
     try:
-        client = openai.AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            timeout=float(settings.llm_timeout_seconds),
-        )
+        client = get_async_llm_client()
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.gpu_model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
