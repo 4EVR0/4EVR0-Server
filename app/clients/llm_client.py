@@ -1,7 +1,6 @@
 import json
 
-import openai
-
+from app.clients.llm_factory import get_async_llm_client
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
@@ -29,14 +28,10 @@ Return format (no markdown, pure JSON):
 
 
 async def call_llm(message: str) -> UserProfile:
-    """OpenAI API를 호출해 UserProfile을 반환한다. 오류 시 예외를 그대로 raise한다."""
-    client = openai.AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        timeout=float(settings.llm_timeout_seconds),
-    )
+    client = get_async_llm_client()
 
     response = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.gpu_model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": message},

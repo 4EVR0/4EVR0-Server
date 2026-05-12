@@ -14,9 +14,9 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379"
 
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
-    llm_timeout_seconds: int = 5
+    gpu_server_url: str = "http://127.0.0.1:18000"
+    gpu_model: str = "Qwen/Qwen3-8B-FP8"
+    gpu_timeout_seconds: int = 60
 
     class Config:
         env_file = ".env"
