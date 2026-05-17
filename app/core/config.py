@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    gpu_auth_token: str = "EMPTY"
 
     class Config:
         env_file = ".env"
