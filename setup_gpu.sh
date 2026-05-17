@@ -2,46 +2,100 @@
 
 # GPU 서버 초기 세팅 스크립트
 # Vast.ai 새 인스턴스 빌린 후 실행
+# 사용법: ./setup_gpu.sh <TAILSCALE_AUTH_KEY>
 
 set -e
 
-echo "===== [1/3] vLLM 메트릭 설정 ====="
+TAILSCALE_AUTH_KEY="${1:-}"
 
-cat > /etc/vllm-args.conf << 'EOF'
---compilation-config '{"cudagraph_capture_sizes": [1,2,3,4,5,6,7,8]}'
-EOF
+if [ -z "$TAILSCALE_AUTH_KEY" ]; then
+    echo "오류: Tailscale Auth Key가 필요합니다."
+    echo "사용법: $0 <TAILSCALE_AUTH_KEY>"
+    echo "키 발급: https://login.tailscale.com/admin/settings/keys"
+    exit 1
+fi
 
-# supervisor 설정에 VLLM_ARGS 적용
+echo "===== [1/5] vLLM 메트릭 설정 ====="
+
 VLLM_CONF="/etc/supervisor/conf.d/vllm.conf"
 
-# 기존 environment 줄 교체
 sed -i 's|^environment=PROC_NAME.*|environment=PROC_NAME="%(program_name)s",VLLM_ARGS="--kv-cache-dtype turboquant_k8v4 --max-num-seqs 8 --enable-auto-tool-choice --tool-call-parser hermes --download-dir /workspace/models --host 0.0.0.0 --port 18000 --enable-metrics"|' $VLLM_CONF
 
 echo "vLLM 설정 완료"
 
-echo "===== [2/3] Caddy /metrics 노출 설정 ====="
+echo "===== [2/5] Caddy /metrics 노출 설정 ====="
 
 CADDYFILE="/etc/Caddyfile"
 
-# /metrics 경로가 이미 있으면 추가 안 함
 if grep -q "path /metrics" $CADDYFILE; then
     echo "/metrics 이미 설정됨, 스킵"
 else
-    # path /portal-resolver 다음 줄에 /metrics 추가
     sed -i '/path \/portal-resolver/a\\t\t\tpath /metrics' $CADDYFILE
     echo "Caddy /metrics 노출 설정 완료"
 fi
 
-echo "===== [3/3] 서비스 재시작 ====="
+echo "===== [3/5] Tailscale 설치 ====="
+
+if command -v tailscale &>/dev/null; then
+    echo "Tailscale 이미 설치됨, 스킵"
+else
+    curl -fsSL https://tailscale.com/install.sh | sh
+    echo "Tailscale 설치 완료"
+fi
+
+echo "===== [4/5] Tailscale supervisor 등록 ====="
+
+mkdir -p /var/run/tailscale /var/lib/tailscale
+
+cat > /etc/supervisor/conf.d/tailscale.conf << 'EOF'
+[program:tailscale]
+command=tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock
+directory=/var/lib/tailscale
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/portal/tailscale.log
+stdout_logfile=/var/log/portal/tailscale.log
+priority=10
+EOF
+
+echo "supervisor 등록 완료"
+
+echo "===== [5/5] 서비스 재시작 및 Tailscale 인증 ====="
 
 caddy reload --config /etc/Caddyfile
+
+# 기존 tailscaled 프로세스 정리
+pkill -f tailscaled 2>/dev/null || true
+sleep 1
+
 supervisorctl reread
+supervisorctl update
 supervisorctl restart vllm
+
+# tailscaled가 뜰 때까지 대기
+echo "tailscaled 시작 대기 중..."
+for i in $(seq 1 10); do
+    if tailscale status &>/dev/null 2>&1; then
+        break
+    fi
+    sleep 2
+done
+
+# Tailscale 네트워크 인증
+tailscale up --auth-key="$TAILSCALE_AUTH_KEY" --hostname="vast-gpu-server"
+echo "Tailscale 인증 완료"
+
+# Tailscale IP 확인
+TAILSCALE_IP=$(tailscale ip -4)
 
 echo ""
 echo "===== 완료 ====="
-echo "vLLM 로딩 중... 아래 명령어로 완료 확인:"
+echo ""
+echo "vLLM 로딩 확인:"
 echo "  tail -f /var/log/portal/vllm.log"
 echo ""
-echo "완료 후 메트릭 확인:"
-echo "  curl http://localhost:18000/metrics"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Tailscale IP: ${TAILSCALE_IP}"
+echo "  .env 업데이트 필요:"
+echo "  GPU_SERVER_URL=http://${TAILSCALE_IP}:8000"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
