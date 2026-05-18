@@ -37,6 +37,7 @@
 | 앱 서버 (Mac) | `macbook-pro-3.tailb70036.ts.net` | `100.114.44.9` | FastAPI |
 | GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net` | `100.100.75.44` | vLLM (Qwen3-8B-FP8) |
 | Neo4j 서버 (EC2) | `ip-172-31-56-102.tailb70036.ts.net` | `100.72.139.8` | Graph DB |
+| 모니터링 서버 (EC2) | `monitoring-server.tailb70036.ts.net` | - | Prometheus + Grafana |
 
 > IP 대신 **MagicDNS 호스트명**을 사용하면 인스턴스를 교체해도 `.env` 수정이 불필요.
 
@@ -50,27 +51,27 @@
 ### 2. Neo4j 서버 Tailscale 등록
 Neo4j 서버는 AWS EC2에서 상시 실행 중. 최초 1회만 Tailscale 등록 필요.
 
-### 3. 모니터링 스택 세팅 (EC2 t3.small)
+### 3. 모니터링 서버 세팅 (EC2 t3.small)
+
+`setup_monitoring.sh` 스크립트가 Tailscale 등록 + Prometheus/Grafana 세팅을 한 번에 처리함.
+
 ```bash
-sudo apt update && sudo apt install -y docker.io docker-compose
-mkdir ~/monitoring && cd ~/monitoring
+# EC2에 SSH 접속 후 레포 클론
+git clone https://github.com/4EVR0/4EVR0-Server.git
+bash 4EVR0-Server/setup_monitoring.sh <TAILSCALE_AUTH_KEY> monitoring-server
+```
 
-cat > docker-compose.yml << 'EOF'
-version: '3'
-services:
-  prometheus:
-    image: prom/prometheus
-    ports: ["9090:9090"]
-    volumes: [./prometheus.yml:/etc/prometheus/prometheus.yml]
-    restart: always
-  grafana:
-    image: grafana/grafana
-    ports: ["3000:3000"]
-    environment: [GF_SECURITY_ADMIN_PASSWORD=admin]
-    restart: always
-EOF
+또는 git clone 없이 바로 실행:
+```bash
+curl -fsSL https://raw.githubusercontent.com/4EVR0/4EVR0-Server/main/setup_monitoring.sh | bash -s <TAILSCALE_AUTH_KEY> monitoring-server
+```
 
-docker-compose up -d
+> Auth Key 발급: [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys) → Generate auth key (Reusable 체크)
+
+스크립트 완료 후 Tailscale 등록 확인:
+```bash
+tailscale status
+# monitoring-server.tailb70036.ts.net 이 목록에 보이면 완료
 ```
 
 ---
@@ -120,9 +121,14 @@ tail -f /var/log/portal/vllm.log
 ```
 같은 hostname으로 재등록했다면 `.env` 수정 불필요.
 
-### Step 6. Prometheus 타겟 업데이트 (IP 바뀐 경우에만)
+### Step 6. Prometheus 타겟 업데이트
+MagicDNS 사용 시 GPU 서버를 같은 hostname(`vast-gpu-server-2`)으로 재등록했다면 **이 단계는 불필요**.
+
+수동으로 타겟을 변경해야 하는 경우에만 실행:
 ```bash
-./update_prometheus.sh <GPU_TAILSCALE_IP> 18000
+# 모니터링 서버에서 실행
+./update_prometheus.sh                              # MagicDNS 기본값으로 리셋
+./update_prometheus.sh <GPU_TAILSCALE_IP> 18000     # 특정 IP로 지정
 ```
 
 ---
@@ -183,8 +189,8 @@ API 문서: `http://localhost:8000/docs`
 
 | 서비스 | URL |
 |--------|-----|
-| Grafana | `http://<EC2_IP>:3000` (admin/admin) |
-| Prometheus | `http://<EC2_IP>:9090` |
+| Grafana | `http://monitoring-server.tailb70036.ts.net:3000` (admin/admin) |
+| Prometheus | `http://monitoring-server.tailb70036.ts.net:9090` |
 | vLLM API | `http://vast-gpu-server-2.tailb70036.ts.net:18000/v1` |
 | vLLM 메트릭 | `http://vast-gpu-server-2.tailb70036.ts.net:18000/metrics` |
 
