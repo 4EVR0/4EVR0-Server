@@ -58,13 +58,10 @@ class Effect(str, Enum):
     # acne_oil group
     SEBUM_REGULATION = "SEBUM_REGULATION"
     ANTIMICROBIAL = "ANTIMICROBIAL"
-    PORE_MINIMIZING = "PORE_MINIMIZING"
     # acne_exfoliation group
     KERATOLYTIC = "KERATOLYTIC"
     COMEDOLYTIC = "COMEDOLYTIC"
-    EXFOLIATING = "EXFOLIATING"
     # repair group
-    SMOOTHING = "SMOOTHING"
     WOUND_HEALING = "WOUND_HEALING"
     # pigmentation group
     DEPIGMENTING = "DEPIGMENTING"
@@ -74,7 +71,6 @@ class Effect(str, Enum):
     PHOTOPROTECTIVE = "PHOTOPROTECTIVE"
     # aging group
     ANTI_AGING = "ANTI_AGING"
-    FIRMING = "FIRMING"
 
 
 class Constraint(str, Enum):

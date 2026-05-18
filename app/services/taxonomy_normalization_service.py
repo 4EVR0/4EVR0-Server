@@ -175,7 +175,10 @@ _CONSTRAINT_SYNONYMS: dict[str, Constraint] = {
     "ewg그린": Constraint.EWG_GREEN,
 }
 
-# concern → 자동 추론 effect 매핑 (concern_map.md §3 기준)
+# concern → 자동 추론 effect 매핑
+# DB Effect 코드 기준 (15개): ANTI_INFLAMMATORY, SOOTHING, BARRIER_REPAIR, HYDRATING,
+# MOISTURE_RETENTION, SEBUM_REGULATION, ANTIMICROBIAL, KERATOLYTIC, COMEDOLYTIC,
+# WOUND_HEALING, DEPIGMENTING, BRIGHTENING, ANTIOXIDANT, PHOTOPROTECTIVE, ANTI_AGING
 CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     Concern.ACNE: [
         Effect.ANTI_INFLAMMATORY,
@@ -187,16 +190,16 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     Concern.COMEDONES: [
         Effect.KERATOLYTIC,
         Effect.COMEDOLYTIC,
-        Effect.PORE_MINIMIZING,
+        Effect.SEBUM_REGULATION,
     ],
     Concern.PORE_CONGESTION: [
         Effect.KERATOLYTIC,
         Effect.COMEDOLYTIC,
-        Effect.PORE_MINIMIZING,
+        Effect.SEBUM_REGULATION,
     ],
     Concern.ENLARGED_PORES: [
         Effect.SEBUM_REGULATION,
-        Effect.PORE_MINIMIZING,
+        Effect.KERATOLYTIC,
     ],
     Concern.OILY_SKIN: [
         Effect.SEBUM_REGULATION,
@@ -238,12 +241,12 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     ],
     Concern.FLAKY_SKIN: [
         Effect.HYDRATING,
-        Effect.EXFOLIATING,
-        Effect.SMOOTHING,
+        Effect.KERATOLYTIC,
+        Effect.MOISTURE_RETENTION,
     ],
     Concern.ROUGH_TEXTURE: [
-        Effect.EXFOLIATING,
-        Effect.SMOOTHING,
+        Effect.KERATOLYTIC,
+        Effect.MOISTURE_RETENTION,
     ],
     Concern.BARRIER_DAMAGE: [
         Effect.BARRIER_REPAIR,
@@ -258,7 +261,7 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     ],
     Concern.DULLNESS: [
         Effect.BRIGHTENING,
-        Effect.EXFOLIATING,
+        Effect.KERATOLYTIC,
         Effect.ANTIOXIDANT,
     ],
     Concern.UNEVEN_SKIN_TONE: [
@@ -287,18 +290,17 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     Concern.AGING_SIGNS: [
         Effect.ANTI_AGING,
         Effect.ANTIOXIDANT,
-        Effect.FIRMING,
     ],
     Concern.WRINKLES: [
         Effect.ANTI_AGING,
-        Effect.FIRMING,
+        Effect.HYDRATING,
     ],
     Concern.LOSS_OF_ELASTICITY: [
-        Effect.FIRMING,
         Effect.ANTI_AGING,
+        Effect.MOISTURE_RETENTION,
     ],
     Concern.SAGGING_SKIN: [
-        Effect.FIRMING,
+        Effect.ANTI_AGING,
     ],
 }
 
