@@ -8,7 +8,6 @@ venv/
 .omc/
 .superpowers/
 
-review/*.md
 claude.md
 
-plan/*.mdreview/
+plan/*.md
