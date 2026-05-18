@@ -38,6 +38,7 @@ async def call_llm(message: str) -> UserProfile:
         ],
         temperature=0,
         response_format={"type": "json_object"},
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
 
     raw = response.choices[0].message.content or "{}"
