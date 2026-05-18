@@ -15,11 +15,10 @@ provide a helpful recommendation in Korean.
 
 Format your response as:
 1. Brief analysis of the user's skin concerns (1-2 sentences)
-2. Top recommended ingredients with brief explanations
-3. Recommended products (brand and product name)
-4. Usage tips if relevant
+2. Recommended products with reasons why they suit the user's concerns (brand and product name)
+3. Usage tips if relevant
 
-Keep the response concise and practical."""
+Do NOT list raw ingredient names at the end. Keep the response concise and practical."""
 
 
 async def recommend(session_id: str, message: str) -> RecommendResponse:

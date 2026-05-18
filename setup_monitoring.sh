@@ -34,9 +34,9 @@ fi
 
 echo "===== [2/4] Tailscale 등록 (hostname: ${TAILSCALE_HOSTNAME}) ====="
 
-tailscale up --auth-key="$TAILSCALE_AUTH_KEY" --hostname="$TAILSCALE_HOSTNAME"
+sudo tailscale up --auth-key="$TAILSCALE_AUTH_KEY" --hostname="$TAILSCALE_HOSTNAME"
 
-TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "확인 필요")
+TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || sudo tailscale ip -4 2>/dev/null || echo "확인 필요")
 MAGICDNS_HOST="${TAILSCALE_HOSTNAME}.${TAILNET}"
 
 echo "Tailscale 등록 완료"
