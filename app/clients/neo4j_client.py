@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from neo4j import AsyncGraphDatabase
@@ -6,6 +7,13 @@ from neo4j import AsyncGraphDatabase
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _log_query(func_name: str, params: dict, duration_ms: float, result_count: int) -> None:
+    logger.info(
+        "event=graph_query func=%s params=%s duration_ms=%.2f result_count=%d",
+        func_name, params, duration_ms, result_count,
+    )
 
 _driver = None
 
@@ -44,9 +52,12 @@ async def query_products_by_ingredients(ingredient_names: list[str]) -> list[dic
         matched_ingredients AS matched_ingredients
     """
     try:
+        start = time.perf_counter()
         async with driver.session() as session:
             result = await session.run(query, ingredient_names=ingredient_names)
-            return [dict(record) async for record in result]
+            rows = [dict(record) async for record in result]
+        _log_query("query_products_by_ingredients", {"count": len(ingredient_names)}, (time.perf_counter() - start) * 1000, len(rows))
+        return rows
     except Exception as exc:
         logger.warning("Neo4j product query failed: %s", exc)
         return []
@@ -76,9 +87,12 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     LIMIT 20
     """
     try:
+        start = time.perf_counter()
         async with driver.session() as session:
             result = await session.run(query, effects=effects)
-            return [dict(record) async for record in result]
+            rows = [dict(record) async for record in result]
+        _log_query("query_ingredients_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(rows))
+        return rows
     except Exception as exc:
         logger.warning("Neo4j query failed: %s", exc)
         return []
