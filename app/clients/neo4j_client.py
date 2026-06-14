@@ -96,3 +96,48 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     except Exception as exc:
         logger.warning("Neo4j query failed: %s", exc)
         return []
+
+
+async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
+    """Effect → Ingredient → Product 추천 경로를 반환한다."""
+    if not effects:
+        return []
+
+    driver = _get_driver()
+    query = """
+    UNWIND $effects AS effect_code
+    MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect {effect_code: effect_code})
+    RETURN
+        e.effect_code    AS effect_code,
+        e.effect_name_en AS effect_name,
+        i.inci_name      AS ingredient,
+        i.kor_name       AS ingredient_kor,
+        r.evidence_type  AS evidence_type,
+        r.graph_score    AS graph_score,
+        prod.product_name AS product_name,
+        prod.brand        AS brand
+    ORDER BY r.graph_score DESC
+    LIMIT 10
+    """
+    try:
+        start = time.perf_counter()
+        async with driver.session() as session:
+            result = await session.run(query, effects=effects)
+            rows = [dict(record) async for record in result]
+        paths = [
+            {
+                "path": [
+                    {"node": row["effect_code"],   "label": "Effect",     "name": row["effect_name"]},
+                    {"rel":  "AFFECTS", "evidence_type": row["evidence_type"], "graph_score": row["graph_score"]},
+                    {"node": row["ingredient"],    "label": "Ingredient", "kor_name": row["ingredient_kor"]},
+                    {"rel":  "CONTAINS"},
+                    {"node": row["product_name"],  "label": "Product",    "brand": row["brand"]},
+                ]
+            }
+            for row in rows
+        ]
+        _log_query("query_path_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(paths))
+        return paths
+    except Exception as exc:
+        logger.warning("Neo4j path query failed: %s", exc)
+        return []

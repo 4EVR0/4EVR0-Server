@@ -30,3 +30,23 @@ class RecommendResponse(BaseModel):
     products: list[ProductResult]
     response_text: str
     model_used: str
+
+
+class PathStep(BaseModel):
+    node: str | None = None
+    label: str | None = None
+    name: str | None = None
+    kor_name: str | None = None
+    brand: str | None = None
+    rel: str | None = None
+    evidence_type: str | None = None
+    graph_score: float | None = None
+
+
+class PathResult(BaseModel):
+    path: list[PathStep]
+
+
+class PathResponse(BaseModel):
+    effects: list[str]
+    paths: list[PathResult]
