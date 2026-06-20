@@ -21,6 +21,6 @@ scrape_configs:
         action: keep
     pipeline_stages:
       - regex:
-          expression: '.*event=graph_query.*duration_ms=(?P<duration_ms>[0-9.]+).*'
+          expression: '.*event=graph_query func=(?P<func>\S+).*'
       - labels:
-          duration_ms:
+          func:

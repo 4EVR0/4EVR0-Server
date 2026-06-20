@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def _log_query(func_name: str, params: dict, duration_ms: float, result_count: int) -> None:
+    # params는 dict repr이라 logfmt 파싱이 깨질 수 있어 항상 줄 끝에 둔다.
     logger.info(
-        "event=graph_query func=%s params=%s duration_ms=%.2f result_count=%d",
-        func_name, params, duration_ms, result_count,
+        "event=graph_query func=%s duration_ms=%.2f result_count=%d params=%s",
+        func_name, duration_ms, result_count, params,
     )
 
 _driver = None
