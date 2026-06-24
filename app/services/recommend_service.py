@@ -4,6 +4,7 @@ import uuid
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
+from app.core import metrics
 from app.core.config import settings
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 
@@ -24,47 +25,60 @@ Do NOT list raw ingredient names at the end. Keep the response concise and pract
 async def recommend(session_id: str, message: str) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
 
-    profile, _ = await extract_with_fallback(message)
+    try:
+        # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
+        with metrics.track_stage("extract"):
+            profile, extraction_method = await extract_with_fallback(message)
+        metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
-    effect_names = [e.value for e in profile.effects]
-    raw_ingredients = await query_ingredients_by_effects(effect_names)
+        # 2) Neo4j 조회 (효능→성분, 성분→제품)
+        with metrics.track_stage("neo4j"):
+            effect_names = [e.value for e in profile.effects]
+            raw_ingredients = await query_ingredients_by_effects(effect_names)
 
-    ingredients = [
-        IngredientResult(
-            name=row["name"],
-            claim=row.get("claim"),
-            eligibility_tier=row.get("eligibility_tier"),
-            paper_ref=row.get("paper_ref"),
+            ingredients = [
+                IngredientResult(
+                    name=row["name"],
+                    claim=row.get("claim"),
+                    eligibility_tier=row.get("eligibility_tier"),
+                    paper_ref=row.get("paper_ref"),
+                )
+                for row in raw_ingredients
+            ]
+
+            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선)
+            top_ingredient_names = [i.name for i in ingredients[:10]]
+            raw_products = await query_products_by_ingredients(top_ingredient_names)
+        metrics.recommend_ingredients_found.observe(len(ingredients))
+
+        products = [
+            ProductResult(
+                product_id=row["product_id"],
+                product_name=row["product_name"],
+                brand=row["brand"],
+                category=row["category"],
+                matched_count=row["matched_count"],
+                matched_ingredients=row["matched_ingredients"],
+            )
+            for row in raw_products
+        ]
+
+        # 3) LLM 응답 생성
+        with metrics.track_stage("llm_response"):
+            response_text = await _build_llm_response(message, ingredients, products)
+
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        return RecommendResponse(
+            session_id=session_id,
+            turn_id=turn_id,
+            ingredients=ingredients,
+            products=products,
+            response_text=response_text,
+            model_used=settings.gpu_model,
         )
-        for row in raw_ingredients
-    ]
-
-    # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선)
-    top_ingredient_names = [i.name for i in ingredients[:10]]
-    raw_products = await query_products_by_ingredients(top_ingredient_names)
-
-    products = [
-        ProductResult(
-            product_id=row["product_id"],
-            product_name=row["product_name"],
-            brand=row["brand"],
-            category=row["category"],
-            matched_count=row["matched_count"],
-            matched_ingredients=row["matched_ingredients"],
-        )
-        for row in raw_products
-    ]
-
-    response_text = await _build_llm_response(message, ingredients, products)
-
-    return RecommendResponse(
-        session_id=session_id,
-        turn_id=turn_id,
-        ingredients=ingredients,
-        products=products,
-        response_text=response_text,
-        model_used=settings.gpu_model,
-    )
+    except Exception:
+        metrics.recommend_requests_total.labels(status="error").inc()
+        raise
 
 
 async def _build_llm_response(
