@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
 
+    # 로그 출력 형식: "json"(Loki 수집용, 기본) | "plain"(로컬 가독성)
+    log_format: str = "json"
+    log_level: str = "INFO"
+
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "password"
