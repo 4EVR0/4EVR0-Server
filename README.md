@@ -16,7 +16,7 @@
    ▼                          ▼
 [GPU 서버]              [Neo4j 서버]
  Vast.ai                  AWS EC2
- vLLM (Qwen3-8B-FP8)     Graph DB
+ vLLM (Qwen3.5-9B)     Graph DB
    │                          │
    │  ① 피부 프로필 추출       │  ② 성분 조회 (effects → ingredients)
    │  (자연어 → JSON)          │  ③ 제품 조회 (ingredients → products)
@@ -35,7 +35,7 @@
 | 서버 | MagicDNS 호스트명 | Tailscale IP | 역할 |
 |------|-----------------|-------------|------|
 | 앱 서버 (Mac) | `macbook-pro-3.tailb70036.ts.net` | `100.114.44.9` | FastAPI |
-| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net` | `100.100.75.44` | vLLM (Qwen3-8B-FP8) |
+| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net` | `100.100.75.44` | vLLM (Qwen3.5-9B) |
 | Neo4j 서버 (EC2) | `ip-172-31-56-102.tailb70036.ts.net` | `100.72.139.8` | Graph DB |
 | 모니터링 서버 (EC2) | `monitoring-server.tailb70036.ts.net` | - | Prometheus + Grafana |
 
@@ -53,83 +53,27 @@ Neo4j 서버는 AWS EC2에서 상시 실행 중. 최초 1회만 Tailscale 등록
 
 ### 3. 모니터링 서버 세팅 (EC2 t3.small)
 
-`setup_monitoring.sh` 스크립트가 Tailscale 등록 + Prometheus/Grafana 세팅을 한 번에 처리함.
-
-```bash
-# EC2에 SSH 접속 후 레포 클론
-git clone https://github.com/4EVR0/4EVR0-Server.git
-bash 4EVR0-Server/setup_monitoring.sh <TAILSCALE_AUTH_KEY> monitoring-server
-```
-
-또는 git clone 없이 바로 실행:
-```bash
-curl -fsSL https://raw.githubusercontent.com/4EVR0/4EVR0-Server/main/setup_monitoring.sh | bash -s <TAILSCALE_AUTH_KEY> monitoring-server
-```
-
-> Auth Key 발급: [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys) → Generate auth key (Reusable 체크)
-
-스크립트 완료 후 Tailscale 등록 확인:
-```bash
-tailscale status
-# monitoring-server.tailb70036.ts.net 이 목록에 보이면 완료
-```
+모니터링 스택(Prometheus/Grafana/Loki) 프로비저닝과 대시보드는 별도 repo로 분리됨.
+→ **[`Monitoring_Infra`](https://github.com/4EVR0/Monitoring_Infra)** 참고.
 
 ---
 
 ## GPU 서버 새로 빌릴 때 (destroy → 재생성)
 
-### Step 1. 이전 인스턴스 tailnet에서 삭제
-[login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines) 에서 이전 GPU 서버 장치 삭제.
-(같은 hostname으로 재등록할 때 충돌 방지)
+GPU(vLLM) 추론 서버 프로비저닝은 별도 repo로 분리됨.
+→ **[`GPU_Serving_Infra`](https://github.com/4EVR0/GPU_Serving_Infra)** 의 `setup_gpu.sh` + README 참고.
 
-### Step 2. Vast.ai 인스턴스 생성 후 SSH 접속
+요약:
 ```bash
-ssh -p <포트> root@<IP>
+# Vast.ai vLLM 인스턴스 SSH 접속 후 (전체 clone 불필요, 스크립트만)
+curl -fsSL https://raw.githubusercontent.com/4EVR0/GPU_Serving_Infra/main/setup_gpu.sh \
+  | bash -s <TAILSCALE_AUTH_KEY> vast-gpu-server-2
+tail -f /var/log/portal/vllm.log   # "Application startup complete" 대기
 ```
+> 같은 호스트명(`vast-gpu-server-2`)으로 등록하면 MagicDNS 주소가 유지되어 아래 `.env` 수정 불필요.
+> ⚠️ `.env`의 `GPU_MODEL` 이 vLLM 실제 서빙 모델과 **일치**해야 함(불일치 시 404 → 규칙기반 폴백).
 
-### Step 3. 레포 클론 후 세팅 스크립트 실행
-```bash
-cd /workspace
-git clone https://github.com/4EVR0/4EVR0-Server.git
-# hostname을 고정하면 MagicDNS 주소가 유지됨
-bash 4EVR0-Server/setup_gpu.sh <TAILSCALE_AUTH_KEY> vast-gpu-server-2
-```
-
-> Auth Key 발급: [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys) → Generate auth key (Reusable 체크)
-
-또는 git clone 없이 바로 실행:
-```bash
-curl -fsSL https://raw.githubusercontent.com/4EVR0/4EVR0-Server/main/setup_gpu.sh | bash -s <TAILSCALE_AUTH_KEY> vast-gpu-server-2
-```
-
-### Step 4. vLLM 로딩 확인
-```bash
-tail -f /var/log/portal/vllm.log
-# "Application startup complete" 뜨면 완료 (모델 최초 다운로드 시 수분 소요)
-```
-
-### Step 5. .env 확인 (MagicDNS 사용 시 수정 불필요)
-스크립트 완료 메시지에서 MagicDNS 호스트명 확인:
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Tailscale IP:      100.x.x.x
-  MagicDNS 호스트명: vast-gpu-server-2.tailb70036.ts.net
-
-  .env에 MagicDNS 호스트명 사용 (IP 변경 불필요):
-  GPU_SERVER_URL=http://vast-gpu-server-2.tailb70036.ts.net:18000
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-같은 hostname으로 재등록했다면 `.env` 수정 불필요.
-
-### Step 6. Prometheus 타겟 업데이트
-MagicDNS 사용 시 GPU 서버를 같은 hostname(`vast-gpu-server-2`)으로 재등록했다면 **이 단계는 불필요**.
-
-수동으로 타겟을 변경해야 하는 경우에만 실행:
-```bash
-# 모니터링 서버에서 실행
-./update_prometheus.sh                              # MagicDNS 기본값으로 리셋
-./update_prometheus.sh <GPU_TAILSCALE_IP> 18000     # 특정 IP로 지정
-```
+Prometheus 스크레이프 타겟 갱신이 필요하면 `Monitoring_Infra`의 `prometheus.yml` 에서 처리.
 
 ---
 
@@ -149,7 +93,7 @@ NEO4J_PASSWORD=<비밀번호>
 REDIS_URL=redis://redis:6379
 
 GPU_SERVER_URL=http://vast-gpu-server-2.tailb70036.ts.net:18000
-GPU_MODEL=Qwen/Qwen3-8B-FP8
+GPU_MODEL=Qwen/Qwen3.5-9B
 GPU_TIMEOUT_SECONDS=60
 ```
 
