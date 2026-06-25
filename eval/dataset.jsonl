@@ -13,7 +13,7 @@
 {"id": 13, "label": "다크서클", "message": "다크서클이 심하고 눈 밑이 칙칙해 보여요.", "skin_types": [], "concerns": ["DARK_CIRCLES", "DULLNESS"], "constraints": []}
 {"id": 14, "label": "각질+거친결", "message": "각질이 자주 일어나고 피부결이 전체적으로 거칠어요.", "skin_types": [], "concerns": ["FLAKY_SKIN", "ROUGH_TEXTURE"], "constraints": []}
 {"id": 15, "label": "지성+모공", "message": "지성이라 오후만 되면 얼굴이 번들거리고 모공이 넓어 보여요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN", "ENLARGED_PORES"], "constraints": []}
-{"id": 16, "label": "홍조+로사케아", "message": "홍조가 심해서 얼굴이 자주 붉어요. 로사케아 같다는 얘기도 들었어요.", "skin_types": ["SENSITIVE"], "concerns": ["REDNESS", "ROSACEA_PRONE"], "constraints": []}
-{"id": 17, "label": "알코올자극+제약", "message": "알코올 들어간 제품 쓰면 따가워요. 알코올프리에 EWG 안전한 성분 위주로 보고 있어요.", "skin_types": ["SENSITIVE"], "concerns": ["IRRITATED_SKIN"], "constraints": ["ALCOHOL_FREE", "EWG_GREEN"]}
+{"id": 16, "label": "홍조+로사케아", "message": "홍조가 심해서 얼굴이 자주 붉어요. 로사케아 같다는 얘기도 들었어요.", "skin_types": [], "concerns": ["REDNESS", "ROSACEA_PRONE"], "constraints": []}
+{"id": 17, "label": "알코올자극+제약", "message": "알코올 들어간 제품 쓰면 따가워요. 알코올프리에 EWG 안전한 성분 위주로 보고 있어요.", "skin_types": [], "concerns": ["IRRITATED_SKIN"], "constraints": ["ALCOHOL_FREE", "EWG_GREEN"]}
 {"id": 18, "label": "고민없음(네거티브)", "message": "그냥 무난한 데일리 보습 제품 하나 추천해줘요.", "skin_types": [], "concerns": [], "constraints": []}
 {"id": 19, "label": "다중고민(스트레스)", "message": "건조하고 칙칙한데 주름도 있고 모공도 넓어요. 종합적으로 케어하고 싶어요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "DULLNESS", "WRINKLES", "ENLARGED_PORES"], "constraints": []}
