@@ -15,8 +15,8 @@
 
 import argparse
 import asyncio
-import hashlib
 import json
+import os
 import statistics
 import sys
 import time
@@ -26,18 +26,20 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from app.clients.llm_client import _SYSTEM_PROMPT  # noqa: E402  추출 프롬프트 재사용
 from app.clients.llm_factory import get_async_llm_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint, SkinType  # noqa: E402
+from app.prompts import load_prompt, prompt_version  # noqa: E402
 
 _VALID = {
     "skin_types": {e.value for e in SkinType},
     "concerns": {e.value for e in Concern},
     "constraints": {e.value for e in Constraint},
 }
-# 프롬프트가 바뀌면 버전 해시도 바뀜 → 실험 비교 시 "어떤 프롬프트였나" 추적
-PROMPT_VERSION = hashlib.sha1(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:8]
+# 추출 프롬프트 + 버전(내용 해시). 프롬프트가 바뀌면 버전이 바뀜 → 실험 비교 시 추적.
+_PROMPT_NAME = "profile_extraction"
+_SYSTEM_PROMPT = load_prompt(_PROMPT_NAME)
+PROMPT_VERSION = prompt_version(_PROMPT_NAME)
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -166,6 +168,7 @@ async def run(dataset_path: Path, limit: int | None) -> dict:
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": settings.gpu_model,
+        "prompt_name": _PROMPT_NAME,
         "prompt_version": PROMPT_VERSION,
         "temperature": 0,
         "dataset": str(dataset_path),
@@ -195,11 +198,39 @@ def print_summary(report: dict) -> None:
     print("═" * 60)
 
 
+def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
+    """run/metrics 를 MLflow 에 기록. mlflow 미설치 시 조용히 건너뜀.
+
+    추적 백엔드: 기본 sqlite(eval/mlflow.db). MLFLOW_TRACKING_URI 로 덮어쓸 수 있음.
+    조회: mlflow ui --backend-store-uri sqlite:///eval/mlflow.db
+    """
+    try:
+        import mlflow
+    except ImportError:
+        print("  (mlflow 미설치 — MLflow 기록 건너뜀. `pip install mlflow`)")
+        return
+
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_REPO_ROOT / 'eval' / 'mlflow.db'}")
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("4evr0-profile-extraction")
+
+    run, metrics = report["run"], report["metrics"]
+    with mlflow.start_run(run_name=run["timestamp"]):
+        mlflow.log_params({
+            k: run[k] for k in ("model", "prompt_name", "prompt_version", "temperature", "dataset", "n_cases", "n_scored")
+        })
+        mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
+        if artifact_path:
+            mlflow.log_artifact(str(artifact_path))
+    print(f"  MLflow 기록 완료: experiment='4evr0-profile-extraction' @ {tracking_uri}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default=None, help="결과 JSON 경로 (기본: eval/results/<timestamp>.json)")
+    ap.add_argument("--no-mlflow", action="store_true", help="MLflow 기록 비활성화")
     args = ap.parse_args()
 
     report = asyncio.run(run(Path(args.dataset), args.limit))
@@ -209,6 +240,9 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n결과 저장: {out}")
+
+    if not args.no_mlflow:
+        log_to_mlflow(report, out)
 
 
 if __name__ == "__main__":

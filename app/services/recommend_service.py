@@ -6,20 +6,13 @@ from app.clients.llm_fallback import extract_with_fallback
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
 from app.core import metrics
 from app.core.config import settings
+from app.prompts import load_prompt
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are a cosmetic recommendation assistant.
-Given a user's skin concern message, relevant ingredients with scientific evidence, and matching products,
-provide a helpful recommendation in Korean.
-
-Format your response as:
-1. Brief analysis of the user's skin concerns (1-2 sentences)
-2. Recommended products with reasons why they suit the user's concerns (brand and product name)
-3. Usage tips if relevant
-
-Do NOT list raw ingredient names at the end. Keep the response concise and practical."""
+# 프롬프트는 app/prompts/recommend_response.txt 로 분리(버전 관리)
+_SYSTEM_PROMPT = load_prompt("recommend_response")
 
 
 async def recommend(session_id: str, message: str) -> RecommendResponse:

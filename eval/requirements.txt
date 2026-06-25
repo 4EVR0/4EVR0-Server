@@ -1,0 +1,3 @@
+# 오프라인 평가 전용 의존성 (앱 런타임에는 불필요 — 별도 분리).
+#   pip install -r eval/requirements.txt
+mlflow==3.14.0

@@ -11,3 +11,12 @@ venv/
 claude.md
 
 plan/*.md
+
+# eval 런 산출물 (실험 추적 DB/아티팩트/결과)
+eval/mlflow.db
+eval/results/
+mlruns/
+mlartifacts/
+
+# 앱 런타임 로그 (Alloy가 tail하는 파일)
+logs/

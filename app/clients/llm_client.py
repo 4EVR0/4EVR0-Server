@@ -4,27 +4,12 @@ from app.clients.llm_factory import get_async_llm_client
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
+from app.prompts import load_prompt
 from app.services.taxonomy_normalization_service import infer_effects
 
-_SYSTEM_PROMPT = """You are a skincare profile extractor.
-Given a user message (written in Korean or English), extract the following attributes and return JSON only.
-
-Valid values:
-- skin_types: DRY | OILY | COMBINATION | SENSITIVE | NORMAL
-- concerns (pick all that apply):
-    acne group      → ACNE | COMEDONES | PORE_CONGESTION
-    oil group       → ENLARGED_PORES | OILY_SKIN
-    sensitivity     → SENSITIVE_SKIN | REDNESS | IRRITATED_SKIN | ATOPIC_PRONE | ROSACEA_PRONE
-    dryness         → DRY_SKIN | DEHYDRATED_SKIN | FLAKY_SKIN | ROUGH_TEXTURE
-    barrier         → BARRIER_DAMAGE
-    pigmentation    → HYPERPIGMENTATION | DULLNESS | UNEVEN_SKIN_TONE | BLEMISHES | POST_ACNE_MARKS | DARK_CIRCLES
-    protection      → SUNBURN
-    aging           → AGING_SIGNS | WRINKLES | LOSS_OF_ELASTICITY | SAGGING_SKIN
-- constraints: FRAGRANCE_FREE | ALCOHOL_FREE | VEGAN | HYPOALLERGENIC | EWG_GREEN
-
-Return format (no markdown, pure JSON):
-{"skin_types": [], "concerns": [], "constraints": []}
-"""
+# 프롬프트는 app/prompts/profile_extraction.txt 로 분리(버전 관리)
+PROMPT_NAME = "profile_extraction"
+_SYSTEM_PROMPT = load_prompt(PROMPT_NAME)
 
 
 async def call_llm(message: str) -> UserProfile:
