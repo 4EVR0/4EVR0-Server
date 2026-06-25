@@ -1,0 +1,19 @@
+{"id": 1, "label": "건성+주름", "message": "피부가 너무 건조하고 당겨요. 요즘 눈가 주름도 신경 쓰이고 탄력이 없어진 것 같아요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "WRINKLES", "LOSS_OF_ELASTICITY"], "constraints": []}
+{"id": 2, "label": "지성+여드름", "message": "피지가 많고 모공이 막혀서 블랙헤드랑 여드름이 자꾸 나요. 피지 조절이 되는 제품 추천해주세요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN", "PORE_CONGESTION", "COMEDONES", "ACNE"], "constraints": []}
+{"id": 3, "label": "민감성+붉음증", "message": "피부가 민감해서 조금만 자극받아도 빨개지고 따가워요. 향료 없는 제품만 써야 해요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN", "REDNESS", "IRRITATED_SKIN"], "constraints": ["FRAGRANCE_FREE"]}
+{"id": 4, "label": "색소침착+칙칙함", "message": "햇볕에 타서 기미가 생겼고 전체적으로 피부가 칙칙하고 어두워졌어요. 비건 제품 선호해요.", "skin_types": [], "concerns": ["SUNBURN", "HYPERPIGMENTATION", "DULLNESS"], "constraints": ["VEGAN"]}
+{"id": 5, "label": "복합성+장벽손상", "message": "T존은 기름지고 볼은 건조한 복합성인데, 최근 피부 장벽이 많이 손상된 것 같아요. 각질도 일어나요.", "skin_types": ["COMBINATION"], "concerns": ["BARRIER_DAMAGE", "FLAKY_SKIN"], "constraints": []}
+{"id": 6, "label": "모공", "message": "모공이 넓어서 고민이에요. 화장이 잘 안 먹어요.", "skin_types": [], "concerns": ["ENLARGED_PORES"], "constraints": []}
+{"id": 7, "label": "좁쌀여드름+모공막힘", "message": "이마랑 볼에 좁쌀 여드름이 올라오고 모공도 막힌 느낌이에요.", "skin_types": [], "concerns": ["COMEDONES", "ACNE", "PORE_CONGESTION"], "constraints": []}
+{"id": 8, "label": "수부지+속건조", "message": "속건조가 심해서 겉은 번들거리는데 속은 당겨요. 수분이 많이 부족한 것 같아요.", "skin_types": ["COMBINATION"], "concerns": ["DEHYDRATED_SKIN", "OILY_SKIN"], "constraints": []}
+{"id": 9, "label": "여드름흉터", "message": "예전에 났던 여드름 흉터랑 붉은 자국이 계속 남아서 안 없어져요.", "skin_types": [], "concerns": ["POST_ACNE_MARKS"], "constraints": []}
+{"id": 10, "label": "아토피+저자극", "message": "아토피가 있어서 피부가 자주 건조하고 가렵고 빨개져요. 저자극 제품 찾아요.", "skin_types": ["DRY"], "concerns": ["ATOPIC_PRONE", "DRY_SKIN", "REDNESS"], "constraints": ["HYPOALLERGENIC"]}
+{"id": 11, "label": "노화+탄력", "message": "나이 들면서 주름이 깊어지고 피부가 처지는 것 같아요. 탄력 개선이 필요해요.", "skin_types": [], "concerns": ["WRINKLES", "SAGGING_SKIN", "LOSS_OF_ELASTICITY"], "constraints": []}
+{"id": 12, "label": "톤불균일+잡티", "message": "피부톤이 고르지 않고 잡티가 많아요. 미백에 신경 쓰고 있어요.", "skin_types": [], "concerns": ["UNEVEN_SKIN_TONE", "BLEMISHES"], "constraints": []}
+{"id": 13, "label": "다크서클", "message": "다크서클이 심하고 눈 밑이 칙칙해 보여요.", "skin_types": [], "concerns": ["DARK_CIRCLES", "DULLNESS"], "constraints": []}
+{"id": 14, "label": "각질+거친결", "message": "각질이 자주 일어나고 피부결이 전체적으로 거칠어요.", "skin_types": [], "concerns": ["FLAKY_SKIN", "ROUGH_TEXTURE"], "constraints": []}
+{"id": 15, "label": "지성+모공", "message": "지성이라 오후만 되면 얼굴이 번들거리고 모공이 넓어 보여요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN", "ENLARGED_PORES"], "constraints": []}
+{"id": 16, "label": "홍조+로사케아", "message": "홍조가 심해서 얼굴이 자주 붉어요. 로사케아 같다는 얘기도 들었어요.", "skin_types": ["SENSITIVE"], "concerns": ["REDNESS", "ROSACEA_PRONE"], "constraints": []}
+{"id": 17, "label": "알코올자극+제약", "message": "알코올 들어간 제품 쓰면 따가워요. 알코올프리에 EWG 안전한 성분 위주로 보고 있어요.", "skin_types": ["SENSITIVE"], "concerns": ["IRRITATED_SKIN"], "constraints": ["ALCOHOL_FREE", "EWG_GREEN"]}
+{"id": 18, "label": "고민없음(네거티브)", "message": "그냥 무난한 데일리 보습 제품 하나 추천해줘요.", "skin_types": [], "concerns": [], "constraints": []}
+{"id": 19, "label": "다중고민(스트레스)", "message": "건조하고 칙칙한데 주름도 있고 모공도 넓어요. 종합적으로 케어하고 싶어요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "DULLNESS", "WRINKLES", "ENLARGED_PORES"], "constraints": []}
