@@ -34,7 +34,7 @@ from app.prompts import load_prompt, prompt_version  # noqa: E402
 from app.services.recommend_service import recommend  # noqa: E402
 
 JUDGE_PROMPT_NAME = "response_judge"
-GEN_PROMPT_NAME = "recommend_response"  # 평가 대상이 되는 응답 생성 프롬프트
+DEFAULT_GEN_PROMPT = "recommend_response"  # 평가 대상 응답 생성 프롬프트(--gen-prompt로 교체)
 DIMS = ["concern_fit", "grounding", "conciseness", "korean_quality", "format_adherence"]
 
 
@@ -76,7 +76,7 @@ async def judge_response(client, message, ingredients, products, response, judge
     return scores
 
 
-async def run(dataset_path: Path, limit: int | None) -> dict:
+async def run(dataset_path: Path, limit: int | None, gen_prompt: str = DEFAULT_GEN_PROMPT) -> dict:
     cases = load_dataset(dataset_path)
     if limit:
         cases = cases[:limit]
@@ -92,7 +92,7 @@ async def run(dataset_path: Path, limit: int | None) -> dict:
         row = {"id": case["id"], "label": case.get("label", ""), "message": case["message"]}
         try:
             t0 = time.perf_counter()
-            rec = await recommend("eval-response", case["message"])  # 실제 파이프라인 (Neo4j+vLLM)
+            rec = await recommend("eval-response", case["message"], gen_prompt)  # 실제 파이프라인 (Neo4j+vLLM)
             gen_latencies.append(time.perf_counter() - t0)
             scores = await judge_response(
                 client, case["message"], rec.ingredients, rec.products, rec.response_text, judge_prompt
@@ -131,8 +131,8 @@ async def run(dataset_path: Path, limit: int | None) -> dict:
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": settings.gpu_model,
-        "gen_prompt": GEN_PROMPT_NAME,
-        "gen_prompt_version": prompt_version(GEN_PROMPT_NAME),
+        "gen_prompt": gen_prompt,
+        "gen_prompt_version": prompt_version(gen_prompt),
         "judge_prompt_version": prompt_version(JUDGE_PROMPT_NAME),
         "dataset": str(dataset_path),
         "n_cases": len(cases),
@@ -182,11 +182,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--gen-prompt", default=DEFAULT_GEN_PROMPT,
+                    help="응답 생성 프롬프트 이름 (예: recommend_response.v2)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
 
-    report = asyncio.run(run(Path(args.dataset), args.limit))
+    report = asyncio.run(run(Path(args.dataset), args.limit, args.gen_prompt))
     print_summary(report)
 
     out = Path(args.out) if args.out else _REPO_ROOT / "eval" / "results" / f"resp-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"

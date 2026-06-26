@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = load_prompt("recommend_response")
 
 
-async def recommend(session_id: str, message: str) -> RecommendResponse:
+async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
+    # gen_prompt_name 지정 시 응답 프롬프트 교체(실험용). 미지정이면 프로덕션 기본.
+    system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
 
     try:
         # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
@@ -58,7 +60,7 @@ async def recommend(session_id: str, message: str) -> RecommendResponse:
 
         # 3) LLM 응답 생성
         with metrics.track_stage("llm_response"):
-            response_text = await _build_llm_response(message, ingredients, products)
+            response_text = await _build_llm_response(message, ingredients, products, system_prompt)
 
         metrics.recommend_requests_total.labels(status="ok").inc()
         return RecommendResponse(
@@ -78,6 +80,7 @@ async def _build_llm_response(
     message: str,
     ingredients: list[IngredientResult],
     products: list[ProductResult],
+    system_prompt: str = _SYSTEM_PROMPT,
 ) -> str:
     sections = [f"사용자 메시지: {message}"]
 
@@ -104,7 +107,7 @@ async def _build_llm_response(
         response = await client.chat.completions.create(
             model=settings.gpu_model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
             temperature=0.3,
