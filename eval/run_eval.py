@@ -36,10 +36,9 @@ _VALID = {
     "concerns": {e.value for e in Concern},
     "constraints": {e.value for e in Constraint},
 }
-# 추출 프롬프트 + 버전(내용 해시). 프롬프트가 바뀌면 버전이 바뀜 → 실험 비교 시 추적.
-_PROMPT_NAME = "profile_extraction"
-_SYSTEM_PROMPT = load_prompt(_PROMPT_NAME)
-PROMPT_VERSION = prompt_version(_PROMPT_NAME)
+# 추출 프롬프트 기본값. --prompt 로 교체 가능(예: profile_extraction.v2).
+# 프롬프트 내용이 바뀌면 prompt_version(해시)도 바뀜 → MLflow에서 실험 비교 시 추적.
+DEFAULT_PROMPT_NAME = "profile_extraction"
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -51,13 +50,13 @@ def load_dataset(path: Path) -> list[dict]:
     return cases
 
 
-async def extract(client, message: str):
+async def extract(client, message: str, system_prompt: str):
     """LLM 추출 1회. (raw_dict, usage, latency_s) 반환. 실패 시 예외 전파."""
     start = time.perf_counter()
     resp = await client.chat.completions.create(
         model=settings.gpu_model,
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": message},
         ],
         temperature=0,
@@ -95,11 +94,12 @@ def f1(tp: int, fp: int, fn: int) -> dict:
     return {"precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f, 4)}
 
 
-async def run(dataset_path: Path, limit: int | None) -> dict:
+async def run(dataset_path: Path, limit: int | None, prompt_name: str = DEFAULT_PROMPT_NAME) -> dict:
     cases = load_dataset(dataset_path)
     if limit:
         cases = cases[:limit]
     client = get_async_llm_client()
+    system_prompt = load_prompt(prompt_name)
 
     results = []
     agg = {f: [0, 0, 0] for f in ("skin_types", "concerns", "constraints")}  # tp,fp,fn
@@ -112,7 +112,7 @@ async def run(dataset_path: Path, limit: int | None) -> dict:
         gold = {f: case[f] for f in ("skin_types", "concerns", "constraints")}
         row = {"id": case["id"], "label": case.get("label", ""), "message": case["message"], "gold": gold}
         try:
-            raw, tokens, latency = await extract(client, case["message"])
+            raw, tokens, latency = await extract(client, case["message"], system_prompt)
         except Exception as exc:  # vLLM 다운/타임아웃/파싱 실패 = 운영상 폴백 상황
             errors += 1
             row["error"] = f"{type(exc).__name__}: {exc}"
@@ -168,8 +168,8 @@ async def run(dataset_path: Path, limit: int | None) -> dict:
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": settings.gpu_model,
-        "prompt_name": _PROMPT_NAME,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_name": prompt_name,
+        "prompt_version": prompt_version(prompt_name),
         "temperature": 0,
         "dataset": str(dataset_path),
         "n_cases": n,
@@ -229,11 +229,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--prompt", default=DEFAULT_PROMPT_NAME,
+                    help="추출 프롬프트 이름 (app/prompts/<name>.txt). 예: profile_extraction.v2")
     ap.add_argument("--out", default=None, help="결과 JSON 경로 (기본: eval/results/<timestamp>.json)")
     ap.add_argument("--no-mlflow", action="store_true", help="MLflow 기록 비활성화")
     args = ap.parse_args()
 
-    report = asyncio.run(run(Path(args.dataset), args.limit))
+    report = asyncio.run(run(Path(args.dataset), args.limit, args.prompt))
     print_summary(report)
 
     out = Path(args.out) if args.out else _REPO_ROOT / "eval" / "results" / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"

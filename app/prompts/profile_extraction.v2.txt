@@ -28,13 +28,8 @@ Extraction guidelines (read carefully — extract precisely):
      just because flaking/roughness is mentioned (those are FLAKY_SKIN / ROUGH_TEXTURE).
 4. For pigmentation, output only the specific terms mentioned; do not add
    DULLNESS or HYPERPIGMENTATION unless the message indicates dullness/darkening or spots.
-5. skin_types — extract when the message states OR directly describes the skin's nature:
-   - "건조하다 / 당긴다 / 건성" → DRY
-   - "피지가 많다 / 번들거린다 / 지성" → OILY
-   - "복합성 / 수부지 (oily T-zone with dry or tight cheeks)" → COMBINATION
-   - "민감성 / 예민하다" → SENSITIVE
-   Do NOT infer skin type from a disease or symptom alone — e.g., 아토피(atopic),
-   홍조(redness), 자극으로 따가움(stinging) by themselves do NOT imply SENSITIVE.
+5. skin_types: only when the message states or directly describes the skin type
+   (건성/지성/복합성/민감성). Do not infer skin type from a symptom or condition alone.
 
 Return format (no markdown, pure JSON):
 {"skin_types": [], "concerns": [], "constraints": []}
