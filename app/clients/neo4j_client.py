@@ -59,20 +59,30 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     driver = _get_driver()
     # 실제 스키마: (Ingredient)-[:AFFECTS {graph_score, evidence_type, paper_count}]->(Effect {effect_code})
     # evidence_type: "pubmed_evidence" (논문 근거) > "cosing_function" (성분 기능 근거)
+    # 성분당 1행으로 집계 후, "요청한 효능을 몇 개나 만족하는지(effect_match)"를 1순위로 랭킹.
+    # → 광범위 효능 하나만 타고 온 off-target 성분(예: ANTI_INFLAMMATORY만 맞는 RETINOL)이 밀려나고,
+    #   여러 효능을 동시에 만족하는 on-target 성분이 우대됨. score 합으로 score=0 노이즈가 가라앉음.
+    # display 필드(claim/근거/논문수)는 매칭 효능 중 graph_score 최고 엣지에서 가져온다.
     query = """
     UNWIND $effects AS effect_code
     MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect {effect_code: effect_code})
-    RETURN DISTINCT
-        i.inci_name        AS name,
-        i.kor_name         AS kor_name,
-        e.effect_name_en   AS claim,
-        r.evidence_type    AS eligibility_tier,
-        toString(r.paper_count) AS paper_ref,
-        r.graph_score      AS graph_score
-    ORDER BY
-        CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END,
-        r.graph_score DESC,
-        i.inci_name
+    WITH i,
+         count(DISTINCT e) AS effect_match,
+         sum(coalesce(r.graph_score, 0.0)) AS total_score,
+         max(CASE WHEN r.evidence_type = 'pubmed_evidence' THEN 1 ELSE 0 END) AS has_pubmed,
+         collect({score: coalesce(r.graph_score, 0.0), ev: r.evidence_type,
+                  effect: e.effect_name_en, papers: r.paper_count}) AS ms
+    WITH i, effect_match, total_score, has_pubmed,
+         reduce(best = null, m IN ms |
+             CASE WHEN best IS NULL OR m.score > best.score THEN m ELSE best END) AS best
+    RETURN
+        i.inci_name           AS name,
+        i.kor_name            AS kor_name,
+        best.effect           AS claim,
+        best.ev               AS eligibility_tier,
+        toString(best.papers) AS paper_ref,
+        total_score           AS graph_score
+    ORDER BY effect_match DESC, total_score DESC, has_pubmed DESC, i.inci_name
     LIMIT 20
     """
     try:
