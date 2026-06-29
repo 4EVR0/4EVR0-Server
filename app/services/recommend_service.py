@@ -6,8 +6,34 @@ from app.clients.llm_fallback import extract_with_fallback
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
 from app.core import metrics
 from app.core.config import settings
+from app.domain.enums import Concern
 from app.prompts import load_prompt
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
+
+# concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
+_LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
+_CONCERN_CATEGORY_MAP: dict[Concern, list[str]] = {
+    Concern.ACNE:            [c for c in _LEAVE_ON if c != "크림"] + ["필링스크럽"],
+    Concern.COMEDONES:       [c for c in _LEAVE_ON if c != "크림"],
+    Concern.PORE_CONGESTION: [c for c in _LEAVE_ON if c != "크림"],
+    Concern.ENLARGED_PORES:  [c for c in _LEAVE_ON if c != "크림"],
+    Concern.OILY_SKIN:       [c for c in _LEAVE_ON if c != "크림"],
+    Concern.FLAKY_SKIN:      _LEAVE_ON + ["페이스오일", "필링스크럽"],
+    Concern.ROUGH_TEXTURE:   _LEAVE_ON + ["필링스크럽"],
+    Concern.DRY_SKIN:        _LEAVE_ON + ["페이스오일"],
+    Concern.DEHYDRATED_SKIN: _LEAVE_ON + ["페이스오일"],
+    Concern.BARRIER_DAMAGE:  _LEAVE_ON + ["페이스오일"],
+}
+# 위에 없는 concern은 _LEAVE_ON을 기본값으로 사용
+
+
+def _appropriate_categories(concerns: list[Concern]) -> list[str]:
+    """복수 concern의 교집합 카테고리를 반환한다 (가장 제한적인 조건 적용)."""
+    if not concerns:
+        return _LEAVE_ON
+    sets = [set(_CONCERN_CATEGORY_MAP.get(c, _LEAVE_ON)) for c in concerns]
+    intersection = sets[0].intersection(*sets[1:])
+    return list(intersection) if intersection else _LEAVE_ON
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +67,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 for row in raw_ingredients
             ]
 
-            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선)
+            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
             top_ingredient_names = [i.name for i in ingredients[:10]]
-            raw_products = await query_products_by_ingredients(top_ingredient_names)
+            cats = _appropriate_categories(profile.concerns)
+            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
         metrics.recommend_ingredients_found.observe(len(ingredients))
 
         products = [

@@ -29,33 +29,53 @@ def _get_driver():
     return _driver
 
 
-async def query_products_by_ingredients(ingredient_names: list[str]) -> list[dict[str, Any]]:
-    """핵심 성분을 가장 많이 포함한 제품을 순서대로 반환한다."""
+async def query_products_by_ingredients(
+    ingredient_names: list[str],
+    appropriate_categories: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """핵심 성분을 가장 많이 포함한 제품을 순서대로 반환한다.
+
+    appropriate_categories: 허용할 카테고리 목록. 전달 시 해당 카테고리만 반환.
+    미전달 시 클렌징 계열(씻어내는 제품)만 기본 제외한다.
+    """
     if not ingredient_names:
         return []
 
     driver = _get_driver()
-    # 추천 성분을 많이 포함할수록 상위 노출, 동점 시 제품명 알파벳순
-    query = """
+
+    _CLEANSERS = ["클렌징폼", "클렌징오일", "클렌징밤", "클렌징젤", "클렌징워터", "클렌징밀크"]
+
+    if appropriate_categories is not None:
+        category_filter = "WHERE prod.category IN $appropriate_categories"
+        params: dict[str, Any] = {
+            "ingredient_names": ingredient_names,
+            "appropriate_categories": appropriate_categories,
+        }
+    else:
+        category_filter = "WHERE NOT prod.category IN $cleansers"
+        params = {"ingredient_names": ingredient_names, "cleansers": _CLEANSERS}
+
+    query = f"""
     UNWIND $ingredient_names AS ing_name
-    MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient {inci_name: ing_name})
+    MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient {{inci_name: ing_name}})
+    {category_filter}
     WITH prod,
          COUNT(DISTINCT i.inci_name) AS matched_count,
          COLLECT(DISTINCT i.inci_name) AS matched_ingredients
     ORDER BY matched_count DESC, prod.product_name
     LIMIT 5
     RETURN
-        prod.product_id   AS product_id,
-        prod.product_name AS product_name,
-        prod.brand        AS brand,
-        prod.category     AS category,
-        matched_count     AS matched_count,
+        prod.product_id     AS product_id,
+        prod.product_name   AS product_name,
+        prod.brand          AS brand,
+        prod.category       AS category,
+        matched_count       AS matched_count,
         matched_ingredients AS matched_ingredients
     """
     try:
         start = time.perf_counter()
         async with driver.session() as session:
-            result = await session.run(query, ingredient_names=ingredient_names)
+            result = await session.run(query, **params)
             rows = [dict(record) async for record in result]
         _log_query("query_products_by_ingredients", {"count": len(ingredient_names)}, (time.perf_counter() - start) * 1000, len(rows))
         return rows
