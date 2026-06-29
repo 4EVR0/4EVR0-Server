@@ -63,14 +63,19 @@ async def query_products_by_ingredients(
          COUNT(DISTINCT i.inci_name) AS matched_count,
          COLLECT(DISTINCT i.inci_name) AS matched_ingredients
     ORDER BY matched_count DESC, prod.product_name
-    LIMIT 5
+    WITH prod.product_name AS product_name,
+         head(collect(prod))          AS prod,
+         head(collect(matched_count)) AS matched_count,
+         head(collect(matched_ingredients)) AS matched_ingredients
     RETURN
         prod.product_id     AS product_id,
-        prod.product_name   AS product_name,
+        product_name        AS product_name,
         prod.brand          AS brand,
         prod.category       AS category,
         matched_count       AS matched_count,
         matched_ingredients AS matched_ingredients
+    ORDER BY matched_count DESC, product_name
+    LIMIT 5
     """
     try:
         start = time.perf_counter()
