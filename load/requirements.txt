@@ -1,0 +1,3 @@
+# 부하 테스트 전용 의존성 (앱 런타임과 분리)
+#   설치: pip install -r load/requirements.txt
+locust==2.32.4
