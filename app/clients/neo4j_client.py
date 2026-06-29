@@ -71,20 +71,29 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     driver = _get_driver()
     # 실제 스키마: (Ingredient)-[:AFFECTS {graph_score, evidence_type, paper_count}]->(Effect {effect_code})
     # evidence_type: "pubmed_evidence" (논문 근거) > "cosing_function" (성분 기능 근거)
+    # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT 20 = distinct 성분 20개 보장
     query = """
     UNWIND $effects AS effect_code
     MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect {effect_code: effect_code})
-    RETURN DISTINCT
-        i.inci_name        AS name,
-        i.kor_name         AS kor_name,
-        e.effect_name_en   AS claim,
-        r.evidence_type    AS eligibility_tier,
-        toString(r.paper_count) AS paper_ref,
-        r.graph_score      AS graph_score
-    ORDER BY
-        CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END,
-        r.graph_score DESC,
-        i.inci_name
+    WITH i, e, r,
+         CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
+    ORDER BY ev_rank, r.graph_score DESC
+    WITH i,
+         head(collect({
+             claim:            e.effect_name_en,
+             eligibility_tier: r.evidence_type,
+             paper_ref:        toString(r.paper_count),
+             graph_score:      r.graph_score,
+             ev_rank:          ev_rank
+         })) AS best
+    RETURN
+        i.inci_name           AS name,
+        i.kor_name            AS kor_name,
+        best.claim            AS claim,
+        best.eligibility_tier AS eligibility_tier,
+        best.paper_ref        AS paper_ref,
+        best.graph_score      AS graph_score
+    ORDER BY best.ev_rank, best.graph_score DESC, i.inci_name
     LIMIT 20
     """
     try:
