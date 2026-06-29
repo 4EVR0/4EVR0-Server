@@ -31,34 +31,25 @@ def _get_driver():
 
 async def query_products_by_ingredients(
     ingredient_names: list[str],
-    appropriate_categories: list[str] | None = None,
+    appropriate_categories: list[str],
 ) -> list[dict[str, Any]]:
     """핵심 성분을 가장 많이 포함한 제품을 순서대로 반환한다.
 
-    appropriate_categories: 허용할 카테고리 목록. 전달 시 해당 카테고리만 반환.
-    미전달 시 클렌징 계열(씻어내는 제품)만 기본 제외한다.
+    appropriate_categories: 허용할 카테고리 목록 (recommend_service에서 concern 기반으로 결정).
     """
     if not ingredient_names:
         return []
 
     driver = _get_driver()
-
-    _CLEANSERS = ["클렌징폼", "클렌징오일", "클렌징밤", "클렌징젤", "클렌징워터", "클렌징밀크"]
-
-    if appropriate_categories is not None:
-        category_filter = "WHERE prod.category IN $appropriate_categories"
-        params: dict[str, Any] = {
-            "ingredient_names": ingredient_names,
-            "appropriate_categories": appropriate_categories,
-        }
-    else:
-        category_filter = "WHERE NOT prod.category IN $cleansers"
-        params = {"ingredient_names": ingredient_names, "cleansers": _CLEANSERS}
+    params: dict[str, Any] = {
+        "ingredient_names": ingredient_names,
+        "appropriate_categories": appropriate_categories,
+    }
 
     query = f"""
     UNWIND $ingredient_names AS ing_name
     MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient {{inci_name: ing_name}})
-    {category_filter}
+    WHERE prod.category IN $appropriate_categories
     WITH prod,
          COUNT(DISTINCT i.inci_name) AS matched_count,
          COLLECT(DISTINCT i.inci_name) AS matched_ingredients
