@@ -62,7 +62,7 @@ class RecommendUser(HttpUser):
             timeout=_REQUEST_TIMEOUT,
             catch_response=True,
         ) as resp:
-            if resp.status_code == 200:
+            if resp.status_code in (200, 201):
                 try:
                     self.session_id = resp.json().get("session_id")
                 except ValueError:

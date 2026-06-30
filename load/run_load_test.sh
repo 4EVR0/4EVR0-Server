@@ -44,7 +44,7 @@ python3 "$HERE/capture_metrics.py" "$BASE_URL" --out "$OUT/metrics_before.json"
 
 # 2) Locust 단계적 램프업 (헤드리스)
 echo ""; echo "── Locust 부하 시작 (5→10→25→50, 약 7분) ──"
-locust -f "$HERE/locustfile.py" -f "$HERE/staged_shape.py" \
+locust -f "$HERE/locustfile.py,$HERE/staged_shape.py" \
        --headless --host "$BASE_URL" \
        --html "$OUT/report.html" --csv "$OUT/result"
 
