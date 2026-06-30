@@ -17,3 +17,34 @@
 {"id": 17, "label": "알코올자극+제약", "message": "알코올 들어간 제품 쓰면 따가워요. 알코올프리에 EWG 안전한 성분 위주로 보고 있어요.", "skin_types": [], "concerns": ["IRRITATED_SKIN"], "constraints": ["ALCOHOL_FREE", "EWG_GREEN"]}
 {"id": 18, "label": "고민없음(네거티브)", "message": "그냥 무난한 데일리 보습 제품 하나 추천해줘요.", "skin_types": [], "concerns": [], "constraints": []}
 {"id": 19, "label": "다중고민(스트레스)", "message": "건조하고 칙칙한데 주름도 있고 모공도 넓어요. 종합적으로 케어하고 싶어요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "DULLNESS", "WRINKLES", "ENLARGED_PORES"], "constraints": []}
+{"id": 20, "label": "중성(네거티브)", "message": "중성 피부이고 특별한 고민은 없어요. 매일 쓸 기본 제품을 찾고 있어요.", "skin_types": ["NORMAL"], "concerns": [], "constraints": []}
+{"id": 21, "label": "민감+향료제약", "message": "예민한 피부라 향이 강한 화장품은 바로 붉어져요. 무향 제품으로 추천해 주세요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN", "REDNESS"], "constraints": ["FRAGRANCE_FREE"]}
+{"id": 22, "label": "건성+속건조구분", "message": "원래 건성이고 세안 뒤 많이 당겨요. 요즘은 속까지 수분이 부족한 느낌이에요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "DEHYDRATED_SKIN"], "constraints": []}
+{"id": 23, "label": "지성단일", "message": "피부가 지성이라 아침에 씻어도 점심이면 피지가 올라오고 번들거려요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN"], "constraints": []}
+{"id": 24, "label": "복합성직접묘사", "message": "T존은 번들거리지만 양 볼은 당기는 전형적인 복합성 피부예요.", "skin_types": ["COMBINATION"], "concerns": ["OILY_SKIN", "DRY_SKIN"], "constraints": []}
+{"id": 25, "label": "포괄노화", "message": "전반적인 피부 노화가 걱정돼서 안티에이징 관리를 시작하려고 해요.", "skin_types": [], "concerns": ["AGING_SIGNS"], "constraints": []}
+{"id": 26, "label": "주름+탄력", "message": "이마 잔주름이 늘고 피부 탄력이 예전 같지 않아요.", "skin_types": [], "concerns": ["WRINKLES", "LOSS_OF_ELASTICITY"], "constraints": []}
+{"id": 27, "label": "처짐단일", "message": "볼과 턱선 피부가 아래로 처져 보여서 리프팅 관리가 필요해요.", "skin_types": [], "concerns": ["SAGGING_SKIN"], "constraints": []}
+{"id": 28, "label": "일광화상", "message": "주말에 햇빛을 오래 쬐었더니 얼굴이 타고 화끈거려요.", "skin_types": [], "concerns": ["SUNBURN", "IRRITATED_SKIN"], "constraints": []}
+{"id": 29, "label": "기미색소", "message": "광대 쪽 기미와 갈색 색소침착이 점점 진해져요.", "skin_types": [], "concerns": ["HYPERPIGMENTATION"], "constraints": []}
+{"id": 30, "label": "칙칙함단일", "message": "얼굴에 생기가 없고 전체적으로 칙칙해 보여요.", "skin_types": [], "concerns": ["DULLNESS"], "constraints": []}
+{"id": 31, "label": "톤불균일단일", "message": "이마와 볼의 피부톤이 달라 얼룩덜룩하고 고르지 않아요.", "skin_types": [], "concerns": ["UNEVEN_SKIN_TONE"], "constraints": []}
+{"id": 32, "label": "잡티단일", "message": "얼굴에 작은 잡티가 여기저기 보여서 깨끗하게 관리하고 싶어요.", "skin_types": [], "concerns": ["BLEMISHES"], "constraints": []}
+{"id": 33, "label": "다크서클단일", "message": "잠을 충분히 자도 눈 밑 다크서클이 없어지지 않아요.", "skin_types": [], "concerns": ["DARK_CIRCLES"], "constraints": []}
+{"id": 34, "label": "여드름후자국", "message": "여드름은 다 나았는데 그 자리에 붉고 갈색인 흔적만 남았어요.", "skin_types": [], "concerns": ["POST_ACNE_MARKS"], "constraints": []}
+{"id": 35, "label": "로사케아경향", "message": "온도만 바뀌어도 얼굴 중심부가 붉어지고 로사케아가 반복돼요.", "skin_types": [], "concerns": ["REDNESS", "ROSACEA_PRONE"], "constraints": []}
+{"id": 36, "label": "아토피경향보수적", "message": "아토피가 잘 올라오고 가려움이 있어서 저자극 제품을 원해요.", "skin_types": [], "concerns": ["ATOPIC_PRONE"], "constraints": ["HYPOALLERGENIC"]}
+{"id": 37, "label": "자극피부단일", "message": "새 화장품을 쓴 뒤 피부가 따갑고 화끈거리는 자극이 생겼어요.", "skin_types": [], "concerns": ["IRRITATED_SKIN"], "constraints": []}
+{"id": 38, "label": "장벽손상단일", "message": "과도한 필링 뒤 피부 장벽이 무너진 것처럼 쉽게 자극받아요.", "skin_types": [], "concerns": ["BARRIER_DAMAGE", "IRRITATED_SKIN"], "constraints": []}
+{"id": 39, "label": "각질단일", "message": "코 옆과 입가에 하얀 각질이 계속 일어나요.", "skin_types": [], "concerns": ["FLAKY_SKIN"], "constraints": []}
+{"id": 40, "label": "거친피부결", "message": "만졌을 때 피부 표면이 오돌토돌하고 거칠게 느껴져요.", "skin_types": [], "concerns": ["ROUGH_TEXTURE"], "constraints": []}
+{"id": 41, "label": "염증성여드름", "message": "턱에 빨갛고 아픈 여드름이 반복해서 올라와요.", "skin_types": [], "concerns": ["ACNE"], "constraints": []}
+{"id": 42, "label": "면포단일", "message": "코에 블랙헤드와 화이트헤드가 많아서 고민이에요.", "skin_types": [], "concerns": ["COMEDONES"], "constraints": []}
+{"id": 43, "label": "모공막힘단일", "message": "피부 속에 피지가 차서 모공이 자꾸 막히는 느낌이에요.", "skin_types": [], "concerns": ["PORE_CONGESTION"], "constraints": []}
+{"id": 44, "label": "넓은모공단일", "message": "볼 쪽 모공 크기가 눈에 띄게 커 보여요.", "skin_types": [], "concerns": ["ENLARGED_PORES"], "constraints": []}
+{"id": 45, "label": "다중제약", "message": "민감성이라 향료와 알코올이 없고 비건 인증된 저자극 제품만 찾고 있어요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN"], "constraints": ["FRAGRANCE_FREE", "ALCOHOL_FREE", "VEGAN", "HYPOALLERGENIC"]}
+{"id": 46, "label": "제약만네거티브", "message": "피부 고민은 따로 없고 비건이면서 EWG 그린 등급 위주인 제품이면 좋겠어요.", "skin_types": [], "concerns": [], "constraints": ["VEGAN", "EWG_GREEN"]}
+{"id": 47, "label": "부정표현네거티브", "message": "여드름이나 홍조는 없어요. 그냥 평소에 쓸 로션을 추천해 주세요.", "skin_types": [], "concerns": [], "constraints": []}
+{"id": 48, "label": "복합다중엣지", "message": "피지는 많은데 속은 건조하고, 좁쌀과 막힌 모공에 여드름 자국까지 있어요.", "skin_types": ["COMBINATION"], "concerns": ["OILY_SKIN", "DEHYDRATED_SKIN", "COMEDONES", "ACNE", "PORE_CONGESTION", "POST_ACNE_MARKS"], "constraints": []}
+{"id": 49, "label": "수부지구어체", "message": "완전 수부지예요. 겉기름은 도는데 속당김이 심해요.", "skin_types": ["COMBINATION"], "concerns": ["OILY_SKIN", "DEHYDRATED_SKIN"], "constraints": []}
+{"id": 50, "label": "한영혼합", "message": "피부가 oily하고 pores가 커 보여요. fragrance-free 제품을 원해요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN", "ENLARGED_PORES"], "constraints": ["FRAGRANCE_FREE"]}

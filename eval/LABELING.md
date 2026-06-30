@@ -47,6 +47,23 @@
 `HYPOALLERGENIC`(저자극) · `EWG_GREEN`(EWG 안전) 중 메시지에 명시된 것만.
 
 ## 확장 시
-- 목표 규모 30~50개. 고민 그룹(여드름/유분/민감/건조/장벽/색소/보호/노화)과 제약을 고루.
+- 현재 50개를 최소 기준으로 유지하고, 새 회귀 유형이 발견될 때 중복되지 않는 케이스를 추가한다.
+- 고민 그룹(여드름/유분/민감/건조/장벽/색소/보호/노화)과 제약을 고루 유지한다.
 - 회귀 감시용 엣지 케이스 유지: 네거티브(고민 없음), 다중 고민, 오타 유발 표현.
-- 추가 후 `python eval/run_eval.py` 가 아닌 enum 검증부터: 무효 라벨 0 확인.
+- 추가 후 전체 모델 평가 전에 정적 검증부터 실행한다:
+  `python -c "from pathlib import Path; from eval.eval_utils import load_dataset; print(len(load_dataset(Path('eval/dataset.jsonl'))))"`
+
+## 응답 judge의 human 보정 라벨
+
+`run_response_eval.py --human-labels <path>`에 전달하는 JSONL은 전문가가 실제 추천 응답을
+동일한 5개 차원으로 평가한 결과다. 모델 점수를 human 라벨로 대체하지 말고, 독립적으로
+블라인드 평가한 점수만 기록한다.
+
+```json
+{"id": 1, "scores": {"concern_fit": 5, "grounding": 4, "conciseness": 4, "korean_quality": 5, "format_adherence": 4}}
+```
+
+- 각 점수는 1~5이며 `id`는 `dataset.jsonl`과 일치해야 한다.
+- 최소 10~20개 케이스를 두 명 이상이 독립 평가하고, 합의 점수 또는 평가자 평균을 입력한다.
+- 결과 보고서의 `human_calibration`에서 MAE, Pearson, Spearman 상관을 확인한다.
+- 상관이 낮은 judge의 절대 점수는 품질 승인 기준으로 사용하지 않는다.
