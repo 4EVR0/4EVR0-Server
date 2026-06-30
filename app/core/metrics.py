@@ -39,6 +39,14 @@ recommend_requests_total = Counter(
     ["status"],
 )
 
+# 추천 응답 캐시 조회 결과 (hit = GPU 호출 0으로 처리 → 유효 처리량↑)
+#   result = hit | miss
+recommend_cache_total = Counter(
+    "recommend_cache_total",
+    "추천 응답 캐시 조회 결과 (hit = GPU 호출 없이 처리)",
+    ["result"],
+)
+
 # 추천 1건에서 Neo4j가 반환한 성분 수 (0개 = 데이터/쿼리 회귀 신호)
 recommend_ingredients_found = Histogram(
     "recommend_ingredients_found",
