@@ -23,7 +23,8 @@ import time
 import urllib.request
 import uuid
 
-_SPANS = ["cache_lookup", "extract", "retrieval", "gate_wait", "generate", "overhead", "total"]
+_SPANS = ["cache_lookup", "extract", "retrieval", "gate_wait",
+          "generate", "generate_ttft", "generate_decode", "overhead", "total"]
 _BASE_MSG = "피부가 건조하고 각질이 일어나서 보습 잘 되는 화장품 추천해줘"
 
 
@@ -33,6 +34,24 @@ def _post(base, path, payload=None):
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=130) as r:
         return json.loads(r.read().decode())
+
+
+def _stream(base, payload):
+    """SSE 스트리밍 요청 → (TTFT, total). TTFT = 첫 delta 이벤트 수신까지."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(base + "/api/v1/recommend/stream", data=data,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    t0 = time.time()
+    ttft = None
+    cur = None
+    with urllib.request.urlopen(req, timeout=130) as r:
+        for raw in r:
+            line = raw.decode("utf-8").rstrip("\n")
+            if line.startswith("event:"):
+                cur = line.split(":", 1)[1].strip()
+            elif line.startswith("data:") and cur == "delta" and ttft is None:
+                ttft = time.time() - t0
+    return ttft, time.time() - t0
 
 
 def _span_snapshot(base):
@@ -54,8 +73,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8000")
     ap.add_argument("--n", type=int, default=10, help="요청 수")
-    ap.add_argument("--mode", choices=["miss", "hit"], default="miss",
-                    help="miss=매번 신규 문장(GPU 경로) / hit=같은 문장 반복(캐시 경로)")
+    ap.add_argument("--mode", choices=["miss", "hit", "stream"], default="miss",
+                    help="miss=신규 문장(GPU) / hit=같은 문장 반복(캐시) / stream=SSE 스트리밍 엔드포인트(신규 문장, TTFT 측정)")
     args = ap.parse_args()
 
     sid = _post(args.base, "/api/v1/sessions")["session_id"]
@@ -63,31 +82,42 @@ def main():
     _post(args.base, "/api/v1/recommend", {"session_id": sid, "message": "워밍업 " + uuid.uuid4().hex})
 
     s0, c0 = _span_snapshot(args.base)
-    totals = []
+    totals, ttfts = [], []
     fixed_msg = f"{_BASE_MSG} {uuid.uuid4().hex}"  # hit 모드용 고정 문장
     print(f"실행: n={args.n} mode={args.mode}  →  {args.base}")
     for i in range(args.n):
-        msg = f"{_BASE_MSG} {uuid.uuid4().hex}" if args.mode == "miss" else fixed_msg
-        t = time.time()
-        _post(args.base, "/api/v1/recommend", {"session_id": sid, "message": msg})
-        dt = time.time() - t
+        if args.mode == "stream":
+            ttft, dt = _stream(args.base, {"session_id": sid, "message": f"{_BASE_MSG} {uuid.uuid4().hex}"})
+            ttfts.append(ttft if ttft is not None else dt)
+            print(f"  req {i + 1:>2}: TTFT {ttft:>6.3f}s  total {dt:>7.3f}s")
+        else:
+            msg = f"{_BASE_MSG} {uuid.uuid4().hex}" if args.mode == "miss" else fixed_msg
+            t = time.time()
+            _post(args.base, "/api/v1/recommend", {"session_id": sid, "message": msg})
+            dt = time.time() - t
+            print(f"  req {i + 1:>2}: {dt:>7.3f}s")
         totals.append(dt)
-        print(f"  req {i + 1:>2}: {dt:>7.3f}s")
     s1, c1 = _span_snapshot(args.base)
 
     print("\n── span별 평균 (서버 측, 이번 구간 증분) ──")
-    print(f"  {'span':<14}{'평균(ms)':>10}{'요청수':>7}")
+    print(f"  {'span':<16}{'평균(ms)':>10}{'요청수':>7}")
     for span in _SPANS:
         dc = c1.get(span, 0) - c0.get(span, 0)
+        if dc <= 0:
+            continue
         ds = s1.get(span, 0) - s0.get(span, 0)
-        avg = (ds / dc * 1000) if dc else 0
-        print(f"  {span:<14}{avg:>10.1f}{int(dc):>7}")
-    print("  (gate_wait는 extract/generate 안에 포함된 '대기' 성분 — overhead엔 미포함)")
+        print(f"  {span:<16}{ds / dc * 1000:>10.1f}{int(dc):>7}")
+    print("  (gate_wait는 extract/generate 안 '대기' 성분 — overhead엔 미포함)")
 
-    ts = sorted(totals)
-    p = lambda q: ts[min(len(ts) - 1, int(q * len(ts)))]
-    print("\n── 클라이언트 측 total 분포 ──")
-    print(f"  n={len(ts)}  mean={statistics.mean(ts):.3f}s  p50={p(0.5):.3f}s  p90={p(0.9):.3f}s  max={ts[-1]:.3f}s")
+    def _dist(label, xs):
+        ss = sorted(xs)
+        pq = lambda q: ss[min(len(ss) - 1, int(q * len(ss)))]
+        print(f"  {label}: n={len(ss)} mean={statistics.mean(ss):.3f}s p50={pq(0.5):.3f}s p90={pq(0.9):.3f}s max={ss[-1]:.3f}s")
+
+    print("\n── 클라이언트 측 분포 ──")
+    if ttfts:
+        _dist("TTFT ", ttfts)
+    _dist("total", totals)
 
 
 if __name__ == "__main__":
