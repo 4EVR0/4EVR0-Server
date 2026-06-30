@@ -30,6 +30,7 @@ from app.clients.llm_factory import get_async_llm_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint, SkinType  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
+from eval.eval_utils import load_dataset  # noqa: E402
 
 _VALID = {
     "skin_types": {e.value for e in SkinType},
@@ -39,15 +40,6 @@ _VALID = {
 # 추출 프롬프트 기본값. --prompt 로 교체 가능(예: profile_extraction.v2).
 # 프롬프트 내용이 바뀌면 prompt_version(해시)도 바뀜 → MLflow에서 실험 비교 시 추적.
 DEFAULT_PROMPT_NAME = "profile_extraction"
-
-
-def load_dataset(path: Path) -> list[dict]:
-    cases = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            cases.append(json.loads(line))
-    return cases
 
 
 async def extract(client, message: str, system_prompt: str):
