@@ -15,6 +15,8 @@
 """
 
 import asyncio
+import contextvars
+import time
 from contextlib import asynccontextmanager
 
 from prometheus_client import Counter, Gauge
@@ -24,6 +26,21 @@ from app.core.config import settings
 
 class LLMOverCapacityError(Exception):
     """GPU 동시성 한도 초과로 요청을 거절했음을 나타낸다(→ HTTP 429)."""
+
+
+# 요청당 세마포어 큐 대기 누적(초). 한 요청은 슬롯을 2번(추출+생성) 확보하므로 그 대기의 합.
+# 부하 시 이 값이 extract/generate 안에 섞여 보이던 큐 대기를 분리 계측하기 위함.
+_gate_wait_seconds: contextvars.ContextVar[float] = contextvars.ContextVar("gate_wait_seconds", default=0.0)
+
+
+def reset_gate_wait() -> None:
+    """요청 시작 시 호출 — 이 요청의 큐 대기 누적을 0으로."""
+    _gate_wait_seconds.set(0.0)
+
+
+def get_gate_wait_seconds() -> float:
+    """이번 요청에서 슬롯 확보에 대기한 총 시간(초)."""
+    return _gate_wait_seconds.get()
 
 
 # 현재 GPU로 처리 중인 동시 호출 수 (포화 모니터링용)
@@ -58,7 +75,9 @@ async def llm_slot():
         llm_rejected_total.inc()
         raise LLMOverCapacityError()
 
+    _wait_start = time.perf_counter()
     await _semaphore.acquire()
+    _gate_wait_seconds.set(_gate_wait_seconds.get() + (time.perf_counter() - _wait_start))
     llm_inflight_requests.inc()
     try:
         yield

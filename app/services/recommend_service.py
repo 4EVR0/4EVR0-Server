@@ -1,9 +1,10 @@
 import logging
+import time
 import uuid
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
-from app.clients.llm_gate import LLMOverCapacityError, llm_slot
+from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
 from app.core import metrics
 from app.core.config import settings
@@ -47,14 +48,33 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = load_prompt("recommend_response.v4")
 
 
+def _record_latency(spans: dict[str, float], cache: str) -> None:
+    """요청당 latency 트레이스를 메트릭에 관측하고 trace_id 로그로 1줄 남긴다.
+
+    gate_wait는 extract·generate 안에 포함된 '대기' 성분이라 overhead에 더하지 않고 별도 보고.
+    """
+    for span, sec in spans.items():
+        metrics.recommend_latency_span_seconds.labels(span=span).observe(max(sec, 0.0))
+    parts = " ".join(f"{k}={v * 1000:.1f}ms" for k, v in spans.items())
+    logger.info("latency_trace cache=%s %s", cache, parts)
+
+
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
+    reset_gate_wait()
+    t_req = time.perf_counter()
+    spans: dict[str, float] = {}
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
+    _t = time.perf_counter()
     cached = await recommend_cache.get(message, gen_prompt_name)
+    spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
         metrics.recommend_requests_total.labels(status="ok").inc()
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = spans["total"] - spans["cache_lookup"]
+        _record_latency(spans, cache="hit")
         # session_id·turn_id는 요청마다 새로 부여(캐시는 콘텐츠만 보관).
         return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
     metrics.recommend_cache_total.labels(result="miss").inc()
@@ -64,11 +84,14 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
     try:
         # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
+        _t = time.perf_counter()
         with metrics.track_stage("extract"):
             profile, extraction_method = await extract_with_fallback(message)
+        spans["extract"] = time.perf_counter() - _t
         metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
         # 2) Neo4j 조회 (효능→성분, 성분→제품)
+        _t = time.perf_counter()
         with metrics.track_stage("neo4j"):
             effect_names = [e.value for e in profile.effects]
             raw_ingredients = await query_ingredients_by_effects(effect_names)
@@ -88,6 +111,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             top_ingredient_names = [i.name for i in ingredients[:10]]
             cats = _appropriate_categories(profile.concerns)
             raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+        spans["retrieval"] = time.perf_counter() - _t
         metrics.recommend_ingredients_found.observe(len(ingredients))
 
         products = [
@@ -103,8 +127,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         ]
 
         # 3) LLM 응답 생성
+        _t = time.perf_counter()
         with metrics.track_stage("llm_response"):
             response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+        spans["generate"] = time.perf_counter() - _t
 
         # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
         await recommend_cache.set(message, gen_prompt_name, {
@@ -113,6 +139,11 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             "response_text": response_text,
             "model_used": settings.gpu_model,
         })
+
+        spans["gate_wait"] = get_gate_wait_seconds()
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["extract"] - spans["retrieval"] - spans["generate"]
+        _record_latency(spans, cache="miss")
 
         metrics.recommend_requests_total.labels(status="ok").inc()
         return RecommendResponse(
