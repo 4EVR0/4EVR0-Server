@@ -33,7 +33,11 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import settings  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
-from app.services.recommend_service import _evidence_label, recommend  # noqa: E402
+from app.services.recommend_service import (  # noqa: E402
+    _evidence_label,
+    _ingredient_display_name,
+    recommend,
+)
 from eval.eval_utils import (  # noqa: E402
     bootstrap_mean_ci,
     file_sha256,
@@ -109,9 +113,11 @@ async def judge_response(client, model, message, ingredients, products, response
     심판에게 생성기와 '동일한' 근거 컨텍스트(근거 수준·제품 핵심성분)를 줘야 grounding을
     공정하게 채점한다. 안 주면 응답의 '논문 근거 N건' 인용을 검증 못 해 hallucination으로 오판한다.
     """
+    # ev/_annotate 매핑은 제품 핵심성분(영문 inci)과 키를 맞춰야 하므로 i.name(영문) 유지.
+    # 성분 라인 표기는 generator와 동일하게 '한글명(영어명)' 형태로 맞춰 공정 채점.
     ev = {i.name: _evidence_label(i.eligibility_tier, i.paper_ref) for i in ingredients}
     ing_lines = "\n".join(
-        f"- {i.name}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
+        f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
         for i in ingredients[:10]
     ) or "(없음)"
 

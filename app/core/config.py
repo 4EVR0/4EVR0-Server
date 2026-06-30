@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     gpu_timeout_seconds: int = 60
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
+    # 추천 응답 생성 max_tokens. 미설정 시 일부 서빙 환경에서 응답이 잘리는 문제(issue #24) 방지를 위해
+    # 명시. 한글 성분 설명 + 제품 추천 + 사용 팁이 잘리지 않을 헤드룸. GEN_MAX_TOKENS 로 조정 가능.
+    gen_max_tokens: int = 1024
 
     class Config:
         env_file = ".env"

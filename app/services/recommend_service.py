@@ -39,8 +39,10 @@ logger = logging.getLogger(__name__)
 
 # 프롬프트는 app/prompts/recommend_response*.txt 로 분리(버전 관리).
 # v3: 근거 수준(논문 근거 N건 / 성분 기능 근거)을 인용·구분하도록 강화 — 공정 judge eval에서
-# grounding 4.05→4.84, overall 4.47→4.77(temp=0, 결정론적). 구버전은 롤백용으로 보존.
-_SYSTEM_PROMPT = load_prompt("recommend_response.v3")
+# grounding 4.05→4.84, overall 4.47→4.77(temp=0, 결정론적).
+# v4: 응답 구조를 "성분 설명 → 제품 추천" 순서로 변경(성분별 효능을 먼저 설명). v3 근거 규칙은 유지.
+# 구버전은 롤백/비교용으로 보존.
+_SYSTEM_PROMPT = load_prompt("recommend_response.v4")
 
 
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
@@ -62,6 +64,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             ingredients = [
                 IngredientResult(
                     name=row["name"],
+                    kor_name=row.get("kor_name"),
                     claim=row.get("claim"),
                     eligibility_tier=row.get("eligibility_tier"),
                     paper_ref=row.get("paper_ref"),
@@ -105,6 +108,13 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         raise
 
 
+def _ingredient_display_name(ingredient: IngredientResult) -> str:
+    """성분명을 '한글명(영어명)' 형식으로 표기한다. 한글명이 없으면 영어명만."""
+    if ingredient.kor_name:
+        return f"{ingredient.kor_name}({ingredient.name})"
+    return ingredient.name
+
+
 def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     """근거 종류를 사람이 읽을 수 있는 한국어 라벨로 변환한다.
 
@@ -137,7 +147,7 @@ async def _build_llm_response(
 
     if ingredients:
         ingredient_lines = "\n".join(
-            f"- {i.name}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
+            f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -169,6 +179,7 @@ async def _build_llm_response(
                 {"role": "user", "content": user_content},
             ],
             temperature=settings.gen_temperature,
+            max_tokens=settings.gen_max_tokens,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
@@ -178,6 +189,6 @@ async def _build_llm_response(
             prod_names = ", ".join(f"{p.brand} {p.product_name}" for p in products[:3])
             return f"피부 고민 분석 결과, 다음 제품들을 추천드립니다: {prod_names}"
         if ingredients:
-            names = ", ".join(i.name for i in ingredients[:5])
+            names = ", ".join(_ingredient_display_name(i) for i in ingredients[:5])
             return f"피부 고민 분석 결과, 다음 성분들을 추천드립니다: {names}"
         return "죄송합니다. 현재 추천 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해 주세요."
