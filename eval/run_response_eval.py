@@ -33,7 +33,11 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import settings  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
-from app.services.recommend_service import _evidence_label, recommend  # noqa: E402
+from app.services.recommend_service import (  # noqa: E402
+    _evidence_label,
+    _ingredient_display_name,
+    recommend,
+)
 from eval.eval_utils import (  # noqa: E402
     bootstrap_mean_ci,
     file_sha256,
@@ -109,14 +113,25 @@ async def judge_response(client, model, message, ingredients, products, response
     심판에게 생성기와 '동일한' 근거 컨텍스트(근거 수준·제품 핵심성분)를 줘야 grounding을
     공정하게 채점한다. 안 주면 응답의 '논문 근거 N건' 인용을 검증 못 해 hallucination으로 오판한다.
     """
-    ev = {i.name: _evidence_label(i.eligibility_tier, i.paper_ref) for i in ingredients}
+    ingredient_by_name = {ingredient.name: ingredient for ingredient in ingredients}
     ing_lines = "\n".join(
-        f"- {i.name}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
+        f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
+        f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
         for i in ingredients[:10]
     ) or "(없음)"
 
     def _annotate(names: list[str]) -> str:
-        return ", ".join(f"{n}({ev.get(n, '근거 미상')})" for n in names[:3])
+        annotated = []
+        for name in names[:3]:
+            ingredient = ingredient_by_name.get(name)
+            if ingredient:
+                annotated.append(
+                    f"{_ingredient_display_name(ingredient)} "
+                    f"[{_evidence_label(ingredient.eligibility_tier, ingredient.paper_ref)}]"
+                )
+            else:
+                annotated.append(f"{name} [근거 미상]")
+        return ", ".join(annotated)
 
     prod_lines = "\n".join(
         f"- [{p.category}] {p.brand} {p.product_name} (핵심성분: {_annotate(p.matched_ingredients)})"
