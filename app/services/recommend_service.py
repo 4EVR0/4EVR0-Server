@@ -3,6 +3,7 @@ import uuid
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
+from app.clients.llm_gate import LLMOverCapacityError, llm_slot
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
 from app.core import metrics
 from app.core.config import settings
@@ -103,6 +104,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             response_text=response_text,
             model_used=settings.gpu_model,
         )
+    except LLMOverCapacityError:
+        # 부하 차단으로 거절된 요청은 서버 '에러'가 아니라 의도된 백프레셔 → 별도 status로 집계.
+        metrics.recommend_requests_total.labels(status="rejected").inc()
+        raise
     except Exception:
         metrics.recommend_requests_total.labels(status="error").inc()
         raise
@@ -179,17 +184,22 @@ async def _build_llm_response(
 
     try:
         client = get_async_llm_client()
-        response = await client.chat.completions.create(
-            model=settings.gpu_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=settings.gen_temperature,
-            max_tokens=settings.gen_max_tokens,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
+        # GPU 동시성 게이트 안에서만 생성 호출 — 가장 무거운 단계라 동시성 제한의 핵심 대상.
+        async with llm_slot():
+            response = await client.chat.completions.create(
+                model=settings.gpu_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=settings.gen_temperature,
+                max_tokens=settings.gen_max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
         return response.choices[0].message.content or ""
+    except LLMOverCapacityError:
+        # 동시성 한도 초과는 템플릿 폴백으로 덮지 않고 거절(429)로 전파.
+        raise
     except Exception as exc:
         logger.warning("LLM response generation failed: %s", exc)
         if products:

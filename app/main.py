@@ -8,7 +8,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.middleware import TraceIDMiddleware
-from app.core.exception_handler import global_exception_handler
+from app.core.exception_handler import global_exception_handler, llm_over_capacity_handler
+from app.clients.llm_gate import LLMOverCapacityError
 from app.api import health, sessions, profile, recommend
 # app.core.metrics 를 import 해 커스텀 메트릭을 기본 레지스트리에 등록한다.
 from app.core import metrics as _metrics  # noqa: F401
@@ -24,6 +25,8 @@ app = FastAPI(
 )
 
 app.add_exception_handler(Exception, global_exception_handler)
+# 동시성 한도 초과 거절은 500이 아니라 429로 (구체 핸들러가 우선 매칭됨)
+app.add_exception_handler(LLMOverCapacityError, llm_over_capacity_handler)
 
 # 요청마다 trace_id 부여 → 그 요청의 모든 로그가 같은 trace_id 로 묶임
 app.add_middleware(TraceIDMiddleware)

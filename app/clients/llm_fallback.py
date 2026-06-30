@@ -1,6 +1,7 @@
 import logging
 
 from app.clients.llm_client import call_llm
+from app.clients.llm_gate import LLMOverCapacityError
 from app.domain.user import UserProfile
 from app.services.user_profile_extraction_service import extract_profile
 
@@ -17,6 +18,9 @@ async def extract_with_fallback(message: str) -> tuple[UserProfile, str]:
     try:
         profile = await call_llm(message)
         return profile, "llm"
+    except LLMOverCapacityError:
+        # 동시성 한도 초과는 'LLM 장애'가 아니라 의도적 부하 차단 → 폴백하지 않고 거절(429)로 전파.
+        raise
     except Exception as exc:
         logger.warning("LLM extraction failed (%s: %s), falling back to rule-based.", type(exc).__name__, exc)
         return extract_profile(message), "rule_based"

@@ -1,6 +1,7 @@
 import json
 
 from app.clients.llm_factory import get_async_llm_client
+from app.clients.llm_gate import llm_slot
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
@@ -15,16 +16,18 @@ _SYSTEM_PROMPT = load_prompt(PROMPT_NAME)
 async def call_llm(message: str) -> UserProfile:
     client = get_async_llm_client()
 
-    response = await client.chat.completions.create(
-        model=settings.gpu_model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": message},
-        ],
-        temperature=0,
-        response_format={"type": "json_object"},
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
+    # GPU 동시성 게이트 안에서만 호출 — 단일 GPU로 나가는 동시 호출 수를 제한한다.
+    async with llm_slot():
+        response = await client.chat.completions.create(
+            model=settings.gpu_model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": message},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
 
     raw = response.choices[0].message.content or "{}"
     data = json.loads(raw)
