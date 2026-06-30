@@ -261,6 +261,7 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     ],
     Concern.DULLNESS: [
         Effect.BRIGHTENING,
+        Effect.DEPIGMENTING,
         Effect.KERATOLYTIC,
         Effect.ANTIOXIDANT,
     ],
