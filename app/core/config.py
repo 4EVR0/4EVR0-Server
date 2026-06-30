@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     gpu_timeout_seconds: int = 60
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
+    # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.
+    gen_max_tokens: int = 1200
 
     class Config:
         env_file = ".env"

@@ -9,6 +9,7 @@ class RecommendRequest(BaseModel):
 
 class IngredientResult(BaseModel):
     name: str
+    kor_name: str | None = None
     claim: str | None = None
     eligibility_tier: str | None = None
     paper_ref: str | None = None

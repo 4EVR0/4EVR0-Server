@@ -257,7 +257,9 @@
           <div class="card">
             <span class="tier ${tierClass(ing.eligibility_tier)}">${ing.eligibility_tier}</span>
             <div class="card-info">
-              <div class="card-name">${escHtml(ing.name)}</div>
+              <div class="card-name">${ing.kor_name?.trim()
+                ? `${escHtml(ing.kor_name.trim())} (${escHtml(ing.name)})`
+                : escHtml(ing.name)}</div>
               <div class="card-claim" title="${escHtml(ing.claim)}">${escHtml(ing.claim)}</div>
             </div>
             ${ing.paper_ref ? `<span class="card-pmid">${escHtml(ing.paper_ref)}</span>` : ''}
