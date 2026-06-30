@@ -166,7 +166,7 @@ async def _build_llm_response(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.3,
+            temperature=settings.gen_temperature,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
