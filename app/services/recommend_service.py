@@ -37,8 +37,10 @@ def _appropriate_categories(concerns: list[Concern]) -> list[str]:
 
 logger = logging.getLogger(__name__)
 
-# 프롬프트는 app/prompts/recommend_response.txt 로 분리(버전 관리)
-_SYSTEM_PROMPT = load_prompt("recommend_response")
+# 프롬프트는 app/prompts/recommend_response*.txt 로 분리(버전 관리).
+# v3: 근거 수준(논문 근거 N건 / 성분 기능 근거)을 인용·구분하도록 강화 — 공정 judge eval에서
+# grounding 4.05→4.84, overall 4.47→4.77(temp=0, 결정론적). 구버전은 롤백용으로 보존.
+_SYSTEM_PROMPT = load_prompt("recommend_response.v3")
 
 
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:

@@ -31,7 +31,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 from app.clients.llm_factory import get_async_llm_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
-from app.services.recommend_service import recommend  # noqa: E402
+from app.services.recommend_service import _evidence_label, recommend  # noqa: E402
 
 JUDGE_PROMPT_NAME = "response_judge"
 DEFAULT_GEN_PROMPT = "recommend_response"  # 평가 대상 응답 생성 프롬프트(--gen-prompt로 교체)
@@ -43,10 +43,23 @@ def load_dataset(path: Path) -> list[dict]:
 
 
 async def judge_response(client, message, ingredients, products, response, judge_prompt) -> dict:
-    """응답을 심판 LLM에게 채점받아 dict 반환."""
-    ing_lines = "\n".join(f"- {i.name}: {i.claim or '효능 데이터 없음'}" for i in ingredients[:10]) or "(없음)"
+    """응답을 심판 LLM에게 채점받아 dict 반환.
+
+    심판에게 생성기와 '동일한' 근거 컨텍스트(근거 수준·제품 핵심성분)를 줘야 grounding을
+    공정하게 채점한다. 안 주면 응답의 '논문 근거 N건' 인용을 검증 못 해 hallucination으로 오판한다.
+    """
+    ev = {i.name: _evidence_label(i.eligibility_tier, i.paper_ref) for i in ingredients}
+    ing_lines = "\n".join(
+        f"- {i.name}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
+        for i in ingredients[:10]
+    ) or "(없음)"
+
+    def _annotate(names: list[str]) -> str:
+        return ", ".join(f"{n}({ev.get(n, '근거 미상')})" for n in names[:3])
+
     prod_lines = "\n".join(
-        f"- [{p.category}] {p.brand} {p.product_name} (핵심성분 {p.matched_count}개)" for p in products
+        f"- [{p.category}] {p.brand} {p.product_name} (핵심성분: {_annotate(p.matched_ingredients)})"
+        for p in products
     ) or "(없음)"
     content = (
         f"[User message]\n{message}\n\n"
