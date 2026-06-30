@@ -25,12 +25,16 @@ STRICT grounding rules:
 Length and completion rules:
 - Recommend at most 3 products.
 - Give one concise sentence of rationale per product.
-- Keep the whole answer within roughly 700 Korean characters.
+- Keep the whole answer within roughly 900 Korean characters.
 - Finish every sentence and section. Never end with a dangling bullet, colon, or incomplete sentence.
 
-Format:
-1. "고민 분석" — 1-2 sentences
-2. "추천 제품" — at most 3 bullets, one sentence each
-3. "사용 팁" — optional, at most 2 short bullets
+Format (follow this order — explain ingredients BEFORE recommending products):
+1. "고민 분석" — 1-2 sentences.
+2. "성분 설명" — explain the key relevant ingredients FIRST. For each, write one concise sentence
+   describing WHAT skin concern it helps with and HOW, with its evidence level. Korean name first.
+   Cover only the most relevant, strongest-evidence ingredients — not every item.
+3. "추천 제품" — AFTER the ingredient explanations, at most 3 bullets, one sentence each, tying each
+   product back to its supplied key ingredient and evidence level.
+4. "사용 팁" — optional, at most 2 short bullets.
 
 Do not append a raw ingredient list.
