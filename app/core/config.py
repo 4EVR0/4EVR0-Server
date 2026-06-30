@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
+    gen_temperature: float = 0.3
 
     class Config:
         env_file = ".env"

@@ -103,6 +103,23 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         raise
 
 
+def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
+    """근거 종류를 사람이 읽을 수 있는 한국어 라벨로 변환한다.
+
+    query_ingredients_by_effects는 eligibility_tier에 evidence_type을 담아 반환한다.
+    pubmed_evidence(논문 근거) > cosing_function(성분 기능 근거).
+    """
+    if eligibility_tier == "pubmed_evidence":
+        try:
+            n = int(float(paper_ref)) if paper_ref not in (None, "", "None") else 0
+        except (TypeError, ValueError):
+            n = 0
+        return f"논문 근거 {n}건" if n > 0 else "논문 근거"
+    if eligibility_tier == "cosing_function":
+        return "성분 기능 근거"
+    return "근거 미상"
+
+
 async def _build_llm_response(
     message: str,
     ingredients: list[IngredientResult],
@@ -111,9 +128,14 @@ async def _build_llm_response(
 ) -> str:
     sections = [f"사용자 메시지: {message}"]
 
+    # 성분명 → 근거 라벨 (제품 데이터의 핵심 성분에 근거를 붙이는 데 사용)
+    evidence_by_name = {
+        i.name: _evidence_label(i.eligibility_tier, i.paper_ref) for i in ingredients
+    }
+
     if ingredients:
         ingredient_lines = "\n".join(
-            f"- {i.name}: {i.claim or '효능 데이터 없음'} (근거 수준: {i.eligibility_tier or 'unknown'})"
+            f"- {i.name}: {i.claim or '효능 데이터 없음'} ({_evidence_label(i.eligibility_tier, i.paper_ref)})"
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -121,8 +143,15 @@ async def _build_llm_response(
         sections.append("(현재 성분 데이터베이스에 해당 고민에 맞는 성분 데이터가 없습니다. 일반적인 추천을 제공해 주세요.)")
 
     if products:
+        def _annotate(names: list[str]) -> str:
+            # 제품의 핵심 성분에 근거 라벨을 붙여 모델이 제품 추천을 근거에 묶을 수 있게 한다.
+            return ", ".join(
+                f"{n}({evidence_by_name[n]})" if n in evidence_by_name else n
+                for n in names[:3]
+            )
+
         product_lines = "\n".join(
-            f"- [{p.category}] {p.brand} {p.product_name} (핵심 성분 {p.matched_count}개 포함: {', '.join(p.matched_ingredients[:3])})"
+            f"- [{p.category}] {p.brand} {p.product_name} (핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})"
             for p in products
         )
         sections.append(f"추천 제품 데이터:\n{product_lines}")
@@ -137,7 +166,7 @@ async def _build_llm_response(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.3,
+            temperature=settings.gen_temperature,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
