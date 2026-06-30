@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     postgres_dsn: str = "postgresql://user:password@localhost:5432/cosmetic"
 
     redis_url: str = "redis://localhost:6379"
+    # 추천 응답 캐시(app/repositories/recommend_cache.py). 같은 고민 문장 반복 시 GPU를 건너뛴다.
+    # 데이터가 거의 안 변해 TTL을 길게(기본 24h). 부하 테스트 on/off 비교용으로 토글 가능.
+    recommend_cache_enabled: bool = True
+    recommend_cache_ttl_seconds: int = 86400
 
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"

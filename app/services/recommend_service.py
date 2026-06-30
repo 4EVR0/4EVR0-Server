@@ -9,6 +9,7 @@ from app.core import metrics
 from app.core.config import settings
 from app.domain.enums import Concern
 from app.prompts import load_prompt
+from app.repositories import recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 
 # concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
@@ -48,6 +49,16 @@ _SYSTEM_PROMPT = load_prompt("recommend_response.v4")
 
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
+
+    # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
+    cached = await recommend_cache.get(message, gen_prompt_name)
+    if cached is not None:
+        metrics.recommend_cache_total.labels(result="hit").inc()
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        # session_id·turn_id는 요청마다 새로 부여(캐시는 콘텐츠만 보관).
+        return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
+    metrics.recommend_cache_total.labels(result="miss").inc()
+
     # gen_prompt_name 지정 시 응답 프롬프트 교체(실험용). 미지정이면 프로덕션 기본.
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
 
@@ -94,6 +105,14 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         # 3) LLM 응답 생성
         with metrics.track_stage("llm_response"):
             response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+
+        # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
+        await recommend_cache.set(message, gen_prompt_name, {
+            "ingredients": [i.model_dump() for i in ingredients],
+            "products": [p.model_dump() for p in products],
+            "response_text": response_text,
+            "model_used": settings.gpu_model,
+        })
 
         metrics.recommend_requests_total.labels(status="ok").inc()
         return RecommendResponse(
