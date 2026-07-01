@@ -39,6 +39,17 @@ recommend_requests_total = Counter(
     ["status"],
 )
 
+# 요청당 latency 트레이스 — 파이프라인 단계별 소요시간(초).
+#   span = cache_lookup | extract | retrieval | gate_wait | generate | overhead | total
+#   (P1 스트리밍 후 generate를 generate_ttft/generate_decode로 분리)
+#   latency 최적화 실험에서 "어디서 시간이 가나"를 단건 단위로 분해한다.
+recommend_latency_span_seconds = Histogram(
+    "recommend_latency_span_seconds",
+    "추천 요청의 단계별 latency(초) — latency 최적화 트레이스",
+    ["span"],
+    buckets=(0.005, 0.05, 0.2, 0.5, 1, 2, 4, 8, 16, 32, 64, 120),
+)
+
 # 추천 응답 캐시 조회 결과 (hit = GPU 호출 0으로 처리 → 유효 처리량↑)
 #   result = hit | miss
 recommend_cache_total = Counter(

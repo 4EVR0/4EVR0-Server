@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    # 추출(LLM #1)에 guided decoding(JSON 스키마 강제) 사용 여부. 유효 JSON·유효 enum 값을 보장해
+    # 파싱 실패·규칙기반 폴백을 줄인다(신뢰성). P4 실험용 토글(EXTRACT_GUIDED_DECODING).
+    extract_guided_decoding: bool = False
     # GPU(vLLM) 동시 호출 한도. 단일 GPU 서빙 보호용 — 동시 요청이 몰릴 때 vLLM 큐 폭증·
     # 타임아웃 캐스케이드를 막는다(app/clients/llm_gate.py). 0 이하면 비활성(무제한, 기존 동작).
     # 부하 테스트로 적정값 탐색(baseline은 동시 10→25 구간에서 열화 시작).
@@ -32,6 +35,9 @@ class Settings(BaseSettings):
     # True면 동시성 한도 초과 시 대기 대신 즉시 거절(HTTP 429). False면 한도 내로 직렬화하되
     # 초과분은 큐에서 대기(처리량 동일, latency 안정).
     llm_reject_over_capacity: bool = False
+    # 생성 프롬프트 버전(app/prompts/<name>.txt). latency/품질 실험용으로 GEN_PROMPT_NAME 로 교체.
+    # v6: P3 스윗스팟 — v4 대비 total −30%(출력 토큰↓)이면서 품질 유지(OVERALL 4.52→4.46, grounding 동일).
+    gen_prompt_name: str = "recommend_response.v6"
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
     # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.

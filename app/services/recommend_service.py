@@ -1,9 +1,11 @@
+import json
 import logging
+import time
 import uuid
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
-from app.clients.llm_gate import LLMOverCapacityError, llm_slot
+from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
 from app.core import metrics
 from app.core.config import settings
@@ -44,17 +46,37 @@ logger = logging.getLogger(__name__)
 # grounding 4.05→4.84, overall 4.47→4.77(temp=0, 결정론적).
 # v4: 한글 성분명을 우선 사용하고 제품 수·분량을 제한해 간결성과 완결성을 강화.
 #     응답 구조도 "성분 설명 → 제품 추천" 순서로 정렬(성분별 효능을 먼저 설명).
-_SYSTEM_PROMPT = load_prompt("recommend_response.v4")
+# v5: 출력 길이를 더 줄여(제품 2개·~400자) decode latency를 낮추는 실험용(P3). GEN_PROMPT_NAME로 선택.
+_SYSTEM_PROMPT = load_prompt(settings.gen_prompt_name)
+
+
+def _record_latency(spans: dict[str, float], cache: str) -> None:
+    """요청당 latency 트레이스를 메트릭에 관측하고 trace_id 로그로 1줄 남긴다.
+
+    gate_wait는 extract·generate 안에 포함된 '대기' 성분이라 overhead에 더하지 않고 별도 보고.
+    """
+    for span, sec in spans.items():
+        metrics.recommend_latency_span_seconds.labels(span=span).observe(max(sec, 0.0))
+    parts = " ".join(f"{k}={v * 1000:.1f}ms" for k, v in spans.items())
+    logger.info("latency_trace cache=%s %s", cache, parts)
 
 
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
+    reset_gate_wait()
+    t_req = time.perf_counter()
+    spans: dict[str, float] = {}
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
+    _t = time.perf_counter()
     cached = await recommend_cache.get(message, gen_prompt_name)
+    spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
         metrics.recommend_requests_total.labels(status="ok").inc()
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = spans["total"] - spans["cache_lookup"]
+        _record_latency(spans, cache="hit")
         # session_id·turn_id는 요청마다 새로 부여(캐시는 콘텐츠만 보관).
         return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
     metrics.recommend_cache_total.labels(result="miss").inc()
@@ -64,11 +86,14 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
     try:
         # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
+        _t = time.perf_counter()
         with metrics.track_stage("extract"):
             profile, extraction_method = await extract_with_fallback(message)
+        spans["extract"] = time.perf_counter() - _t
         metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
         # 2) Neo4j 조회 (효능→성분, 성분→제품)
+        _t = time.perf_counter()
         with metrics.track_stage("neo4j"):
             effect_names = [e.value for e in profile.effects]
             raw_ingredients = await query_ingredients_by_effects(effect_names)
@@ -88,6 +113,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             top_ingredient_names = [i.name for i in ingredients[:10]]
             cats = _appropriate_categories(profile.concerns)
             raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+        spans["retrieval"] = time.perf_counter() - _t
         metrics.recommend_ingredients_found.observe(len(ingredients))
 
         products = [
@@ -103,8 +129,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         ]
 
         # 3) LLM 응답 생성
+        _t = time.perf_counter()
         with metrics.track_stage("llm_response"):
             response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+        spans["generate"] = time.perf_counter() - _t
 
         # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
         await recommend_cache.set(message, gen_prompt_name, {
@@ -113,6 +141,11 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             "response_text": response_text,
             "model_used": settings.gpu_model,
         })
+
+        spans["gate_wait"] = get_gate_wait_seconds()
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["extract"] - spans["retrieval"] - spans["generate"]
+        _record_latency(spans, cache="miss")
 
         metrics.recommend_requests_total.labels(status="ok").inc()
         return RecommendResponse(
@@ -157,12 +190,12 @@ def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     return "근거 미상"
 
 
-async def _build_llm_response(
+def _compose_user_content(
     message: str,
     ingredients: list[IngredientResult],
     products: list[ProductResult],
-    system_prompt: str = _SYSTEM_PROMPT,
 ) -> str:
+    """생성 LLM에 줄 user 메시지(사용자 고민 + 성분/제품 데이터)를 조립한다. 스트리밍/비스트리밍 공용."""
     sections = [f"사용자 메시지: {message}"]
 
     # INCI 성분명 → 표시명·근거. 제품 매칭 결과의 영문 이름도 같은 소비자용 표기로 변환한다.
@@ -199,7 +232,16 @@ async def _build_llm_response(
         )
         sections.append(f"추천 제품 데이터:\n{product_lines}")
 
-    user_content = "\n\n".join(sections)
+    return "\n\n".join(sections)
+
+
+async def _build_llm_response(
+    message: str,
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+    system_prompt: str = _SYSTEM_PROMPT,
+) -> str:
+    user_content = _compose_user_content(message, ingredients, products)
 
     try:
         client = get_async_llm_client()
@@ -228,3 +270,123 @@ async def _build_llm_response(
             names = ", ".join(_ingredient_display_name(i) for i in ingredients[:5])
             return f"피부 고민 분석 결과, 다음 성분들을 추천드립니다: {names}"
         return "죄송합니다. 현재 추천 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해 주세요."
+
+
+def _sse(event: str, data: dict) -> str:
+    """Server-Sent Events 한 프레임."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
+    """SSE 스트리밍 추천: meta(구조 데이터 즉시) → delta(생성 토큰) → done.
+
+    체감 latency(TTFT)를 낮춘다. 생성 단계를 generate_ttft/generate_decode 로 분리 계측해
+    "prefill vs decode" 비중을 단건으로 드러낸다.
+    """
+    turn_id = str(uuid.uuid4())
+    reset_gate_wait()
+    t_req = time.perf_counter()
+    spans: dict[str, float] = {}
+
+    _t = time.perf_counter()
+    cached = await recommend_cache.get(message, gen_prompt_name)
+    spans["cache_lookup"] = time.perf_counter() - _t
+    if cached is not None:
+        metrics.recommend_cache_total.labels(result="hit").inc()
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
+                            "ingredients": cached["ingredients"], "products": cached["products"],
+                            "model_used": cached["model_used"]})
+        yield _sse("delta", {"text": cached["response_text"]})
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = spans["total"] - spans["cache_lookup"]
+        _record_latency(spans, cache="hit")
+        yield _sse("done", {"finish_reason": "cache"})
+        return
+    metrics.recommend_cache_total.labels(result="miss").inc()
+    system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
+
+    try:
+        _t = time.perf_counter()
+        with metrics.track_stage("extract"):
+            profile, extraction_method = await extract_with_fallback(message)
+        spans["extract"] = time.perf_counter() - _t
+        metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+
+        _t = time.perf_counter()
+        with metrics.track_stage("neo4j"):
+            effect_names = [e.value for e in profile.effects]
+            raw_ingredients = await query_ingredients_by_effects(effect_names)
+            ingredients = [
+                IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
+                                 eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
+                for row in raw_ingredients
+            ]
+            top_ingredient_names = [i.name for i in ingredients[:10]]
+            cats = _appropriate_categories(profile.concerns)
+            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+        spans["retrieval"] = time.perf_counter() - _t
+        metrics.recommend_ingredients_found.observe(len(ingredients))
+        products = [
+            ProductResult(product_id=row["product_id"], product_name=row["product_name"], brand=row["brand"],
+                          category=row["category"], matched_count=row["matched_count"],
+                          matched_ingredients=row["matched_ingredients"])
+            for row in raw_products
+        ]
+
+        # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
+        yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
+                            "ingredients": [i.model_dump() for i in ingredients],
+                            "products": [p.model_dump() for p in products],
+                            "model_used": settings.gpu_model})
+
+        # 생성 스트리밍 (TTFT 측정)
+        user_content = _compose_user_content(message, ingredients, products)
+        chunks: list[str] = []
+        ttft: float | None = None
+        gen_start = time.perf_counter()
+        async with llm_slot():
+            client = get_async_llm_client()
+            stream = await client.chat.completions.create(
+                model=settings.gpu_model,
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": user_content}],
+                temperature=settings.gen_temperature,
+                max_tokens=settings.gen_max_tokens,
+                stream=True,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            async for chunk in stream:
+                delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+                if delta:
+                    if ttft is None:
+                        ttft = time.perf_counter() - gen_start
+                    chunks.append(delta)
+                    yield _sse("delta", {"text": delta})
+        gen_total = time.perf_counter() - gen_start
+        response_text = "".join(chunks)
+        spans["generate_ttft"] = ttft if ttft is not None else gen_total
+        spans["generate_decode"] = gen_total - spans["generate_ttft"]
+
+        await recommend_cache.set(message, gen_prompt_name, {
+            "ingredients": [i.model_dump() for i in ingredients],
+            "products": [p.model_dump() for p in products],
+            "response_text": response_text,
+            "model_used": settings.gpu_model,
+        })
+
+        spans["gate_wait"] = get_gate_wait_seconds()
+        spans["total"] = time.perf_counter() - t_req
+        spans["overhead"] = (spans["total"] - spans["cache_lookup"] - spans["extract"]
+                             - spans["retrieval"] - gen_total)
+        _record_latency(spans, cache="miss")
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        yield _sse("done", {"finish_reason": "stop"})
+    except LLMOverCapacityError:
+        # 스트림은 이미 200으로 시작됐을 수 있어 429 대신 error 이벤트로 전달.
+        metrics.recommend_requests_total.labels(status="rejected").inc()
+        yield _sse("error", {"error_code": "LLM_OVER_CAPACITY", "message": "요청이 많아 잠시 후 다시 시도해 주세요."})
+    except Exception as exc:
+        logger.warning("streaming recommend failed: %s", exc)
+        metrics.recommend_requests_total.labels(status="error").inc()
+        yield _sse("error", {"error_code": "INTERNAL_ERROR", "message": str(exc)})

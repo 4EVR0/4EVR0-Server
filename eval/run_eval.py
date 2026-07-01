@@ -26,6 +26,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
+from app.clients.llm_client import build_extract_extra_body  # noqa: E402
 from app.clients.llm_factory import get_async_llm_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint, SkinType  # noqa: E402
@@ -53,7 +54,7 @@ async def extract(client, message: str, system_prompt: str):
         ],
         temperature=0,
         response_format={"type": "json_object"},
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        extra_body=build_extract_extra_body(),
     )
     latency = time.perf_counter() - start
     raw = json.loads(resp.choices[0].message.content or "{}")
