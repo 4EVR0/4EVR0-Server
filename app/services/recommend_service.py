@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 # grounding 4.05→4.84, overall 4.47→4.77(temp=0, 결정론적).
 # v4: 한글 성분명을 우선 사용하고 제품 수·분량을 제한해 간결성과 완결성을 강화.
 #     응답 구조도 "성분 설명 → 제품 추천" 순서로 정렬(성분별 효능을 먼저 설명).
-_SYSTEM_PROMPT = load_prompt("recommend_response.v4")
+# v5: 출력 길이를 더 줄여(제품 2개·~400자) decode latency를 낮추는 실험용(P3). GEN_PROMPT_NAME로 선택.
+_SYSTEM_PROMPT = load_prompt(settings.gen_prompt_name)
 
 
 def _record_latency(spans: dict[str, float], cache: str) -> None:

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # True면 동시성 한도 초과 시 대기 대신 즉시 거절(HTTP 429). False면 한도 내로 직렬화하되
     # 초과분은 큐에서 대기(처리량 동일, latency 안정).
     llm_reject_over_capacity: bool = False
+    # 생성 프롬프트 버전(app/prompts/<name>.txt). latency/품질 실험용으로 GEN_PROMPT_NAME 로 교체.
+    gen_prompt_name: str = "recommend_response.v4"
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
     # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.
