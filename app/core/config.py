@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     # 초과분은 큐에서 대기(처리량 동일, latency 안정).
     llm_reject_over_capacity: bool = False
     # 생성 프롬프트 버전(app/prompts/<name>.txt). latency/품질 실험용으로 GEN_PROMPT_NAME 로 교체.
-    gen_prompt_name: str = "recommend_response.v4"
+    # v6: P3 스윗스팟 — v4 대비 total −30%(출력 토큰↓)이면서 품질 유지(OVERALL 4.52→4.46, grounding 동일).
+    gen_prompt_name: str = "recommend_response.v6"
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
     # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.
