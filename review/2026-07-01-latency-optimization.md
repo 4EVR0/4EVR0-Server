@@ -3,6 +3,33 @@
 > 계획: `review/2026-07-01-latency-optimization-plan.md`. 이 문서는 **각 phase의 측정 결과**를 누적한다.
 > 단건 저부하 분해(부하 테스트 아님). 도구: `load/latency_bench.py`, span 메트릭 `recommend_latency_span_seconds`.
 
+## 종합 정리 (executive summary)
+
+> **한 줄:** 단건 latency는 **generate/decode(≈80%)가 지배** — 여러 레버를 *측정으로* 걸러,
+> **체감(스트리밍)과 출력량(v6)** 은 잡고, **효과 없는 것(프롬프트/KV·guided)은 이유와 함께 기각**했다.
+
+**측정으로 밝힌 latency 구조 (RTX 3090 기준, 단건):**
+`total ≈ extract(1.6s) + retrieval(0.1s) + generate[prefill 1.1s + decode 8~9s]` → **decode가 76~87%.**
+
+| 레버 (Phase) | 무엇 | 결과 | 채택 | 근거 |
+|------|------|------|:---:|------|
+| **스트리밍 SSE** (P1) | 구조 데이터 즉시 + 토큰 스트림 | **체감 TTFT 10s→2.7s (~4.3x)** | ✅ | total 불변, 체감만 |
+| **출력 토큰↓ v6** (P3) | 간결 프롬프트(사용팁 삭제·~600자) | **total −30%(12→8.35s), 품질 유지**(OVERALL 4.52→4.46, grounding 동일) | ✅ | judge 게이트 |
+| 출력 토큰↓ v5 (P3) | 너무 공격적(~400자·2개) | −47%이나 grounding −0.75·format −0.80 | ❌ | judge 반려 |
+| 프롬프트 길이↓ (P2) | 시스템 프롬프트 축소 | 단건 ~1~5% | ❌ | prefill이 6%뿐(측정) |
+| KV/프리픽스 (P2) | 캐시 재사용 | 단건 ~1~2% | ❌ | prefill만·부하 레버지 단건 아님 |
+| guided decoding (P4) | 추출 스키마 강제 | latency·정확도 이득 0 | ❌ | 무효값·폴백 이미 0%(불필요) |
+| 검색(neo4j) | — | 0.8% | ❌ | 비병목(측정) |
+
+**핵심 교훈:** ① decode가 병목 → 체감(스트리밍)·출력량(v6)이 진짜 레버. ② 나머지는 *측정으로*
+불필요/무효임을 확인해 기각(추측 아님). ③ **품질이 걸리는 레버(출력↓)는 judge로, 신뢰성 레버(guided)는
+추출 eval로 게이트** — LLM을 유지한 채 eval 주도로 판단.
+
+**범위 밖(서빙쪽):** decode 자체 가속(**FP8**·speculative decoding), extract **작은 모델 라우팅** —
+단일 GPU 서빙 재구성이 필요해 별도 워크스트림. (부하 테스트 문서 §11과 동일 원칙)
+
+---
+
 ## P0. Baseline — 단건 latency 분해 (캐시 miss = 실제 GPU 경로)
 
 **측정 조건**
