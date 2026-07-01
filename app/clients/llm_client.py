@@ -12,6 +12,26 @@ from app.services.taxonomy_normalization_service import infer_effects
 PROMPT_NAME = "profile_extraction"
 _SYSTEM_PROMPT = load_prompt(PROMPT_NAME)
 
+# guided decoding용 프로필 스키마 — enum에서 동기화. 추출 출력을 유효 JSON·유효 enum 값으로 강제.
+PROFILE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "skin_types": {"type": "array", "items": {"type": "string", "enum": [e.value for e in SkinType]}},
+        "concerns": {"type": "array", "items": {"type": "string", "enum": [e.value for e in Concern]}},
+        "constraints": {"type": "array", "items": {"type": "string", "enum": [e.value for e in Constraint]}},
+    },
+    "required": ["skin_types", "concerns", "constraints"],
+    "additionalProperties": False,
+}
+
+
+def build_extract_extra_body() -> dict:
+    """추출 create() 의 extra_body. guided decoding 활성 시 스키마 강제를 추가."""
+    body: dict = {"chat_template_kwargs": {"enable_thinking": False}}
+    if settings.extract_guided_decoding:
+        body["guided_json"] = PROFILE_JSON_SCHEMA
+    return body
+
 
 async def call_llm(message: str) -> UserProfile:
     client = get_async_llm_client()
@@ -26,7 +46,7 @@ async def call_llm(message: str) -> UserProfile:
             ],
             temperature=0,
             response_format={"type": "json_object"},
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=build_extract_extra_body(),
         )
 
     raw = response.choices[0].message.content or "{}"

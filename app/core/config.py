@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    # 추출(LLM #1)에 guided decoding(JSON 스키마 강제) 사용 여부. 유효 JSON·유효 enum 값을 보장해
+    # 파싱 실패·규칙기반 폴백을 줄인다(신뢰성). P4 실험용 토글(EXTRACT_GUIDED_DECODING).
+    extract_guided_decoding: bool = False
     # GPU(vLLM) 동시 호출 한도. 단일 GPU 서빙 보호용 — 동시 요청이 몰릴 때 vLLM 큐 폭증·
     # 타임아웃 캐스케이드를 막는다(app/clients/llm_gate.py). 0 이하면 비활성(무제한, 기존 동작).
     # 부하 테스트로 적정값 탐색(baseline은 동시 10→25 구간에서 열화 시작).
