@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     neo4j_password: str = "password"
 
     postgres_dsn: str = "postgresql://user:password@localhost:5432/cosmetic"
+    # asyncpg 풀 크기(app/core/db.py). 세션 API는 가벼워 크게 필요 없다.
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 10
 
     redis_url: str = "redis://localhost:6379"
     # 추천 응답 캐시(app/repositories/recommend_cache.py). 같은 고민 문장 반복 시 GPU를 건너뛴다.
@@ -25,6 +28,14 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    # /health의 llm 상태 판정용 vLLM /v1/models 핑 타임아웃(초). LB 헬스체크 주기 안에
+    # 끝나야 하므로 요청 타임아웃(gpu_timeout_seconds)보다 훨씬 짧게.
+    llm_health_timeout_seconds: float = 3.0
+    # startup 워밍업(app/core/warmup.py). vLLM 모델 로드(수십초~분)를 기다렸다가 준비되는
+    # 즉시 더미 호출로 첫-요청 컴파일 꼬리를 흡수한다. 재시도 간격×횟수가 커버 범위.
+    warmup_enabled: bool = True
+    warmup_llm_max_attempts: int = 30
+    warmup_llm_retry_seconds: float = 10.0
     # 추출(LLM #1)에 guided decoding(JSON 스키마 강제) 사용 여부. 유효 JSON·유효 enum 값을 보장해
     # 파싱 실패·규칙기반 폴백을 줄인다(신뢰성). P4 실험용 토글(EXTRACT_GUIDED_DECODING).
     extract_guided_decoding: bool = False
