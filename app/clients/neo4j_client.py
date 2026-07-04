@@ -29,6 +29,21 @@ def _get_driver():
     return _driver
 
 
+async def ping() -> None:
+    """드라이버 싱글턴 생성 + 커넥션 1개 선확보 (startup 워밍업용). 실패 시 예외 전파."""
+    driver = _get_driver()
+    async with driver.session() as session:
+        await session.run("RETURN 1")
+
+
+async def close_driver() -> None:
+    """앱 종료 시 드라이버 정리 (lifespan shutdown에서 호출)."""
+    global _driver
+    if _driver is not None:
+        await _driver.close()
+        _driver = None
+
+
 async def query_products_by_ingredients(
     ingredient_names: list[str],
     appropriate_categories: list[str],

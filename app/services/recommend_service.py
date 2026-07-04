@@ -85,66 +85,82 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
 
     try:
-        # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
+        # 같은 키 동시 미스는 리더 1건만 GPU 계산(single-flight, 캐시 스탬피드 제거).
         _t = time.perf_counter()
-        with metrics.track_stage("extract"):
-            profile, extraction_method = await extract_with_fallback(message)
-        spans["extract"] = time.perf_counter() - _t
-        metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+        async with recommend_cache.single_flight(message, gen_prompt_name):
+            spans["flight_wait"] = time.perf_counter() - _t
 
-        # 2) Neo4j 조회 (효능→성분, 성분→제품)
-        _t = time.perf_counter()
-        with metrics.track_stage("neo4j"):
-            effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(effect_names)
+            # 대기 중 리더가 캐시를 채웠으면 GPU 없이 히트로 처리(coalesced).
+            cached = await recommend_cache.get(message, gen_prompt_name)
+            if cached is not None:
+                metrics.recommend_cache_total.labels(result="coalesced").inc()
+                metrics.recommend_requests_total.labels(status="ok").inc()
+                spans["total"] = time.perf_counter() - t_req
+                spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
+                _record_latency(spans, cache="coalesced")
+                return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
 
-            ingredients = [
-                IngredientResult(
-                    name=row["name"],
-                    kor_name=row.get("kor_name"),
-                    claim=row.get("claim"),
-                    eligibility_tier=row.get("eligibility_tier"),
-                    paper_ref=row.get("paper_ref"),
+            # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
+            _t = time.perf_counter()
+            with metrics.track_stage("extract"):
+                profile, extraction_method = await extract_with_fallback(message)
+            spans["extract"] = time.perf_counter() - _t
+            metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+
+            # 2) Neo4j 조회 (효능→성분, 성분→제품)
+            _t = time.perf_counter()
+            with metrics.track_stage("neo4j"):
+                effect_names = [e.value for e in profile.effects]
+                raw_ingredients = await query_ingredients_by_effects(effect_names)
+
+                ingredients = [
+                    IngredientResult(
+                        name=row["name"],
+                        kor_name=row.get("kor_name"),
+                        claim=row.get("claim"),
+                        eligibility_tier=row.get("eligibility_tier"),
+                        paper_ref=row.get("paper_ref"),
+                    )
+                    for row in raw_ingredients
+                ]
+
+                # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
+                top_ingredient_names = [i.name for i in ingredients[:10]]
+                cats = _appropriate_categories(profile.concerns)
+                raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            spans["retrieval"] = time.perf_counter() - _t
+            metrics.recommend_ingredients_found.observe(len(ingredients))
+
+            products = [
+                ProductResult(
+                    product_id=row["product_id"],
+                    product_name=row["product_name"],
+                    brand=row["brand"],
+                    category=row["category"],
+                    matched_count=row["matched_count"],
+                    matched_ingredients=row["matched_ingredients"],
                 )
-                for row in raw_ingredients
+                for row in raw_products
             ]
 
-            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
-            top_ingredient_names = [i.name for i in ingredients[:10]]
-            cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
-        spans["retrieval"] = time.perf_counter() - _t
-        metrics.recommend_ingredients_found.observe(len(ingredients))
+            # 3) LLM 응답 생성
+            _t = time.perf_counter()
+            with metrics.track_stage("llm_response"):
+                response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+            spans["generate"] = time.perf_counter() - _t
 
-        products = [
-            ProductResult(
-                product_id=row["product_id"],
-                product_name=row["product_name"],
-                brand=row["brand"],
-                category=row["category"],
-                matched_count=row["matched_count"],
-                matched_ingredients=row["matched_ingredients"],
-            )
-            for row in raw_products
-        ]
-
-        # 3) LLM 응답 생성
-        _t = time.perf_counter()
-        with metrics.track_stage("llm_response"):
-            response_text = await _build_llm_response(message, ingredients, products, system_prompt)
-        spans["generate"] = time.perf_counter() - _t
-
-        # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
-        await recommend_cache.set(message, gen_prompt_name, {
-            "ingredients": [i.model_dump() for i in ingredients],
-            "products": [p.model_dump() for p in products],
-            "response_text": response_text,
-            "model_used": settings.gpu_model,
-        })
+            # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
+            await recommend_cache.set(message, gen_prompt_name, {
+                "ingredients": [i.model_dump() for i in ingredients],
+                "products": [p.model_dump() for p in products],
+                "response_text": response_text,
+                "model_used": settings.gpu_model,
+            })
 
         spans["gate_wait"] = get_gate_wait_seconds()
         spans["total"] = time.perf_counter() - t_req
-        spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["extract"] - spans["retrieval"] - spans["generate"]
+        spans["overhead"] = (spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
+                             - spans["extract"] - spans["retrieval"] - spans["generate"])
         _record_latency(spans, cache="miss")
 
         metrics.recommend_requests_total.labels(status="ok").inc()
@@ -307,78 +323,98 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
 
     try:
+        # 같은 키 동시 미스는 리더 1건만 GPU 계산(single-flight, 캐시 스탬피드 제거).
         _t = time.perf_counter()
-        with metrics.track_stage("extract"):
-            profile, extraction_method = await extract_with_fallback(message)
-        spans["extract"] = time.perf_counter() - _t
-        metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+        async with recommend_cache.single_flight(message, gen_prompt_name):
+            spans["flight_wait"] = time.perf_counter() - _t
 
-        _t = time.perf_counter()
-        with metrics.track_stage("neo4j"):
-            effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(effect_names)
-            ingredients = [
-                IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
-                                 eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
-                for row in raw_ingredients
+            # 대기 중 리더가 캐시를 채웠으면 캐시 히트와 같은 프레임으로 서빙(coalesced).
+            cached = await recommend_cache.get(message, gen_prompt_name)
+            if cached is not None:
+                metrics.recommend_cache_total.labels(result="coalesced").inc()
+                metrics.recommend_requests_total.labels(status="ok").inc()
+                yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
+                                    "ingredients": cached["ingredients"], "products": cached["products"],
+                                    "model_used": cached["model_used"]})
+                yield _sse("delta", {"text": cached["response_text"]})
+                spans["total"] = time.perf_counter() - t_req
+                spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
+                _record_latency(spans, cache="coalesced")
+                yield _sse("done", {"finish_reason": "cache"})
+                return
+
+            _t = time.perf_counter()
+            with metrics.track_stage("extract"):
+                profile, extraction_method = await extract_with_fallback(message)
+            spans["extract"] = time.perf_counter() - _t
+            metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+
+            _t = time.perf_counter()
+            with metrics.track_stage("neo4j"):
+                effect_names = [e.value for e in profile.effects]
+                raw_ingredients = await query_ingredients_by_effects(effect_names)
+                ingredients = [
+                    IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
+                                     eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
+                    for row in raw_ingredients
+                ]
+                top_ingredient_names = [i.name for i in ingredients[:10]]
+                cats = _appropriate_categories(profile.concerns)
+                raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            spans["retrieval"] = time.perf_counter() - _t
+            metrics.recommend_ingredients_found.observe(len(ingredients))
+            products = [
+                ProductResult(product_id=row["product_id"], product_name=row["product_name"], brand=row["brand"],
+                              category=row["category"], matched_count=row["matched_count"],
+                              matched_ingredients=row["matched_ingredients"])
+                for row in raw_products
             ]
-            top_ingredient_names = [i.name for i in ingredients[:10]]
-            cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
-        spans["retrieval"] = time.perf_counter() - _t
-        metrics.recommend_ingredients_found.observe(len(ingredients))
-        products = [
-            ProductResult(product_id=row["product_id"], product_name=row["product_name"], brand=row["brand"],
-                          category=row["category"], matched_count=row["matched_count"],
-                          matched_ingredients=row["matched_ingredients"])
-            for row in raw_products
-        ]
 
-        # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
-        yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
-                            "ingredients": [i.model_dump() for i in ingredients],
-                            "products": [p.model_dump() for p in products],
-                            "model_used": settings.gpu_model})
+            # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
+            yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
+                                "ingredients": [i.model_dump() for i in ingredients],
+                                "products": [p.model_dump() for p in products],
+                                "model_used": settings.gpu_model})
 
-        # 생성 스트리밍 (TTFT 측정)
-        user_content = _compose_user_content(message, ingredients, products)
-        chunks: list[str] = []
-        ttft: float | None = None
-        gen_start = time.perf_counter()
-        async with llm_slot():
-            client = get_async_llm_client()
-            stream = await client.chat.completions.create(
-                model=settings.gpu_model,
-                messages=[{"role": "system", "content": system_prompt},
-                          {"role": "user", "content": user_content}],
-                temperature=settings.gen_temperature,
-                max_tokens=settings.gen_max_tokens,
-                stream=True,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
-            async for chunk in stream:
-                delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
-                if delta:
-                    if ttft is None:
-                        ttft = time.perf_counter() - gen_start
-                    chunks.append(delta)
-                    yield _sse("delta", {"text": delta})
-        gen_total = time.perf_counter() - gen_start
-        response_text = "".join(chunks)
-        spans["generate_ttft"] = ttft if ttft is not None else gen_total
-        spans["generate_decode"] = gen_total - spans["generate_ttft"]
+            # 생성 스트리밍 (TTFT 측정)
+            user_content = _compose_user_content(message, ingredients, products)
+            chunks: list[str] = []
+            ttft: float | None = None
+            gen_start = time.perf_counter()
+            async with llm_slot():
+                client = get_async_llm_client()
+                stream = await client.chat.completions.create(
+                    model=settings.gpu_model,
+                    messages=[{"role": "system", "content": system_prompt},
+                              {"role": "user", "content": user_content}],
+                    temperature=settings.gen_temperature,
+                    max_tokens=settings.gen_max_tokens,
+                    stream=True,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                )
+                async for chunk in stream:
+                    delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+                    if delta:
+                        if ttft is None:
+                            ttft = time.perf_counter() - gen_start
+                        chunks.append(delta)
+                        yield _sse("delta", {"text": delta})
+            gen_total = time.perf_counter() - gen_start
+            response_text = "".join(chunks)
+            spans["generate_ttft"] = ttft if ttft is not None else gen_total
+            spans["generate_decode"] = gen_total - spans["generate_ttft"]
 
-        await recommend_cache.set(message, gen_prompt_name, {
-            "ingredients": [i.model_dump() for i in ingredients],
-            "products": [p.model_dump() for p in products],
-            "response_text": response_text,
-            "model_used": settings.gpu_model,
-        })
+            await recommend_cache.set(message, gen_prompt_name, {
+                "ingredients": [i.model_dump() for i in ingredients],
+                "products": [p.model_dump() for p in products],
+                "response_text": response_text,
+                "model_used": settings.gpu_model,
+            })
 
         spans["gate_wait"] = get_gate_wait_seconds()
         spans["total"] = time.perf_counter() - t_req
-        spans["overhead"] = (spans["total"] - spans["cache_lookup"] - spans["extract"]
-                             - spans["retrieval"] - gen_total)
+        spans["overhead"] = (spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
+                             - spans["extract"] - spans["retrieval"] - gen_total)
         _record_latency(spans, cache="miss")
         metrics.recommend_requests_total.labels(status="ok").inc()
         yield _sse("done", {"finish_reason": "stop"})

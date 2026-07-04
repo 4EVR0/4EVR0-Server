@@ -40,8 +40,9 @@ recommend_requests_total = Counter(
 )
 
 # 요청당 latency 트레이스 — 파이프라인 단계별 소요시간(초).
-#   span = cache_lookup | extract | retrieval | gate_wait | generate | overhead | total
-#   (P1 스트리밍 후 generate를 generate_ttft/generate_decode로 분리)
+#   span = cache_lookup | flight_wait | extract | retrieval | gate_wait | generate | overhead | total
+#   (P1 스트리밍 후 generate를 generate_ttft/generate_decode로 분리.
+#    flight_wait = single-flight 락 대기 — 스탬피드 시 coalesced 요청이 여기서 기다린다)
 #   latency 최적화 실험에서 "어디서 시간이 가나"를 단건 단위로 분해한다.
 recommend_latency_span_seconds = Histogram(
     "recommend_latency_span_seconds",
@@ -51,7 +52,9 @@ recommend_latency_span_seconds = Histogram(
 )
 
 # 추천 응답 캐시 조회 결과 (hit = GPU 호출 0으로 처리 → 유효 처리량↑)
-#   result = hit | miss
+#   result = hit | miss | coalesced
+#   coalesced = 미스였지만 single-flight 대기 후 리더의 결과를 받아 GPU를 건너뛴 요청
+#   (스탬피드 제거 효과 = coalesced 수. miss만 실제로 GPU를 쳤다.)
 recommend_cache_total = Counter(
     "recommend_cache_total",
     "추천 응답 캐시 조회 결과 (hit = GPU 호출 없이 처리)",
