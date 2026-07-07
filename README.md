@@ -31,9 +31,64 @@
 | 서버 | MagicDNS 호스트명 | 역할 |
 |------|------------------|------|
 | 앱 서버 (Mac) | `macbook-pro-3.tailb70036.ts.net` | FastAPI + 웹 UI |
-| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net:18000` | vLLM (Qwen3.5-9B) |
+| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net:18000` | vLLM (`Qwen3.5-9B` AWQ int4) |
 | Neo4j 서버 (EC2) | `ip-172-31-56-102.tailb70036.ts.net:7687` | Graph DB |
 | 모니터링 서버 (EC2) | `monitoring-server-1.tailb70036.ts.net` | Prometheus + Grafana |
+
+---
+
+## 성능·품질 엔지니어링 (측정 기반 최적화)
+
+> 단일 GPU(RTX 3090) · `Qwen3.5-9B` · vLLM 서빙에서 **측정으로 병목을 찾고 → 레버를 걸고 →
+> 결과를 품질 게이트로 검증**하는 LLMOps 루프. 상세 근거·원자료는 `review/` 문서.
+
+### 1. 서빙 지연(latency) 최적화 — decode가 병목
+단건 latency를 span별로 분해하니 **generate/decode가 총 시간의 76~87%**. 병목을 정조준:
+
+| 레버 | 효과 | 성격 |
+|---|---|---|
+| **응답 스트리밍(SSE)** | 체감 TTFT **10s → 2.7s (~4.3×)** | 구조 데이터 즉시 + 토큰 스트림 |
+| **간결 프롬프트(v6)** | total **−30%** (12s → 8.35s), 품질 유지(judge OVERALL 4.52→4.46, grounding 동일) | 출력 토큰↓ |
+| **동시성 제어(세마포어+429)** | 과부하 시 실패율 **8.7% → 0%** | admission control(붕괴 방지) |
+| **프리픽스 캐싱** | 처리량 **+12%**, p95 **−11%** | vLLM 엔진 튜닝 |
+
+부하 테스트로 **처리량 천장 ≈ 0.76 RPS**(단일 8B GPU 한계)를 확인 → 근본 해결은 서빙 레버(양자화)로.
+
+### 2. 양자화 (AWQ int4) — 비용↓ 하되 품질 게이트로 검증 ⭐
+`Qwen3.5-9B` bf16 → AWQ int4 A/B. **"빠르게 만들되 품질 회귀를 eval로 막는다"** 규율로 채택 결정:
+
+| 지표 | bf16 | AWQ int4 | Δ |
+|---|---|---|---|
+| decode 속도(batch1) | 46 tok/s | **111 tok/s** | **2.4×** |
+| 동시 처리량(8스트림) | 254 tok/s | **572 tok/s** | **2.25×** |
+| 가중치 VRAM | 17.7GB | 5.3GB | −70% |
+| 최대 동시성 @32K ctx | ~2.3× | **10.3×** | KV 캐시 4.4× |
+| **품질 게이트(judge OVERALL)** | 4.46 | **4.58** (grounding 유지) | ✅ 통과 |
+
+→ **채택.** 트레이드오프는 TTFT +19%(전체에 묻힘)와 추출 precision 소폭 하락(recall은 상승)뿐.
+
+### 3. 콜드스타트 — 6분을 진단하고 90초로 (계획)
+신규 GPU 대여 시 서버 준비까지 **~6분**을 실측 분해:
+
+| 단계 | 비용 | 개선 수단 |
+|---|---|---|
+| 가중치 다운로드 | ~150–216s (전체의 58%) | 영구 볼륨 |
+| torch.compile | ~39–49s | compile 캐시 지속 |
+| init engine(cudagraph·KV) | ~87–107s | — |
+
+- **앱 사이드(구현·검증):** readiness 게이트(콜드 vLLM 라우팅 차단) + startup 워밍업 + 커넥션 풀링 + 캐시 single-flight.
+- **워밍업 효과 A/B(콜드 compile):** 첫 요청 컴파일 꼬리 **+4.42s → +1.25s** (워밍업 더미가 대신 지불, −72%).
+- **계획(인프라):** 영구 볼륨 + compile 캐시 → **~6분 → ~90초 + 첫 요청 꼬리 0** 기대.
+
+### 4. 품질 회귀 게이트 (eval-in-CI) ⭐
+프롬프트·모델·검색 변경이 품질을 떨어뜨리면 **CI가 자동 차단**. 유닛테스트가 "버그=머지 금지"라면 이건 "**품질 저하=머지 금지**":
+
+- **오프라인 eval 하네스:** 추출 정확도(concern F1·skin_type accuracy) + 생성 품질(LLM-as-judge — OVERALL·grounding·format, 외부 `gpt-4o-mini`, bootstrap 95% CI).
+- **게이트:** 결과를 임계값과 비교 → 미달 시 CI 실패 + PR 코멘트 점수 표(self-hosted 러너 + 라벨 트리거).
+- **검증:** 채택 AWQ 통과 / 실제 회귀 사례(프롬프트 v5, grounding **4.55→3.80**)를 **차단** 확인.
+
+> **방법론 — judge 게이트 규율:** 모든 채택 결정(양자화·프롬프트)은 "느낌"이 아니라
+> *judge OVERALL이 baseline CI 안 + grounding 무회귀*라는 동일 규율로 판정하고, 이를 §4에서 CI로 자동화했다.
 
 ---
 
@@ -153,9 +208,15 @@ python eval/run_eval.py --no-mlflow
 # 추천 응답 품질 평가 (외부 LLM judge 필요 — 생성기와 다른 모델)
 JUDGE_MODEL=<external-model> JUDGE_API_KEY=<key> \
   python eval/run_response_eval.py --gen-temperature 0
+
+# 품질 회귀 게이트 (임계 미달 시 exit 1 → CI 머지 차단)
+python eval/check_gate.py --extraction <run_eval.json> --response <run_response_eval.json>
 ```
 
-응답 평가는 자기 채점을 거부하며(외부 judge 강제), grounding·conciseness 등 5개 축을 1~5점으로 채점한다. 자세한 내용은 `eval/README.md` 참고.
+응답 평가는 자기 채점을 거부하며(외부 judge 강제), grounding·conciseness 등 5개 축을 1~5점으로 채점한다.
+품질 게이트는 PR에 `run-eval` 라벨을 붙이면 self-hosted 러너에서 자동 실행된다
+(`.github/workflows/eval-gate.yml` — 프롬프트·모델·검색 변경의 품질 회귀를 머지 전 차단).
+자세한 내용은 `eval/README.md`, `.github/workflows/README-eval-gate.md` 참고.
 
 ---
 
@@ -163,7 +224,7 @@ JUDGE_MODEL=<external-model> JUDGE_API_KEY=<key> \
 
 | 대상 | 레포 |
 |------|------|
-| GPU(vLLM) 서버 프로비저닝 (`setup_gpu.sh`) | [`GPU_Serving_Infra`](https://github.com/4EVR0/GPU_Serving_Infra) |
+| GPU(vLLM) 서버 프로비저닝 (`setup_tailscale.sh` + vast.ai 템플릿) | [`GPU_Serving_Infra`](https://github.com/4EVR0/GPU_Serving_Infra) |
 | 모니터링 스택 (Prometheus/Grafana/Loki) | [`Monitoring_Infra`](https://github.com/4EVR0/Monitoring_Infra) |
 
 GPU 인스턴스를 같은 호스트명(`vast-gpu-server-2`)으로 다시 등록하면 MagicDNS 주소가 유지되어 `.env` 수정이 불필요하다.
