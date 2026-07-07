@@ -17,6 +17,7 @@ span: cache_lookup / extract / retrieval / gate_wait / generate / overhead / tot
 
 import argparse
 import json
+import math
 import re
 import statistics
 import time
@@ -26,6 +27,18 @@ import uuid
 _SPANS = ["cache_lookup", "extract", "retrieval", "gate_wait",
           "generate", "generate_ttft", "generate_decode", "overhead", "total"]
 _BASE_MSG = "피부가 건조하고 각질이 일어나서 보습 잘 되는 화장품 추천해줘"
+
+
+def _percentile(values, q):
+    """nearest-rank 백분위. q∈[0,1]. rank=ceil(q*n)(1-index) → 0-index=rank-1.
+
+    기존 `int(q*len)`는 n=10의 p90을 index 9(=최댓값)로 잡아 한 칸 높게 왜곡됐다.
+    """
+    if not values:
+        raise ValueError("empty sequence")
+    ss = sorted(values)
+    idx = math.ceil(q * len(ss)) - 1
+    return ss[max(0, min(idx, len(ss) - 1))]
 
 
 def _post(base, path, payload=None):
@@ -78,12 +91,15 @@ def main():
     args = ap.parse_args()
 
     sid = _post(args.base, "/api/v1/sessions")["session_id"]
-    # 워밍업 1건(분포에서 제외)
+    fixed_msg = f"{_BASE_MSG} {uuid.uuid4().hex}"  # hit 모드용 고정 문장
+    # 워밍업 1건(분포에서 제외) — 서버/GPU 워밍
     _post(args.base, "/api/v1/recommend", {"session_id": sid, "message": "워밍업 " + uuid.uuid4().hex})
+    # hit 모드: 측정 전에 고정 문장으로 캐시를 채운다 → 첫 측정 요청이 miss(GPU)가 되지 않게
+    if args.mode == "hit":
+        _post(args.base, "/api/v1/recommend", {"session_id": sid, "message": fixed_msg})
 
     s0, c0 = _span_snapshot(args.base)
     totals, ttfts = [], []
-    fixed_msg = f"{_BASE_MSG} {uuid.uuid4().hex}"  # hit 모드용 고정 문장
     print(f"실행: n={args.n} mode={args.mode}  →  {args.base}")
     for i in range(args.n):
         if args.mode == "stream":
@@ -111,8 +127,8 @@ def main():
 
     def _dist(label, xs):
         ss = sorted(xs)
-        pq = lambda q: ss[min(len(ss) - 1, int(q * len(ss)))]
-        print(f"  {label}: n={len(ss)} mean={statistics.mean(ss):.3f}s p50={pq(0.5):.3f}s p90={pq(0.9):.3f}s max={ss[-1]:.3f}s")
+        print(f"  {label}: n={len(ss)} mean={statistics.mean(ss):.3f}s "
+              f"p50={_percentile(ss, 0.5):.3f}s p90={_percentile(ss, 0.9):.3f}s max={ss[-1]:.3f}s")
 
     print("\n── 클라이언트 측 분포 ──")
     if ttfts:
