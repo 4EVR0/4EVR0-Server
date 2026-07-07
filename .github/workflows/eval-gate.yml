@@ -18,6 +18,11 @@ on:
         description: "케이스 수 제한 (빠른 확인용, 비우면 전체 50)"
         required: false
 
+# PR 코멘트 게시용 (repo 기본 토큰 권한이 read라 명시적으로 승격)
+permissions:
+  contents: read
+  pull-requests: write
+
 # 같은 PR에 라벨 여러 번 → 이전 실행 취소
 concurrency:
   group: eval-gate-${{ github.event.pull_request.number || github.event.inputs.pr || github.ref }}
@@ -87,6 +92,7 @@ jobs:
 
       - name: PR 코멘트 (점수 표)
         if: always() && (github.event.pull_request.number || github.event.inputs.pr)
+        continue-on-error: true   # 코멘트 실패가 job 결과를 좌우하지 않게 (게이트가 판정의 유일 소스)
         run: |
           PR="${{ github.event.pull_request.number || github.event.inputs.pr }}"
           gh pr comment "$PR" --body-file gate.md --repo "$GITHUB_REPOSITORY"
