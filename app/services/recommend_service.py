@@ -423,6 +423,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
         metrics.recommend_requests_total.labels(status="rejected").inc()
         yield _sse("error", {"error_code": "LLM_OVER_CAPACITY", "message": "요청이 많아 잠시 후 다시 시도해 주세요."})
     except Exception as exc:
+        # 상세(내부 호스트·경로·라이브러리 정보 가능)는 서버 로그에만. 클라이언트엔 일반 메시지.
         logger.warning("streaming recommend failed: %s", exc)
         metrics.recommend_requests_total.labels(status="error").inc()
-        yield _sse("error", {"error_code": "INTERNAL_ERROR", "message": str(exc)})
+        yield _sse("error", {"error_code": "INTERNAL_ERROR",
+                             "message": "일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요."})
