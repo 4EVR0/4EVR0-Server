@@ -63,7 +63,7 @@ async def query_products_by_ingredients(
 
     query = f"""
     UNWIND $ingredient_names AS ing_name
-    MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient {{inci_name: ing_name}})
+    MATCH (i:Ingredient {{inci_name: ing_name}})<-[:CONTAINS]-(prod:Product)
     WHERE prod.category IN $appropriate_categories
     WITH prod,
          COUNT(DISTINCT i.inci_name) AS matched_count,
@@ -105,7 +105,7 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT 20 = distinct 성분 20개 보장
     query = """
     UNWIND $effects AS effect_code
-    MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect {effect_code: effect_code})
+    MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)
     WITH i, e, r,
          CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
     ORDER BY ev_rank, r.graph_score DESC
@@ -147,7 +147,7 @@ async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
     driver = _get_driver()
     query = """
     UNWIND $effects AS effect_code
-    MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect {effect_code: effect_code})
+    MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)<-[:CONTAINS]-(prod:Product)
     RETURN
         e.effect_code    AS effect_code,
         e.effect_name_en AS effect_name,
