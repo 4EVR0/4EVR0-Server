@@ -1,0 +1,98 @@
+name: eval-gate
+
+# 품질 회귀 게이트 (이슈 #41).
+# GPU(vLLM)가 ephemeral(세션마다 대여)이라 "매 PR 자동"은 불가 →
+#   PR에 `run-eval` 라벨을 붙이면 실행 (GPU 떠있을 때만), 또는 수동 dispatch.
+# 실행: self-hosted 러너(Mac) — Tailscale로 vLLM(GPU)·Neo4j 접근, 로컬 pg/redis 사용.
+# 판정: check_gate.py 가 임계 미달이면 job 실패 → (브랜치 보호 시) 머지 차단 + PR 코멘트.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "코멘트를 남길 PR 번호 (선택)"
+        required: false
+      limit:
+        description: "케이스 수 제한 (빠른 확인용, 비우면 전체 50)"
+        required: false
+
+# 같은 PR에 라벨 여러 번 → 이전 실행 취소
+concurrency:
+  group: eval-gate-${{ github.event.pull_request.number || github.event.inputs.pr || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval-gate:
+    # 라벨이 정확히 run-eval 일 때만 (다른 라벨엔 안 돎), 또는 수동 실행
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'run-eval'
+    runs-on: [self-hosted]
+    timeout-minutes: 45
+    env:
+      # ── 비민감(기본값) — 필요 시 repo Variables 로 덮어쓰기 ──
+      GPU_MODEL: ${{ vars.GPU_MODEL || 'cyankiwi/Qwen3.5-9B-AWQ-4bit' }}
+      POSTGRES_DSN: ${{ vars.POSTGRES_DSN || 'postgresql://cosmetic_user:cosmetic_pass@localhost:5432/cosmetic_db' }}
+      REDIS_URL: ${{ vars.REDIS_URL || 'redis://localhost:6379' }}
+      NEO4J_USER: ${{ vars.NEO4J_USER || 'neo4j' }}
+      RECOMMEND_CACHE_ENABLED: "false"   # 캐시가 회귀를 가리지 않게
+      # ── 민감/환경별 (repo Secrets 필수) ──
+      GPU_SERVER_URL: ${{ secrets.GPU_SERVER_URL }}
+      NEO4J_URI: ${{ secrets.NEO4J_URI }}
+      NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL || 'gpt-4o-mini' }}
+      JUDGE_API_KEY: ${{ secrets.JUDGE_API_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: preflight — vLLM(GPU) 도달 확인
+        run: |
+          echo "GPU: $GPU_SERVER_URL  model=$GPU_MODEL"
+          if ! curl -sf -m 8 "$GPU_SERVER_URL/v1/models" >/dev/null; then
+            echo "::error::vLLM 미도달 — GPU 인스턴스를 띄우고(모델=$GPU_MODEL) 다시 라벨을 붙이세요."
+            exit 1
+          fi
+          # 서빙 모델과 GPU_MODEL 일치 확인 (불일치 시 404→규칙기반 폴백으로 eval 왜곡)
+          served=$(curl -s -m 8 "$GPU_SERVER_URL/v1/models" | python3 -c "import sys,json;print(json.load(sys.stdin)['data'][0]['id'])")
+          [ "$served" = "$GPU_MODEL" ] || { echo "::error::서빙모델($served) ≠ GPU_MODEL($GPU_MODEL)"; exit 1; }
+
+      - name: deps
+        run: pip install -q -r requirements.txt httpx openai
+
+      - name: 추출 eval
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python eval/run_eval.py --no-mlflow \
+            ${LIMIT:+--limit $LIMIT} --out eval/results/_ci_extraction.json
+
+      - name: 생성 eval (judge)
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python eval/run_response_eval.py --no-mlflow \
+            ${LIMIT:+--limit $LIMIT} --out eval/results/_ci_response.json
+
+      - name: 품질 게이트 판정
+        id: gate
+        run: |
+          set +e
+          python eval/check_gate.py \
+            --extraction eval/results/_ci_extraction.json \
+            --response   eval/results/_ci_response.json \
+            --md-out gate.md
+          echo "gate_exit=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: PR 코멘트 (점수 표)
+        if: always() && (github.event.pull_request.number || github.event.inputs.pr)
+        run: |
+          PR="${{ github.event.pull_request.number || github.event.inputs.pr }}"
+          gh pr comment "$PR" --body-file gate.md --repo "$GITHUB_REPOSITORY"
+
+      - name: 게이트 실패 시 job 실패 (머지 차단)
+        if: steps.gate.outputs.gate_exit != '0'
+        run: |
+          echo "::error::품질 게이트 미달 — 위 표 참고. 머지 차단."
+          exit 1

@@ -1,0 +1,16 @@
+{
+  "_comment": "품질 회귀 게이트 임계값 (이슈 #41). 채택 모델(AWQ int4, 2026-07-07) 실측 아래로 마진을 두고, P3 v5 붕괴(grounding 3.80/overall 4.04)는 확실히 차단하도록 보정. min=이상이어야 통과, max=이하여야 통과.",
+  "_baseline_ref": "AWQ 2026-07-07: overall 4.58, grounding 4.52, format 4.78, concern_f1 0.8409, skin 0.96. bf16 baseline: overall 4.46, grounding 4.55, concern_f1 0.8743.",
+  "extraction": {
+    "concern_f1":          { "min": 0.83, "label": "concern F1" },
+    "skin_type_accuracy":  { "min": 0.94, "label": "skin_type 정확도" },
+    "invalid_value_rate":  { "max": 0.02, "label": "무효값 비율" },
+    "error_rate":          { "max": 0.00, "label": "추출 에러율" }
+  },
+  "response": {
+    "resp_overall":          { "min": 4.40, "label": "judge OVERALL" },
+    "resp_grounding":        { "min": 4.30, "label": "grounding" },
+    "resp_format_adherence": { "min": 4.30, "label": "format 준수" },
+    "error_rate":            { "max": 0.00, "label": "생성 에러율" }
+  }
+}
