@@ -73,3 +73,6 @@ repo **Settings → Secrets and variables → Actions**:
 ## 향후 (이슈 #41 C4)
 - #39(가드레일)·#40(검색 eval)의 지표가 생기면 `gate_config.json`에 섹션 추가 → 단일 품질 CI로 통합.
 - 경로 필터 자동 라벨링(프롬프트/서비스 건드린 PR에 자동 `run-eval`)은 확장 과제.
+
+## 검증 이력
+- 2026-07-07: eval-gate 파이프라인 실호스트 검증 (이슈 #41). AWQ 서빙 → 추출·생성 eval → 게이트 동작 확인.
