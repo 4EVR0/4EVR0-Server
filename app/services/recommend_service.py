@@ -13,6 +13,7 @@ from app.domain.enums import Concern
 from app.prompts import load_prompt
 from app.repositories import recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
+from app.services.product_image_service import build_product_image_url
 
 # concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
 _LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
@@ -123,18 +124,28 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             ]
 
             # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
-            top_ingredient_names = [i.name for i in ingredients[:10]]
+            # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
+            ingredient_scores = [
+                {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
+                for r in raw_ingredients[:10]
+            ]
             cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            raw_products = await query_products_by_ingredients(
+                ingredient_scores, appropriate_categories=cats,
+                min_relevance_ratio=settings.product_min_relevance_ratio,
+                min_matched_count=settings.product_min_matched_count,
+            )
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
             products = [
                 ProductResult(
                     product_id=row["product_id"],
+                    goods_no=row.get("goods_no"),
                     product_name=row["product_name"],
                     brand=row["brand"],
                     category=row["category"],
+                    image_url=build_product_image_url(row.get("goods_no") or row["product_id"]),
                     matched_count=row["matched_count"],
                     matched_ingredients=row["matched_ingredients"],
                 )
@@ -353,14 +364,25 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
                 for row in raw_ingredients
             ]
-            top_ingredient_names = [i.name for i in ingredients[:10]]
+            # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
+            ingredient_scores = [
+                {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
+                for r in raw_ingredients[:10]
+            ]
             cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            raw_products = await query_products_by_ingredients(
+                ingredient_scores, appropriate_categories=cats,
+                min_relevance_ratio=settings.product_min_relevance_ratio,
+                min_matched_count=settings.product_min_matched_count,
+            )
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [
-                ProductResult(product_id=row["product_id"], product_name=row["product_name"], brand=row["brand"],
-                              category=row["category"], matched_count=row["matched_count"],
+                ProductResult(product_id=row["product_id"], goods_no=row.get("goods_no"),
+                              product_name=row["product_name"], brand=row["brand"],
+                              category=row["category"],
+                              image_url=build_product_image_url(row.get("goods_no") or row["product_id"]),
+                              matched_count=row["matched_count"],
                               matched_ingredients=row["matched_ingredients"])
                 for row in raw_products
             ]

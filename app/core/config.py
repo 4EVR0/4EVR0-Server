@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     recommend_cache_enabled: bool = True
     recommend_cache_ttl_seconds: int = 86400
 
+    # 제품 검색 정밀도 (이슈: 성분 겹침으로 목적-불일치 제품이 추천되던 문제):
+    #   (a) 제품을 "성분 개수"가 아니라 "성분의 고민-관련도(graph_score) 합"으로 랭킹.
+    #   (b1) 최고 점수 대비 이 비율 미만 제품 컷(0=컷 없음).
+    product_min_relevance_ratio: float = 0.2
+    #   (b2) 최소 매칭 성분 수 — 제너럴리스트 성분 1개만 겹치는 제품(예: 기미앰플이 니아신아마이드만
+    #        겹쳐 여드름에 추천) 컷. 2로 올리면 "단일 성분 매칭" 제거. 1=컷 없음(데이터 희소 시 안전).
+    product_min_matched_count: int = 2
+
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
@@ -53,6 +61,20 @@ class Settings(BaseSettings):
     gen_temperature: float = 0.3
     # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.
     gen_max_tokens: int = 1200
+
+    # 추천 제품 이미지. public은 공개 S3/CDN URL을 조립하고, presigned는 AWS 자격 증명으로
+    # 제한 시간 URL을 생성한다. 현재 크롤링 이미지는
+    # oliveyoung_images/goodsNo=<goodsNo>/main.jpg 패턴으로 저장되어 있다.
+    product_image_url_mode: str = "public"
+    product_image_bucket: str = "oliveyoung-crawl-data"
+    product_image_prefix: str = "oliveyoung_images"
+    product_image_base_url: str = "https://oliveyoung-crawl-data.s3.amazonaws.com/oliveyoung_images"
+    product_image_extension: str = ".jpg"
+    product_image_presigned_expires_seconds: int = 3600
+
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str | None = None
 
     class Config:
         env_file = ".env"

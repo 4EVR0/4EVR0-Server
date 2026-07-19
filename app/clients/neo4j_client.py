@@ -45,42 +45,68 @@ async def close_driver() -> None:
 
 
 async def query_products_by_ingredients(
-    ingredient_names: list[str],
+    ingredient_scores: list[dict[str, Any]],
     appropriate_categories: list[str],
+    min_relevance_ratio: float = 0.0,
+    min_matched_count: int = 1,
 ) -> list[dict[str, Any]]:
-    """핵심 성분을 가장 많이 포함한 제품을 순서대로 반환한다.
+    """고민-관련도가 높은 성분을 가진 제품을 관련도 순으로 반환한다.
 
-    appropriate_categories: 허용할 카테고리 목록 (recommend_service에서 concern 기반으로 결정).
+    ingredient_scores: [{"name": inci_name, "weight": float}, ...]
+        weight = 그 성분의 이 고민에 대한 관련도(graph_score). 제품 점수 = 매칭 성분 weight 합.
+        → 단순 "성분 개수"가 아니라 관련도 가중이라, 제너럴리스트 성분(예: 나이아신아마이드)만
+          겹치는 목적-불일치 제품이 위로 못 올라온다.
+    appropriate_categories: 허용 카테고리(포맷) — recommend_service에서 concern 기반 결정.
+    min_relevance_ratio: 최고 점수 대비 이 비율 미만 제품은 컷(0=컷 없음, 가중 랭킹만).
+    min_matched_count: 최소 매칭 성분 수 — 제너럴리스트 성분 1개만 겹치는 목적-불일치 제품 컷(1=컷 없음).
     """
-    if not ingredient_names:
+    if not ingredient_scores:
         return []
 
     driver = _get_driver()
     params: dict[str, Any] = {
-        "ingredient_names": ingredient_names,
+        "ingredient_scores": ingredient_scores,
         "appropriate_categories": appropriate_categories,
+        "min_ratio": float(min_relevance_ratio),
+        "min_matched": int(min_matched_count),
     }
 
-    query = f"""
-    UNWIND $ingredient_names AS ing_name
-    MATCH (i:Ingredient {{inci_name: ing_name}})<-[:CONTAINS]-(prod:Product)
+    query = """
+    UNWIND $ingredient_scores AS isc
+    MATCH (i:Ingredient {inci_name: isc.name})<-[:CONTAINS]-(prod:Product)
     WHERE prod.category IN $appropriate_categories
     WITH prod,
-         COUNT(DISTINCT i.inci_name) AS matched_count,
-         COLLECT(DISTINCT i.inci_name) AS matched_ingredients
-    ORDER BY matched_count DESC, prod.product_name
-    WITH prod.product_name AS product_name,
-         head(collect(prod))          AS prod,
-         head(collect(matched_count)) AS matched_count,
-         head(collect(matched_ingredients)) AS matched_ingredients
+         COUNT(DISTINCT i.inci_name)   AS matched_count,
+         COLLECT(DISTINCT i.inci_name) AS matched_ingredients,
+         SUM(coalesce(isc.weight, 1.0)) AS relevance_score
+    ORDER BY relevance_score DESC, prod.product_name
+    // 동일 이름 제품 중복 제거(원본 동작 유지)
+    WITH prod.product_name                  AS product_name,
+         head(collect(prod))                AS prod,
+         head(collect(matched_count))       AS matched_count,
+         head(collect(matched_ingredients)) AS matched_ingredients,
+         head(collect(relevance_score))     AS relevance_score
+    // (b) 상대 임계: 최고 점수 대비 min_ratio 미만은 컷
+    WITH collect({
+             product_name: product_name, prod: prod, matched_count: matched_count,
+             matched_ingredients: matched_ingredients, relevance_score: relevance_score
+         }) AS rows,
+         max(relevance_score) AS max_score
+    UNWIND rows AS row
+    WITH row, max_score
+    WHERE max_score > 0
+      AND row.matched_count >= $min_matched
+      AND row.relevance_score >= $min_ratio * max_score
     RETURN
-        prod.product_id     AS product_id,
-        product_name        AS product_name,
-        prod.brand          AS brand,
-        prod.category       AS category,
-        matched_count       AS matched_count,
-        matched_ingredients AS matched_ingredients
-    ORDER BY matched_count DESC, product_name
+        toString(coalesce(row.prod.product_id, row.prod.goodsNo, row.prod.goods_no)) AS product_id,
+        toString(coalesce(row.prod.goodsNo, row.prod.goods_no, row.prod.product_id)) AS goods_no,
+        row.product_name        AS product_name,
+        row.prod.brand          AS brand,
+        row.prod.category       AS category,
+        row.matched_count       AS matched_count,
+        row.matched_ingredients AS matched_ingredients,
+        row.relevance_score     AS relevance_score
+    ORDER BY row.relevance_score DESC, row.matched_count DESC, product_name
     LIMIT 5
     """
     try:
@@ -88,7 +114,13 @@ async def query_products_by_ingredients(
         async with driver.session() as session:
             result = await session.run(query, **params)
             rows = [dict(record) async for record in result]
-        _log_query("query_products_by_ingredients", {"count": len(ingredient_names)}, (time.perf_counter() - start) * 1000, len(rows))
+            # 폴백: 커버리지 임계가 결과를 통째로 비우면(희소 고민) 임계 없이 재조회 —
+            # "무관 제품 컷"이 "제품 0개"가 되지 않게. (가중 랭킹 순서는 유지)
+            if not rows and int(min_matched_count) > 1:
+                fb = {**params, "min_matched": 1}
+                result = await session.run(query, **fb)
+                rows = [dict(record) async for record in result]
+        _log_query("query_products_by_ingredients", {"count": len(ingredient_scores)}, (time.perf_counter() - start) * 1000, len(rows))
         return rows
     except Exception as exc:
         logger.warning("Neo4j product query failed: %s", exc)
