@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     #   (b2) 최소 매칭 성분 수 — 제너럴리스트 성분 1개만 겹치는 제품(예: 기미앰플이 니아신아마이드만
     #        겹쳐 여드름에 추천) 컷. 2로 올리면 "단일 성분 매칭" 제거. 1=컷 없음(데이터 희소 시 안전).
     product_min_matched_count: int = 2
+    # 성분→효능(AFFECTS) 엣지 graph_score 임계 — 이 미만 엣지 무시(cosing 저품질 엣지 노이즈 컷).
+    # retrieval eval(#40)로 A/B해 정한 값. 0=off. (결과 비면 폴백으로 임계 없이 재조회)
+    ingredient_min_graph_score: float = 0.0
 
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"

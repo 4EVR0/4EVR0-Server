@@ -203,7 +203,7 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     ],
     Concern.OILY_SKIN: [
         Effect.SEBUM_REGULATION,
-        Effect.ANTI_INFLAMMATORY,
+        # ANTI_INFLAMMATORY 제거(#40): 지성 자체는 염증 아님 → 진정 성분/제품 유입으로 precision↓. 염증은 ACNE 몫.
     ],
     Concern.SENSITIVE_SKIN: [
         Effect.SOOTHING,
@@ -257,7 +257,7 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     Concern.HYPERPIGMENTATION: [
         Effect.DEPIGMENTING,
         Effect.BRIGHTENING,
-        Effect.ANTI_INFLAMMATORY,
+        # ANTI_INFLAMMATORY 제거(#40): 기존 색소 개선엔 tangential(진정 성분 유입) → precision↓.
     ],
     Concern.DULLNESS: [
         Effect.BRIGHTENING,
@@ -294,7 +294,7 @@ CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
     ],
     Concern.WRINKLES: [
         Effect.ANTI_AGING,
-        Effect.HYDRATING,
+        # HYDRATING 제거(#40): 수분은 주름 '치료'가 아닌 generic 효능 → 보습 제품 유입으로 precision↓.
     ],
     Concern.LOSS_OF_ELASTICITY: [
         Effect.ANTI_AGING,
