@@ -35,7 +35,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern  # noqa: E402
 from app.services.taxonomy_normalization_service import infer_effects  # noqa: E402
-from app.services.recommend_service import _appropriate_categories, filter_purpose_mismatch  # noqa: E402
+from app.services.recommend_service import _appropriate_categories, filter_by_target_concerns  # noqa: E402
 from app.clients.neo4j_client import (  # noqa: E402
     close_driver,
     query_ingredients_by_effects,
@@ -98,7 +98,7 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
         min_relevance_ratio=settings.product_min_relevance_ratio,
         min_matched_count=settings.product_min_matched_count,
     )
-    products = filter_purpose_mismatch(products, concerns)
+    products = filter_by_target_concerns(products, concerns)
     ing_names = [r["name"] for r in raw_ings[:_TOP_INGREDIENTS]]
 
     # 랭킹 품질: 상위 성분 중 pubmed_evidence 비율

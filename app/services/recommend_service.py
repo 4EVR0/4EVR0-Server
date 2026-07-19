@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
@@ -69,6 +70,51 @@ def _purpose_mismatch(product_name: str, concerns: list[Concern]) -> bool:
 def filter_purpose_mismatch(products: list[dict], concerns: list[Concern]) -> list[dict]:
     """목적-불일치 제품을 걸러낸다. 전부 걸러지면(과필터) 원본 유지(제품 0개 방지)."""
     kept = [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
+    return kept if kept else products
+
+
+# ── 제품 목적 필터 (데이터 기반, 이슈 #56) ────────────────────────────────
+# LLM 라벨(app/data/product_concerns.json)로 제품의 타겟 고민을 알고, 요청 고민과 **그룹**이
+# 겹치는 제품만 남긴다. 성분만 겹치는 목적-불일치 제품(기미앰플→여드름 등)을 근본적으로 컷.
+# 라벨 없는 제품은 이름 휴리스틱(filter_purpose_mismatch)으로 폴백.
+_CONCERN_GROUP: dict[str, str] = {}
+for _grp, _members in {
+    "ACNE_OIL": ("ACNE", "COMEDONES", "PORE_CONGESTION", "ENLARGED_PORES", "OILY_SKIN"),
+    "SENSITIVITY": ("SENSITIVE_SKIN", "REDNESS", "IRRITATED_SKIN", "ATOPIC_PRONE", "ROSACEA_PRONE"),
+    "DRYNESS": ("DRY_SKIN", "DEHYDRATED_SKIN", "FLAKY_SKIN", "ROUGH_TEXTURE", "BARRIER_DAMAGE"),
+    "PIGMENTATION": ("HYPERPIGMENTATION", "DULLNESS", "UNEVEN_SKIN_TONE", "BLEMISHES",
+                     "POST_ACNE_MARKS", "DARK_CIRCLES"),
+    "PROTECTION": ("SUNBURN",),
+    "AGING": ("AGING_SIGNS", "WRINKLES", "LOSS_OF_ELASTICITY", "SAGGING_SKIN"),
+}.items():
+    for _m in _members:
+        _CONCERN_GROUP[_m] = _grp
+
+_PRODUCT_CONCERNS_PATH = Path(__file__).resolve().parent.parent / "data" / "product_concerns.json"
+try:
+    _PRODUCT_CONCERNS: dict[str, list[str]] = json.loads(_PRODUCT_CONCERNS_PATH.read_text())
+except Exception:  # 파일 없으면 라벨 필터 비활성(이름 휴리스틱만)
+    _PRODUCT_CONCERNS = {}
+
+
+def _concern_groups(concern_codes) -> set[str]:
+    return {_CONCERN_GROUP[c] for c in concern_codes if c in _CONCERN_GROUP}
+
+
+def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> list[dict]:
+    """제품의 타겟 고민 그룹이 요청 고민 그룹과 겹치는 제품만 남긴다.
+    라벨 없는 제품은 이름 휴리스틱 폴백. 전부 걸러지면 원본 유지(제품 0개 방지)."""
+    q_groups = _concern_groups(c.value for c in concerns)
+    if not q_groups or not _PRODUCT_CONCERNS:
+        return filter_purpose_mismatch(products, concerns)
+    kept = []
+    for p in products:
+        labels = _PRODUCT_CONCERNS.get(str(p.get("product_id")))
+        if labels is None:  # 라벨 없음 → 이름 휴리스틱
+            if not _purpose_mismatch(p.get("product_name", ""), concerns):
+                kept.append(p)
+        elif _concern_groups(labels) & q_groups:  # 그룹 겹침
+            kept.append(p)
     return kept if kept else products
 
 
@@ -168,7 +214,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 min_relevance_ratio=settings.product_min_relevance_ratio,
                 min_matched_count=settings.product_min_matched_count,
             )
-            raw_products = filter_purpose_mismatch(raw_products, profile.concerns)
+            raw_products = filter_by_target_concerns(raw_products, profile.concerns)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
@@ -410,7 +456,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 min_relevance_ratio=settings.product_min_relevance_ratio,
                 min_matched_count=settings.product_min_matched_count,
             )
-            raw_products = filter_purpose_mismatch(raw_products, profile.concerns)
+            raw_products = filter_by_target_concerns(raw_products, profile.concerns)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [

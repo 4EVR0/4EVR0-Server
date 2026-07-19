@@ -21,3 +21,4 @@ mlartifacts/
 
 # 앱 런타임 로그 (Alloy가 tail하는 파일)
 logs/
+scripts/out/
