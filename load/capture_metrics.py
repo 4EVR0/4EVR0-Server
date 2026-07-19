@@ -1,8 +1,8 @@
 """서버측 `/metrics` 스냅샷 + before/after 비교 도구.
 
 Locust 가 보는 건 '클라이언트 측'(응답시간·에러율)이다. 이 스크립트는 '서버 측' Prometheus
-메트릭(`recommend_stage_latency_seconds`, 폴백률, 요청 결과)을 떠서, 부하 전/후를 비교한다.
-→ "느려진 게 어느 단계 때문인가(extract/neo4j/llm_response)"를 단계별로 분해해 본다.
+메트릭(`recommend_latency_span_seconds`, 폴백률, 요청 결과)을 떠서, 부하 전/후를 비교한다.
+→ "느려진 게 어느 단계 때문인가(extract/retrieval/generate)"를 단계별로 분해해 본다.
 
 사용:
     # 스냅샷 저장
@@ -15,11 +15,11 @@ Locust 가 보는 건 '클라이언트 측'(응답시간·에러율)이다. 이 
 import argparse
 import json
 import re
-import sys
 import urllib.request
 from datetime import datetime, timezone
 
-_STAGES = ("extract", "neo4j", "llm_response")
+# recommend_latency_span_seconds 의 주요 span (단계별 분해). 전체 span 목록은 app/core/metrics.py 참고.
+_SPANS = ("extract", "retrieval", "generate", "total")
 
 
 def scrape(base_url: str) -> dict:
@@ -28,14 +28,14 @@ def scrape(base_url: str) -> dict:
     with urllib.request.urlopen(url, timeout=10) as resp:
         text = resp.read().decode("utf-8")
 
-    stage_sum, stage_count, methods, requests = {}, {}, {}, {}
+    span_sum, span_count, methods, requests = {}, {}, {}, {}
     for line in text.splitlines():
-        m = re.match(r'recommend_stage_latency_seconds_sum\{stage="([^"]+)"\}\s+([\d.eE+-]+)', line)
+        m = re.match(r'recommend_latency_span_seconds_sum\{span="([^"]+)"\}\s+([\d.eE+-]+)', line)
         if m:
-            stage_sum[m.group(1)] = float(m.group(2))
-        m = re.match(r'recommend_stage_latency_seconds_count\{stage="([^"]+)"\}\s+([\d.eE+-]+)', line)
+            span_sum[m.group(1)] = float(m.group(2))
+        m = re.match(r'recommend_latency_span_seconds_count\{span="([^"]+)"\}\s+([\d.eE+-]+)', line)
         if m:
-            stage_count[m.group(1)] = float(m.group(2))
+            span_count[m.group(1)] = float(m.group(2))
         m = re.match(r'profile_extraction_method_total\{method="([^"]+)"\}\s+([\d.eE+-]+)', line)
         if m:
             methods[m.group(1)] = float(m.group(2))
@@ -46,8 +46,8 @@ def scrape(base_url: str) -> dict:
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "base_url": base_url,
-        "stage_sum": stage_sum,
-        "stage_count": stage_count,
+        "span_sum": span_sum,
+        "span_count": span_count,
         "methods": methods,
         "requests": requests,
     }
@@ -55,10 +55,10 @@ def scrape(base_url: str) -> dict:
 
 def _print_snapshot(snap: dict) -> None:
     print(f"  스냅샷 @ {snap['timestamp']}  ({snap['base_url']})")
-    print(f"  {'stage':<14}{'누적요청':>8}{'평균(s)':>10}")
-    for s in _STAGES:
-        c = snap["stage_count"].get(s, 0)
-        avg = (snap["stage_sum"].get(s, 0) / c) if c else 0
+    print(f"  {'span':<14}{'누적요청':>8}{'평균(s)':>10}")
+    for s in _SPANS:
+        c = snap["span_count"].get(s, 0)
+        avg = (snap["span_sum"].get(s, 0) / c) if c else 0
         print(f"  {s:<14}{int(c):>8}{avg:>10.3f}")
     ok = snap["requests"].get("ok", 0)
     err = snap["requests"].get("error", 0)
@@ -70,10 +70,10 @@ def diff(before: dict, after: dict) -> None:
     print("\n" + "═" * 60)
     print("  서버측 메트릭 before/after 비교 (부하 구간 증분)")
     print("═" * 60)
-    print(f"  {'stage':<14}{'요청수Δ':>8}{'평균(s)':>12}")
-    for s in _STAGES:
-        dc = after["stage_count"].get(s, 0) - before["stage_count"].get(s, 0)
-        ds = after["stage_sum"].get(s, 0) - before["stage_sum"].get(s, 0)
+    print(f"  {'span':<14}{'요청수Δ':>8}{'평균(s)':>12}")
+    for s in _SPANS:
+        dc = after["span_count"].get(s, 0) - before["span_count"].get(s, 0)
+        ds = after["span_sum"].get(s, 0) - before["span_sum"].get(s, 0)
         avg = (ds / dc) if dc else 0
         print(f"  {s:<14}{int(dc):>8}{avg:>12.3f}")
 
