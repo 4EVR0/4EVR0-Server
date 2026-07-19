@@ -102,32 +102,30 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
             # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
             _t = time.perf_counter()
-            with metrics.track_stage("extract"):
-                profile, extraction_method = await extract_with_fallback(message)
+            profile, extraction_method = await extract_with_fallback(message)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
             # 2) Neo4j 조회 (효능→성분, 성분→제품)
             _t = time.perf_counter()
-            with metrics.track_stage("neo4j"):
-                effect_names = [e.value for e in profile.effects]
-                raw_ingredients = await query_ingredients_by_effects(effect_names)
+            effect_names = [e.value for e in profile.effects]
+            raw_ingredients = await query_ingredients_by_effects(effect_names)
 
-                ingredients = [
-                    IngredientResult(
-                        name=row["name"],
-                        kor_name=row.get("kor_name"),
-                        claim=row.get("claim"),
-                        eligibility_tier=row.get("eligibility_tier"),
-                        paper_ref=row.get("paper_ref"),
-                    )
-                    for row in raw_ingredients
-                ]
+            ingredients = [
+                IngredientResult(
+                    name=row["name"],
+                    kor_name=row.get("kor_name"),
+                    claim=row.get("claim"),
+                    eligibility_tier=row.get("eligibility_tier"),
+                    paper_ref=row.get("paper_ref"),
+                )
+                for row in raw_ingredients
+            ]
 
-                # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
-                top_ingredient_names = [i.name for i in ingredients[:10]]
-                cats = _appropriate_categories(profile.concerns)
-                raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
+            top_ingredient_names = [i.name for i in ingredients[:10]]
+            cats = _appropriate_categories(profile.concerns)
+            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
@@ -145,8 +143,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
             # 3) LLM 응답 생성
             _t = time.perf_counter()
-            with metrics.track_stage("llm_response"):
-                response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+            response_text = await _build_llm_response(message, ingredients, products, system_prompt)
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -344,23 +341,21 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 return
 
             _t = time.perf_counter()
-            with metrics.track_stage("extract"):
-                profile, extraction_method = await extract_with_fallback(message)
+            profile, extraction_method = await extract_with_fallback(message)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
             _t = time.perf_counter()
-            with metrics.track_stage("neo4j"):
-                effect_names = [e.value for e in profile.effects]
-                raw_ingredients = await query_ingredients_by_effects(effect_names)
-                ingredients = [
-                    IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
-                                     eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
-                    for row in raw_ingredients
-                ]
-                top_ingredient_names = [i.name for i in ingredients[:10]]
-                cats = _appropriate_categories(profile.concerns)
-                raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
+            effect_names = [e.value for e in profile.effects]
+            raw_ingredients = await query_ingredients_by_effects(effect_names)
+            ingredients = [
+                IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
+                                 eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
+                for row in raw_ingredients
+            ]
+            top_ingredient_names = [i.name for i in ingredients[:10]]
+            cats = _appropriate_categories(profile.concerns)
+            raw_products = await query_products_by_ingredients(top_ingredient_names, appropriate_categories=cats)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [
