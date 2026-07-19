@@ -31,6 +31,9 @@ preflight가 vLLM 미도달/모델 불일치를 먼저 잡아준다.
 | 생성 | judge OVERALL | ≥ 4.40 | 4.58 ✅ | 4.04 ❌ |
 | 생성 | grounding | ≥ 4.30 | 4.52 ✅ | 3.80 ❌ |
 | 생성 | format 준수 | ≥ 4.30 | 4.78 ✅ | 3.85 ❌ |
+| 검색 | 제품 precision | ≥ 0.75 | 0.85 ✅ | 0.55 ❌ |
+| 검색 | 제품 0-결과율 | ≤ 0.15 | 0.08 ✅ | — |
+| 검색 | 성분 precision | ≥ 0.40 | 0.50 ✅ | — |
 
 > 임계 조정은 `eval/gate_config.json`만 고치면 됨. 로컬 검증: `python eval/check_gate.py --extraction <j> --response <j>`.
 

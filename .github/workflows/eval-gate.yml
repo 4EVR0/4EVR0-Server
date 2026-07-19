@@ -79,6 +79,12 @@ jobs:
           python eval/run_response_eval.py --no-mlflow \
             ${LIMIT:+--limit $LIMIT} --out eval/results/_ci_response.json
 
+      - name: 검색 eval (RAG precision)
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          python eval/run_retrieval_eval.py --no-mlflow \
+            ${LIMIT:+--limit $LIMIT} --out eval/results/_ci_retrieval.json
+
       - name: 품질 게이트 판정
         id: gate
         run: |
@@ -86,6 +92,7 @@ jobs:
           python eval/check_gate.py \
             --extraction eval/results/_ci_extraction.json \
             --response   eval/results/_ci_response.json \
+            --retrieval  eval/results/_ci_retrieval.json \
             --md-out gate.md
           echo "gate_exit=$?" >> "$GITHUB_OUTPUT"
           set -e
