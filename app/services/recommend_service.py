@@ -33,13 +33,74 @@ _CONCERN_CATEGORY_MAP: dict[Concern, list[str]] = {
 # 위에 없는 concern은 _LEAVE_ON을 기본값으로 사용
 
 
-def _appropriate_categories(concerns: list[Concern]) -> list[str]:
-    """복수 concern의 교집합 카테고리를 반환한다 (가장 제한적인 조건 적용)."""
+# 사용자가 메시지에서 특정 제품 포맷을 콕 집어 요청하면(이슈 #40 후속) 그 카테고리를 존중한다.
+# 그래프 카테고리 값 → 사용자 표현(동의어). '스킨'은 토너의 구어라 토너로 매핑하되 합성어는 아래서 제거.
+_CATEGORY_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "토너": ("토너", "스킨"),
+    "세럼": ("세럼",),
+    "앰플": ("앰플",),
+    "크림": ("크림",),
+    "로션": ("로션",),
+    "에센스": ("에센스",),
+    "미스트": ("미스트",),
+    "올인원": ("올인원",),
+    "페이스오일": ("페이스오일", "페이스 오일"),
+    "필링스크럽": ("필링스크럽", "스크럽"),
+}
+# '스킨' 오탐 방지: 제품이 아닌 합성어(스킨케어/스킨타입 등)는 매칭 전에 지운다.
+_SKIN_COMPOUNDS = ("스킨케어", "스킨 케어", "스킨타입", "스킨 타입", "스킨톤", "스킨십")
+
+
+def _requested_categories(message: str) -> set[str]:
+    """메시지에서 명시적으로 요청한 제품 카테고리를 추출한다(없으면 빈 집합)."""
+    if not message:
+        return set()
+    m = message
+    for w in _SKIN_COMPOUNDS:
+        m = m.replace(w, "")
+    return {cat for cat, kws in _CATEGORY_SYNONYMS.items() if any(kw in m for kw in kws)}
+
+
+def _appropriate_categories(concerns: list[Concern],
+                            requested: set[str] | None = None) -> list[str]:
+    """복수 concern의 교집합 카테고리를 반환한다 (가장 제한적인 조건 적용).
+
+    requested가 있으면(사용자가 포맷을 콕 집음) 그 카테고리를 우선 존중한다 —
+    concern 적합 카테고리와 교집합하되, 비면 요청 그대로 따른다(사용자 의도 우선).
+    """
     if not concerns:
-        return _LEAVE_ON
-    sets = [set(_CONCERN_CATEGORY_MAP.get(c, _LEAVE_ON)) for c in concerns]
-    intersection = sets[0].intersection(*sets[1:])
-    return list(intersection) if intersection else _LEAVE_ON
+        base = list(_LEAVE_ON)
+    else:
+        sets = [set(_CONCERN_CATEGORY_MAP.get(c, _LEAVE_ON)) for c in concerns]
+        intersection = sets[0].intersection(*sets[1:])
+        base = list(intersection) if intersection else list(_LEAVE_ON)
+    if requested:
+        narrowed = [c for c in base if c in requested]
+        return narrowed or list(requested)
+    return base
+
+
+def _diversify(products: list[dict], per_category: int, total: int) -> list[dict]:
+    """랭킹 순서를 유지하되 한 카테고리가 상위를 독식하지 않게 카테고리당 상한을 둔다.
+    상한으로 total을 못 채우면 랭킹 순으로 보충한다."""
+    out: list[dict] = []
+    counts: dict[str, int] = {}
+    for p in products:
+        c = p.get("category")
+        if counts.get(c, 0) >= per_category:
+            continue
+        out.append(p)
+        counts[c] = counts.get(c, 0) + 1
+        if len(out) >= total:
+            return out
+    if len(out) < total:
+        chosen = {id(x) for x in out}
+        for p in products:
+            if id(p) not in chosen:
+                out.append(p)
+                if len(out) >= total:
+                    break
+    return out
 
 
 # 제품 목적 신호 (이슈 #40): 그래프에 product→concern 데이터가 없어 **제품 이름**으로 목적을 추정.
@@ -116,6 +177,29 @@ def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> 
         elif _concern_groups(labels) & q_groups:  # 그룹 겹침
             kept.append(p)
     return kept if kept else products
+
+
+async def select_products(message: str, concerns: list[Concern],
+                          ingredient_scores: list[dict]) -> list[dict]:
+    """제품 선정 공통 로직(동기·스트리밍 경로 공유).
+
+    1) 메시지가 카테고리를 콕 집으면 그 카테고리로 제한(요청 존중).
+    2) 목적필터로 성분만 겹치는 제품 컷.
+    3) 명시 요청이 없으면 카테고리 다양성 보장(한 포맷이 상위 독식 방지).
+    """
+    requested = _requested_categories(message)
+    cats = _appropriate_categories(concerns, requested)
+    # 다양성/요청 존중을 위해 후보 풀을 넉넉히 뽑고(랭킹순), 아래서 다듬는다.
+    raw = await query_products_by_ingredients(
+        ingredient_scores, appropriate_categories=cats,
+        min_relevance_ratio=settings.product_min_relevance_ratio,
+        min_matched_count=settings.product_min_matched_count,
+        limit=30,
+    )
+    raw = filter_by_target_concerns(raw, concerns)
+    if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
+        return raw[: settings.product_result_limit]
+    return _diversify(raw, per_category=2, total=settings.product_result_limit)
 
 
 logger = logging.getLogger(__name__)
@@ -208,13 +292,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
                 for r in raw_ingredients[:10]
             ]
-            cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(
-                ingredient_scores, appropriate_categories=cats,
-                min_relevance_ratio=settings.product_min_relevance_ratio,
-                min_matched_count=settings.product_min_matched_count,
-            )
-            raw_products = filter_by_target_concerns(raw_products, profile.concerns)
+            raw_products = await select_products(message, profile.concerns, ingredient_scores)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
@@ -450,13 +528,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
                 for r in raw_ingredients[:10]
             ]
-            cats = _appropriate_categories(profile.concerns)
-            raw_products = await query_products_by_ingredients(
-                ingredient_scores, appropriate_categories=cats,
-                min_relevance_ratio=settings.product_min_relevance_ratio,
-                min_matched_count=settings.product_min_matched_count,
-            )
-            raw_products = filter_by_target_concerns(raw_products, profile.concerns)
+            raw_products = await select_products(message, profile.concerns, ingredient_scores)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [
