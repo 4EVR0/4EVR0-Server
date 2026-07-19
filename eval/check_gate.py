@@ -34,6 +34,8 @@ def _check_section(metrics: dict, rules: dict) -> list[dict]:
     for key, rule in rules.items():
         label = rule.get("label", key)
         value = metrics.get(key)
+        if isinstance(value, dict) and "mean" in value:  # retrieval eval의 {mean, ci95, n} 포맷
+            value = value["mean"]
         if value is None:
             rows.append({"label": label, "key": key, "value": None,
                          "op": "min" if "min" in rule else "max",
@@ -65,12 +67,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--extraction", help="run_eval.py 결과 JSON")
     ap.add_argument("--response", help="run_response_eval.py 결과 JSON")
+    ap.add_argument("--retrieval", help="run_retrieval_eval.py 결과 JSON")
     ap.add_argument("--config", default=str(_DEFAULT_CONFIG))
     ap.add_argument("--md-out", help="PR 코멘트용 마크다운 저장 경로")
     args = ap.parse_args()
 
-    if not args.extraction and not args.response:
-        ap.error("--extraction 또는 --response 중 최소 하나 필요")
+    if not (args.extraction or args.response or args.retrieval):
+        ap.error("--extraction / --response / --retrieval 중 최소 하나 필요")
 
     config = json.loads(Path(args.config).read_text())
     all_rows: list[dict] = []
@@ -84,6 +87,10 @@ def main() -> None:
         rows = _check_section(_load_metrics(args.response), config["response"])
         all_rows += rows
         sections.append(_md_table("생성 품질 (LLM-judge)", rows))
+    if args.retrieval:
+        rows = _check_section(_load_metrics(args.retrieval), config["retrieval"])
+        all_rows += rows
+        sections.append(_md_table("검색 품질 (RAG precision)", rows))
 
     failed = [r for r in all_rows if not r["pass"]]
     passed = len(all_rows) - len(failed)

@@ -12,5 +12,11 @@
     "resp_grounding":        { "min": 4.30, "label": "grounding" },
     "resp_format_adherence": { "min": 4.30, "label": "format 준수" },
     "error_rate":            { "max": 0.00, "label": "생성 에러율" }
+  },
+  "_retrieval_ref": "검색 precision baseline(2026-07-20, 목적필터): product_precision 0.85, product_zero_rate 0.08. 아래 임계는 그 아래로 마진(judge 노이즈·회귀 탐지). ingredient_precision(0.50)은 성분→효능 엣지 노이즈라 관대하게.",
+  "retrieval": {
+    "product_precision":  { "min": 0.75, "label": "제품 검색 precision" },
+    "product_zero_rate":  { "max": 0.15, "label": "제품 0-결과율" },
+    "ingredient_precision": { "min": 0.40, "label": "성분 검색 precision" }
   }
 }
