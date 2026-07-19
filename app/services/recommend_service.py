@@ -110,7 +110,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             # 2) Neo4j 조회 (효능→성분, 성분→제품)
             _t = time.perf_counter()
             effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(effect_names)
+            raw_ingredients = await query_ingredients_by_effects(
+                effect_names, min_graph_score=settings.ingredient_min_graph_score)
 
             ingredients = [
                 IngredientResult(
@@ -358,7 +359,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
 
             _t = time.perf_counter()
             effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(effect_names)
+            raw_ingredients = await query_ingredients_by_effects(
+                effect_names, min_graph_score=settings.ingredient_min_graph_score)
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))

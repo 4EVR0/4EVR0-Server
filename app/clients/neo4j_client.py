@@ -127,17 +127,27 @@ async def query_products_by_ingredients(
         return []
 
 
-async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any]]:
+async def query_ingredients_by_effects(
+    effects: list[str],
+    min_graph_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    """효능에 관련된 성분을 근거·관련도 순으로 반환한다.
+
+    min_graph_score: AFFECTS 엣지 graph_score 임계 — 이 미만 엣지는 무시(노이즈 컷).
+        스키마: (Ingredient)-[:AFFECTS {graph_score, evidence_type, paper_count}]->(Effect)
+        evidence_type: "pubmed_evidence"(논문, score 0.1~1.2) > "cosing_function"(성분기능, 0~0.15).
+        cosing 엣지(5천+개, 저품질)가 pubmed 부족한 효능에서 노이즈로 상위를 채우는 문제 →
+        임계로 약한 엣지를 걷어낸다. 결과가 비면(희소 효능) 임계 없이 폴백.
+    """
     if not effects:
         return []
 
     driver = _get_driver()
-    # 실제 스키마: (Ingredient)-[:AFFECTS {graph_score, evidence_type, paper_count}]->(Effect {effect_code})
-    # evidence_type: "pubmed_evidence" (논문 근거) > "cosing_function" (성분 기능 근거)
     # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT 20 = distinct 성분 20개 보장
     query = """
     UNWIND $effects AS effect_code
     MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)
+    WHERE r.graph_score >= $min_score
     WITH i, e, r,
          CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
     ORDER BY ev_rank, r.graph_score DESC
@@ -162,8 +172,12 @@ async def query_ingredients_by_effects(effects: list[str]) -> list[dict[str, Any
     try:
         start = time.perf_counter()
         async with driver.session() as session:
-            result = await session.run(query, effects=effects)
+            result = await session.run(query, effects=effects, min_score=float(min_graph_score))
             rows = [dict(record) async for record in result]
+            # 폴백: 임계가 결과를 비우면 임계 없이 재조회 (희소 효능 보호)
+            if not rows and float(min_graph_score) > 0.0:
+                result = await session.run(query, effects=effects, min_score=0.0)
+                rows = [dict(record) async for record in result]
         _log_query("query_ingredients_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(rows))
         return rows
     except Exception as exc:

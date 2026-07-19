@@ -89,7 +89,8 @@ async def _judge(client, model, timeout, message, concerns, ing_names, products)
 async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
     concerns = [Concern(c) for c in case.get("concerns", []) if c in Concern._value2member_map_]
     effects = infer_effects(concerns)
-    raw_ings = await query_ingredients_by_effects([e.value for e in effects])
+    raw_ings = await query_ingredients_by_effects(
+        [e.value for e in effects], min_graph_score=settings.ingredient_min_graph_score)
     scores = [{"name": r["name"], "weight": float(r.get("graph_score") or 1.0)} for r in raw_ings[:10]]
     cats = _appropriate_categories(concerns)
     products = await query_products_by_ingredients(
@@ -180,6 +181,7 @@ async def main_async(args) -> None:
             "dataset_sha256": file_sha256(dataset_path), "n_cases": len(cases), "n_scored": n,
             "product_min_relevance_ratio": settings.product_min_relevance_ratio,
             "product_min_matched_count": settings.product_min_matched_count,
+            "ingredient_min_graph_score": settings.ingredient_min_graph_score,
         },
         "metrics": metrics,
         "cases": ok,
