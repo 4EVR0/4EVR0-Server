@@ -40,6 +40,38 @@ def _appropriate_categories(concerns: list[Concern]) -> list[str]:
     intersection = sets[0].intersection(*sets[1:])
     return list(intersection) if intersection else _LEAVE_ON
 
+
+# 제품 목적 신호 (이슈 #40): 그래프에 product→concern 데이터가 없어 **제품 이름**으로 목적을 추정.
+# 이름이 특정 목적을 강하게 시사하는데 그 목적 concern이 요청에 없으면 목적-불일치로 제외
+# (예: "기미잡티앰플"이 여드름 요청에 성분만 겹쳐 딸려오던 문제). 보수적으로 색소·노화만 적용.
+_PURPOSE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "PIGMENTATION": ("기미", "잡티", "미백", "화이트닝", "브라이트닝", "톤업", "색소"),
+    "AGING": ("주름", "링클", "탄력", "퍼밍", "리프팅", "안티에이징", "안티에이징"),
+}
+_PURPOSE_CONCERNS: dict[str, set[Concern]] = {
+    "PIGMENTATION": {Concern.HYPERPIGMENTATION, Concern.DULLNESS, Concern.UNEVEN_SKIN_TONE,
+                     Concern.BLEMISHES, Concern.POST_ACNE_MARKS, Concern.DARK_CIRCLES},
+    "AGING": {Concern.AGING_SIGNS, Concern.WRINKLES, Concern.LOSS_OF_ELASTICITY, Concern.SAGGING_SKIN},
+}
+
+
+def _purpose_mismatch(product_name: str, concerns: list[Concern]) -> bool:
+    """제품 이름이 특정 목적을 강하게 시사하는데 그 목적 concern이 요청에 없으면 True(불일치)."""
+    if not product_name:
+        return False
+    concern_set = set(concerns)
+    for purpose, keywords in _PURPOSE_KEYWORDS.items():
+        if any(kw in product_name for kw in keywords) and not (concern_set & _PURPOSE_CONCERNS[purpose]):
+            return True
+    return False
+
+
+def filter_purpose_mismatch(products: list[dict], concerns: list[Concern]) -> list[dict]:
+    """목적-불일치 제품을 걸러낸다. 전부 걸러지면(과필터) 원본 유지(제품 0개 방지)."""
+    kept = [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
+    return kept if kept else products
+
+
 logger = logging.getLogger(__name__)
 
 # 프롬프트는 app/prompts/recommend_response*.txt 로 분리(버전 관리).
@@ -136,6 +168,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 min_relevance_ratio=settings.product_min_relevance_ratio,
                 min_matched_count=settings.product_min_matched_count,
             )
+            raw_products = filter_purpose_mismatch(raw_products, profile.concerns)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
@@ -377,6 +410,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 min_relevance_ratio=settings.product_min_relevance_ratio,
                 min_matched_count=settings.product_min_matched_count,
             )
+            raw_products = filter_purpose_mismatch(raw_products, profile.concerns)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [
