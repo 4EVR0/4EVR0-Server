@@ -17,9 +17,11 @@ class IngredientResult(BaseModel):
 
 class ProductResult(BaseModel):
     product_id: str
+    goods_no: str | None = None
     product_name: str
     brand: str
     category: str
+    image_url: str | None = None
     matched_count: int
     matched_ingredients: list[str]
 
