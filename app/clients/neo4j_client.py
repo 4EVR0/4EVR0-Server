@@ -187,6 +187,30 @@ async def query_ingredients_by_effects(
         return []
 
 
+async def query_cautioned_ingredients(concern_codes: list[str]) -> set[str]:
+    """주어진 고민(concern_code)에 대해 CAUTION 엣지가 있는 성분(inci_name) 집합을 반환한다.
+
+    스키마: (Ingredient)-[:CAUTION {evidence_type, graph_score, paper_count}]->(Concern)
+    근거 기반 금기 오버레이(이슈: 민감성에 자극 성분 추천 방지). CAUTION 엣지가 없으면 빈 집합.
+    """
+    if not concern_codes:
+        return set()
+    driver = _get_driver()
+    query = """
+    MATCH (i:Ingredient)-[:CAUTION]->(c:Concern)
+    WHERE c.concern_code IN $codes
+    RETURN collect(DISTINCT i.inci_name) AS names
+    """
+    try:
+        async with driver.session() as session:
+            result = await session.run(query, codes=concern_codes)
+            rec = await result.single()
+            return set(rec["names"]) if rec and rec["names"] else set()
+    except Exception as exc:
+        logger.warning("Neo4j caution query failed: %s", exc)
+        return set()
+
+
 async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
     """Effect → Ingredient → Product 추천 경로를 반환한다."""
     if not effects:

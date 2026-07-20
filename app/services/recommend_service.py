@@ -7,7 +7,11 @@ from pathlib import Path
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
 from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
-from app.clients.neo4j_client import query_ingredients_by_effects, query_products_by_ingredients
+from app.clients.neo4j_client import (
+    query_cautioned_ingredients,
+    query_ingredients_by_effects,
+    query_products_by_ingredients,
+)
 from app.core import metrics
 from app.core.config import settings
 from app.domain.enums import Concern
@@ -202,6 +206,28 @@ async def select_products(message: str, concerns: list[Concern],
     return _diversify(raw, per_category=2, total=settings.product_result_limit)
 
 
+# ── 근거 기반 금기 필터 (CAUTION 엣지, Option A) ──────────────────────────
+# 민감성 계열 요청 시, "성분이 자극/홍반을 유발"한다는 논문 근거(CAUTION 엣지)가 있는
+# 성분을 후보에서 제거. AFFECTS(효능)와 분리된 안전 오버레이 — 여드름 요청엔 적용 안 함.
+_SENSITIVITY_CONCERN_CODES = ["SENSITIVE_SKIN", "REDNESS", "IRRITATED_SKIN",
+                              "ATOPIC_PRONE", "ROSACEA_PRONE", "BARRIER_DAMAGE"]
+
+
+def _is_sensitivity_query(concerns: list[Concern]) -> bool:
+    return any(_CONCERN_GROUP.get(c.value) == "SENSITIVITY" for c in concerns)
+
+
+async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Concern]) -> list[dict]:
+    """민감성 요청 시 CAUTION 엣지가 있는 자극 성분을 컷. 전부 걸러지면 원본 유지."""
+    if not _is_sensitivity_query(concerns):
+        return raw_ingredients
+    cautioned = await query_cautioned_ingredients(_SENSITIVITY_CONCERN_CODES)
+    if not cautioned:
+        return raw_ingredients
+    kept = [r for r in raw_ingredients if r.get("name") not in cautioned]
+    return kept if kept else raw_ingredients
+
+
 logger = logging.getLogger(__name__)
 
 # 프롬프트는 app/prompts/recommend_response*.txt 로 분리(버전 관리).
@@ -274,6 +300,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             effect_names = [e.value for e in profile.effects]
             raw_ingredients = await query_ingredients_by_effects(
                 effect_names, min_graph_score=settings.ingredient_min_graph_score)
+            raw_ingredients = await apply_caution_filter(raw_ingredients, profile.concerns)
 
             ingredients = [
                 IngredientResult(
@@ -518,6 +545,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             effect_names = [e.value for e in profile.effects]
             raw_ingredients = await query_ingredients_by_effects(
                 effect_names, min_graph_score=settings.ingredient_min_graph_score)
+            raw_ingredients = await apply_caution_filter(raw_ingredients, profile.concerns)
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))

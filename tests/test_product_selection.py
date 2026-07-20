@@ -12,6 +12,7 @@ from app.domain.enums import Concern
 from app.services.recommend_service import (
     _appropriate_categories,
     _diversify,
+    _is_sensitivity_query,
     _requested_categories,
 )
 
@@ -79,6 +80,21 @@ class DiversifyTest(unittest.TestCase):
         prods = [self._p("앰플", "a1"), self._p("토너", "t1"), self._p("앰플", "a2")]
         out = _diversify(prods, per_category=2, total=3)
         self.assertEqual(["a1", "t1", "a2"], [p["product_name"] for p in out])
+
+
+class SensitivityQueryTest(unittest.TestCase):
+    def test_sensitivity_concerns_trigger(self):
+        self.assertTrue(_is_sensitivity_query([Concern.SENSITIVE_SKIN]))
+        self.assertTrue(_is_sensitivity_query([Concern.REDNESS]))
+        self.assertTrue(_is_sensitivity_query([Concern.ROSACEA_PRONE]))
+        self.assertTrue(_is_sensitivity_query([Concern.ACNE, Concern.IRRITATED_SKIN]))
+
+    def test_non_sensitivity_does_not_trigger(self):
+        # 여드름·색소·노화 단독은 CAUTION 필터 대상 아님(레티놀·산이 정답인 케이스)
+        self.assertFalse(_is_sensitivity_query([Concern.ACNE]))
+        self.assertFalse(_is_sensitivity_query([Concern.HYPERPIGMENTATION]))
+        self.assertFalse(_is_sensitivity_query([Concern.AGING_SIGNS]))
+        self.assertFalse(_is_sensitivity_query([]))
 
 
 if __name__ == "__main__":
