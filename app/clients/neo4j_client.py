@@ -49,6 +49,7 @@ async def query_products_by_ingredients(
     appropriate_categories: list[str],
     min_relevance_ratio: float = 0.0,
     min_matched_count: int = 1,
+    limit: int = 5,
 ) -> list[dict[str, Any]]:
     """고민-관련도가 높은 성분을 가진 제품을 관련도 순으로 반환한다.
 
@@ -69,6 +70,7 @@ async def query_products_by_ingredients(
         "appropriate_categories": appropriate_categories,
         "min_ratio": float(min_relevance_ratio),
         "min_matched": int(min_matched_count),
+        "limit": int(limit),
     }
 
     query = """
@@ -107,7 +109,7 @@ async def query_products_by_ingredients(
         row.matched_ingredients AS matched_ingredients,
         row.relevance_score     AS relevance_score
     ORDER BY row.relevance_score DESC, row.matched_count DESC, product_name
-    LIMIT 5
+    LIMIT $limit
     """
     try:
         start = time.perf_counter()
