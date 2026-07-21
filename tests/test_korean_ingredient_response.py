@@ -12,6 +12,7 @@ from app.services.recommend_service import (
     _ingredient_display_name,
     recommend,
 )
+from app.services.product_image_service import build_product_image_url
 from eval.run_response_eval import judge_response
 
 
@@ -34,6 +35,15 @@ class IngredientDisplayNameTest(unittest.TestCase):
         )
 
 
+class ProductImageUrlTest(unittest.TestCase):
+    def test_builds_oliveyoung_image_url_from_goods_no(self):
+        with patch.object(settings, "product_image_url_mode", "public"):
+            self.assertEqual(
+                "https://oliveyoung-crawl-data.s3.amazonaws.com/oliveyoung_images/goodsNo=A%201/main.jpg",
+                build_product_image_url(" A 1 "),
+            )
+
+
 class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
     async def test_recommend_preserves_korean_name_from_graph_result(self):
         profile = SimpleNamespace(effects=[], concerns=[])
@@ -46,6 +56,7 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
         }]
 
         with (
+            patch.object(settings, "product_image_url_mode", "public"),
             patch(
                 "app.services.recommend_service.extract_with_fallback",
                 new=AsyncMock(return_value=(profile, "llm")),
@@ -66,6 +77,46 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
             response = await recommend("session", "칙칙해요")
 
         self.assertEqual("나이아신아마이드", response.ingredients[0].kor_name)
+
+    async def test_recommend_includes_product_goods_no_and_image_url(self):
+        profile = SimpleNamespace(effects=[], concerns=[])
+        product_rows = [{
+            "product_id": "prod-1",
+            "goods_no": "123456789",
+            "product_name": "테스트 앰플",
+            "brand": "테스트",
+            "category": "앰플",
+            "matched_count": 1,
+            "matched_ingredients": ["NIACINAMIDE"],
+        }]
+
+        with (
+            patch.object(settings, "product_image_url_mode", "public"),
+            patch(
+                "app.services.recommend_service.extract_with_fallback",
+                new=AsyncMock(return_value=(profile, "llm")),
+            ),
+            patch(
+                "app.services.recommend_service.query_ingredients_by_effects",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.recommend_service.query_products_by_ingredients",
+                new=AsyncMock(return_value=product_rows),
+            ),
+            patch(
+                "app.services.recommend_service._build_llm_response",
+                new=AsyncMock(return_value="완결된 추천 응답입니다."),
+            ),
+        ):
+            response = await recommend("session", "앰플 추천해줘")
+
+        product = response.products[0]
+        self.assertEqual("123456789", product.goods_no)
+        self.assertEqual(
+            "https://oliveyoung-crawl-data.s3.amazonaws.com/oliveyoung_images/goodsNo=123456789/main.jpg",
+            product.image_url,
+        )
 
     async def test_generation_context_uses_korean_names_and_output_budget(self):
         ingredient = IngredientResult(
@@ -161,6 +212,8 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("ing.kor_name", html)
         self.assertIn("escHtml(ing.kor_name.trim())", html)
+        self.assertIn("product.image_url", html)
+        self.assertIn("product.product_name", html)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,24 @@ def _appropriate_categories(concerns: list[Concern],
     return base
 
 
+# 리뷰 재정렬 (부연 신호): 관련도(논문 근거)를 코스 버킷으로 묶어 메인으로 두고,
+# 같은 버킷 안에서만 리뷰 강도(리뷰수×평점)로 순서를 조정한다. bucket이 클수록 리뷰 영향↑.
+_RELEVANCE_BUCKET = 1.0
+
+
+def _review_strength(p: dict) -> float:
+    return float(p.get("review_count") or 0) * float(p.get("rating") or 0.0)
+
+
+def _rerank_by_review(products: list[dict]) -> list[dict]:
+    """관련도 버킷 내림차순 → 버킷 내 리뷰강도 내림차순. 논문 메인 / 리뷰 부연."""
+    def key(p: dict):
+        rel = float(p.get("relevance_score") or 0.0)
+        bucket = round(rel / _RELEVANCE_BUCKET)
+        return (-bucket, -_review_strength(p))
+    return sorted(products, key=key)
+
+
 def _diversify(products: list[dict], per_category: int, total: int) -> list[dict]:
     """랭킹 순서를 유지하되 한 카테고리가 상위를 독식하지 않게 카테고리당 상한을 둔다.
     상한으로 total을 못 채우면 랭킹 순으로 보충한다."""
@@ -201,6 +219,7 @@ async def select_products(message: str, concerns: list[Concern],
         limit=30,
     )
     raw = filter_by_target_concerns(raw, concerns)
+    raw = _rerank_by_review(raw)  # 관련도 버킷 유지 + 버킷 내 리뷰 우선(부연)
     if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
         return raw[: settings.product_result_limit]
     return _diversify(raw, per_category=2, total=settings.product_result_limit)
@@ -333,6 +352,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                     image_url=build_product_image_url(row.get("goods_no") or row["product_id"]),
                     matched_count=row["matched_count"],
                     matched_ingredients=row["matched_ingredients"],
+                    rating=row.get("rating"),
+                    review_count=row.get("review_count"),
+                    review_stats=_parse_review_stats(row.get("review_stats")),
                 )
                 for row in raw_products
             ]
@@ -399,6 +421,42 @@ def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     return "근거 미상"
 
 
+def _parse_review_stats(raw) -> dict | None:
+    """Neo4j에 JSON 문자열로 저장된 review_stats를 dict로. 실패 시 None."""
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _pct(v) -> float:
+    try:
+        return float(str(v).rstrip("%"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _review_note(p: ProductResult) -> str:
+    """제품 리뷰를 한 줄 부연으로 요약. 리뷰 없으면 빈 문자열.
+    자극도·피부고민 축에서 최상위 항목만 뽑아 간결하게(논문 메인/리뷰 부연)."""
+    if not p.rating:
+        return ""
+    parts = [f"⭐{p.rating}·리뷰 {p.review_count or 0}개"]
+    stats = p.review_stats or {}
+    for axis in ("자극도", "피부고민"):
+        d = stats.get(axis)
+        if isinstance(d, dict) and d:
+            label, val = max(d.items(), key=lambda kv: _pct(kv[1]))
+            if _pct(val) > 0:
+                parts.append(f"{label} {val}")
+    return " · ".join(parts)
+
+
 def _compose_user_content(
     message: str,
     ingredients: list[IngredientResult],
@@ -435,11 +493,18 @@ def _compose_user_content(
                     annotated.append(name)
             return ", ".join(annotated)
 
-        product_lines = "\n".join(
-            f"- [{p.category}] {p.brand} {p.product_name} (핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})"
-            for p in products
+        def _product_line(p: ProductResult) -> str:
+            base = (f"- [{p.category}] {p.brand} {p.product_name} "
+                    f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
+            note = _review_note(p)
+            return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
+
+        product_lines = "\n".join(_product_line(p) for p in products)
+        sections.append(
+            "추천 제품 데이터:\n" + product_lines +
+            "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, "
+            "'리뷰에서는 …라는 평가가 많아요' 식으로 가볍게 덧붙이세요. 리뷰를 근거로 단정하지 마세요.)"
         )
-        sections.append(f"추천 제품 데이터:\n{product_lines}")
 
     return "\n\n".join(sections)
 
@@ -565,7 +630,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                               category=row["category"],
                               image_url=build_product_image_url(row.get("goods_no") or row["product_id"]),
                               matched_count=row["matched_count"],
-                              matched_ingredients=row["matched_ingredients"])
+                              matched_ingredients=row["matched_ingredients"],
+                              rating=row.get("rating"),
+                              review_count=row.get("review_count"),
+                              review_stats=_parse_review_stats(row.get("review_stats")))
                 for row in raw_products
             ]
 

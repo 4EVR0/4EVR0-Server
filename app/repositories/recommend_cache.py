@@ -24,7 +24,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "reccache:v2:"
+_KEY_PREFIX = "reccache:v3:"
 _client: aioredis.Redis | None = None
 
 

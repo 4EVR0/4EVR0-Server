@@ -13,7 +13,9 @@ from app.services.recommend_service import (
     _appropriate_categories,
     _diversify,
     _is_sensitivity_query,
+    _rerank_by_review,
     _requested_categories,
+    _review_strength,
 )
 
 
@@ -95,6 +97,31 @@ class SensitivityQueryTest(unittest.TestCase):
         self.assertFalse(_is_sensitivity_query([Concern.HYPERPIGMENTATION]))
         self.assertFalse(_is_sensitivity_query([Concern.AGING_SIGNS]))
         self.assertFalse(_is_sensitivity_query([]))
+
+
+class ReviewRerankTest(unittest.TestCase):
+    @staticmethod
+    def _p(name, rel, rating=None, rc=None):
+        return {"product_name": name, "relevance_score": rel, "rating": rating, "review_count": rc}
+
+    def test_review_strength(self):
+        self.assertEqual(0.0, _review_strength({"rating": None, "review_count": 100}))
+        self.assertEqual(0.0, _review_strength({"rating": 4.5, "review_count": None}))
+        self.assertAlmostEqual(450.0, _review_strength({"rating": 4.5, "review_count": 100}))
+
+    def test_relevance_bucket_is_primary(self):
+        # 관련도 버킷이 우선 — 리뷰 많아도 낮은 버킷은 못 올라옴(논문 메인)
+        hi_rel_no_review = self._p("A", 3.0, None, None)
+        lo_rel_many_review = self._p("B", 1.0, 4.9, 90000)
+        out = _rerank_by_review([lo_rel_many_review, hi_rel_no_review])
+        self.assertEqual("A", out[0]["product_name"])
+
+    def test_review_orders_within_bucket(self):
+        # 같은 관련도 버킷 안에서는 리뷰강도 높은 게 먼저(리뷰 부연)
+        p_low = self._p("low", 2.1, 4.0, 10)
+        p_high = self._p("high", 2.0, 4.8, 5000)
+        out = _rerank_by_review([p_low, p_high])
+        self.assertEqual("high", out[0]["product_name"])
 
 
 if __name__ == "__main__":

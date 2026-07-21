@@ -24,6 +24,10 @@ class ProductResult(BaseModel):
     image_url: str | None = None
     matched_count: int
     matched_ingredients: list[str]
+    # 리뷰(부연): 논문 근거가 메인, 리뷰는 사용자 합의 보조 신호
+    rating: float | None = None
+    review_count: int | None = None
+    review_stats: dict | None = None  # {"피부고민": {...}, "자극도": {...}, ...}
 
 
 class RecommendResponse(BaseModel):

@@ -273,6 +273,8 @@
   .product-desc { margin-top: 7px; color: #56624b; font-size: 13px; line-height: 1.55; }
   .product-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
   .product-meta span { padding: 5px 9px; border-radius: 999px; background: #f0f8dc; color: #4d7c0f; font-size: 11px; font-weight: 750; }
+  .product-meta span.rating-pill { background: #fff3d6; color: #a9781a; }
+  .product-meta span.review-pill { background: #eaf3ff; color: #2f6aa0; }
   .product-toggle { color: #6b765e; font-size: 20px; transition: transform 0.18s; }
   .product-card.open .product-toggle { transform: rotate(180deg); }
   .product-ingredients { display: none; border-top: 1px solid rgba(60, 80, 34, 0.10); padding: 14px 16px 16px; background: #ffffff; }
@@ -508,7 +510,8 @@
                 <div class="product-desc">추천 성분 ${escHtml(product.matched_count)}개가 매칭된 ${escHtml(product.category)} 제품입니다.</div>
                 <div class="product-meta">
                   <span>${escHtml(product.category)}</span>
-                  ${product.goods_no ? `<span>goodsNo ${escHtml(product.goods_no)}</span>` : ''}
+                  ${product.rating ? `<span class="rating-pill">⭐ ${escHtml(product.rating)} · 리뷰 ${escHtml(product.review_count || 0)}</span>` : ''}
+                  ${reviewHighlight(product) ? `<span class="review-pill">${escHtml(reviewHighlight(product))}</span>` : ''}
                 </div>
               </div>
               <div class="product-toggle">⌄</div>
@@ -687,6 +690,24 @@
   function ingredientTierByInci(name, ingredients) {
     const ing = ingredientByInci(name, ingredients);
     return ing && ing.eligibility_tier ? ing.eligibility_tier : 'Insufficient';
+  }
+
+  // 리뷰 통계에서 가장 두드러진 항목 한 개를 뽑아 pill로 표시(부연). 자극도 우선.
+  function reviewHighlight(product) {
+    const stats = product && product.review_stats;
+    if (!stats) return '';
+    for (const axis of ['자극도', '피부고민']) {
+      const d = stats[axis];
+      if (d && typeof d === 'object') {
+        let best = '', bestPct = -1;
+        for (const [k, v] of Object.entries(d)) {
+          const pct = parseFloat(String(v).replace('%', '')) || 0;
+          if (pct > bestPct) { bestPct = pct; best = k; }
+        }
+        if (best && bestPct > 0) return `${best} ${d[best]}`;
+      }
+    }
+    return '';
   }
 
   function productImageUrl(product) {
