@@ -22,6 +22,7 @@ class ProductResult(BaseModel):
     brand: str
     category: str
     image_url: str | None = None
+    product_url: str | None = None  # 올리브영 상품 상세페이지 링크
     matched_count: int
     matched_ingredients: list[str]
     # 리뷰(부연): 논문 근거가 메인, 리뷰는 사용자 합의 보조 신호

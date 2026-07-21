@@ -110,7 +110,8 @@ async def query_products_by_ingredients(
         row.relevance_score     AS relevance_score,
         row.prod.rating         AS rating,
         row.prod.review_count   AS review_count,
-        row.prod.review_stats   AS review_stats
+        row.prod.review_stats   AS review_stats,
+        row.prod.product_url    AS product_url
     // 풀은 관련도(논문 근거) 순으로 뽑아 상위 후보를 확보. 리뷰 재정렬은 앱에서(튜닝 가능).
     ORDER BY row.relevance_score DESC, row.matched_count DESC, product_name
     LIMIT $limit
