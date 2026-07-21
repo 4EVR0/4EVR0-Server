@@ -275,6 +275,8 @@
   .product-meta span { padding: 5px 9px; border-radius: 999px; background: #f0f8dc; color: #4d7c0f; font-size: 11px; font-weight: 750; }
   .product-meta span.rating-pill { background: #fff3d6; color: #a9781a; }
   .product-meta span.review-pill { background: #eaf3ff; color: #2f6aa0; }
+  .product-link { display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 800; color: #4d7c0f; text-decoration: none; padding: 6px 12px; border: 1px solid rgba(155,206,38,0.5); border-radius: 999px; transition: background 0.15s; }
+  .product-link:hover { background: #f0f8dc; }
   .product-toggle { color: #6b765e; font-size: 20px; transition: transform 0.18s; }
   .product-card.open .product-toggle { transform: rotate(180deg); }
   .product-ingredients { display: none; border-top: 1px solid rgba(60, 80, 34, 0.10); padding: 14px 16px 16px; background: #ffffff; }
@@ -513,6 +515,7 @@
                   ${product.rating ? `<span class="rating-pill">⭐ ${escHtml(product.rating)} · 리뷰 ${escHtml(product.review_count || 0)}</span>` : ''}
                   ${reviewHighlight(product) ? `<span class="review-pill">${escHtml(reviewHighlight(product))}</span>` : ''}
                 </div>
+                ${product.product_url ? `<a class="product-link" href="${escAttr(product.product_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">올리브영에서 보기 →</a>` : ''}
               </div>
               <div class="product-toggle">⌄</div>
             </div>
