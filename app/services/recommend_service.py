@@ -351,11 +351,15 @@ _CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건
                  "칙칙", "주름", "탄력", "노화", "각질", "아토피", "다크서클")
 
 
+def _has_followup_cue(message: str) -> bool:
+    return any(c in message for c in _FOLLOWUP_CUES)
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
         return "new"
-    if any(c in message for c in _FOLLOWUP_CUES):
+    if _has_followup_cue(message):
         return "followup"
     if any(c in message for c in _CONCERN_CUES):
         return "new"
@@ -534,6 +538,15 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     history = await conversation_store.load_recent(session_id)
     if history and await _is_followup(message, history):
         return await _handle_followup(session_id, turn_id, message, history)
+    # 명백한 후속 표현("방금/이 중에서")인데 이력이 없으면(세션 만료·재시작) 새 추천 파이프라인이
+    # "제품 없음" 류 혼란스러운 답을 내므로, 안내 메시지로 graceful 처리.
+    if not history and _has_followup_cue(message):
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
+                "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
+                "(예: \"여드름이랑 모공이 고민이에요\")")
+        return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
+                                 products=[], response_text=text, model_used=settings.gpu_model)
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
