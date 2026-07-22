@@ -1,34 +1,31 @@
-"""concern별 자연어 질문 세트.
+"""테스트용 자연어 시나리오.
 
-eval/gold_labels.py의 PRODUCTION_CONCERN_EFFECT_MAP과 1:1 대응해야 한다
-(run_ab.py 시작부에서 커버리지를 assert로 검증).
+단일 concern 질문 26개 대신, eval/dataset.jsonl(4EVR0-Server 프로필 추출 평가용
+정답셋 — 여러 고민이 한 문장에 섞인 실제 사용자 발화 스타일)을 그대로 재사용한다.
+이 파일이 4EVR0-Server 안에 있어서 상대 경로로 바로 읽을 수 있다 (cross-repo 아님).
+
+concerns가 비어 있는 시나리오(예: "그냥 무난한 보습 제품 추천해줘")는 이 실험이
+재는 게 "concern -> effect -> ingredient 경로 품질"이라 effect로 변환할 게
+없으면 채점 대상이 아니므로 제외한다.
 """
 
-QUESTIONS: dict[str, list[str]] = {
-    "ACNE": ["여드름 때문에 고민이에요, 어떤 성분이 좋을까요?"],
-    "COMEDONES": ["블랙헤드랑 화이트헤드가 자꾸 생겨요. 좋은 성분 추천해주세요."],
-    "PORE_CONGESTION": ["모공이 막혀서 답답해요. 모공 속까지 관리되는 성분 있을까요?"],
-    "ENLARGED_PORES": ["모공이 넓어져서 고민이에요. 모공 좁혀주는 성분 추천해주세요."],
-    "OILY_SKIN": ["피지가 너무 많이 나요. 피지 조절되는 성분 알려주세요."],
-    "SENSITIVE_SKIN": ["피부가 민감해서 자극받기 쉬워요. 순하게 진정시켜주는 성분 있을까요?"],
-    "REDNESS": ["얼굴이 자꾸 빨개져요. 붉은기 가라앉히는 성분 추천해주세요."],
-    "IRRITATED_SKIN": ["피부가 따갑고 자극받은 상태예요. 진정에 좋은 성분 알려주세요."],
-    "ATOPIC_PRONE": ["아토피 피부라 예민해요. 자극 없이 진정되는 성분 추천해주세요."],
-    "ROSACEA_PRONE": ["주사(로사시아) 피부라 붉음이 심해요. 도움 되는 성분 있을까요?"],
-    "DRY_SKIN": ["피부가 너무 건조하고 당겨요. 수분 채워주는 성분 추천해주세요."],
-    "DEHYDRATED_SKIN": ["속건조가 심해서 당김이 심해요. 수분 유지에 좋은 성분 알려주세요."],
-    "FLAKY_SKIN": ["각질이 하얗게 일어나요. 각질 관리되면서 촉촉한 성분 추천해주세요."],
-    "ROUGH_TEXTURE": ["피부결이 거칠어요. 결 정돈에 좋은 성분 있을까요?"],
-    "BARRIER_DAMAGE": ["피부 장벽이 많이 손상된 것 같아요. 장벽 회복에 좋은 성분 알려주세요."],
-    "HYPERPIGMENTATION": ["색소침착이 생겼어요. 미백에 도움되는 성분 추천해주세요."],
-    "DULLNESS": ["피부가 칙칙하고 생기가 없어요. 톤 밝혀주는 성분 알려주세요."],
-    "UNEVEN_SKIN_TONE": ["피부 톤이 고르지 않아요. 톤 정돈에 좋은 성분 추천해주세요."],
-    "BLEMISHES": ["잡티가 신경 쓰여요. 잡티 개선에 좋은 성분 있을까요?"],
-    "POST_ACNE_MARKS": ["여드름 자국이 안 없어져요. 흉터 개선에 좋은 성분 추천해주세요."],
-    "DARK_CIRCLES": ["다크서클이 심해요. 도움되는 성분 알려주세요."],
-    "SUNBURN": ["햇볕에 타서 피부가 화끈거려요. 진정에 좋은 성분 추천해주세요."],
-    "AGING_SIGNS": ["요즘 노화 신호가 보이는 것 같아요. 안티에이징 성분 추천해주세요."],
-    "WRINKLES": ["눈가 주름이 신경 쓰여요. 주름 개선에 좋은 성분 알려주세요."],
-    "LOSS_OF_ELASTICITY": ["피부 탄력이 떨어진 것 같아요. 탄력에 좋은 성분 추천해주세요."],
-    "SAGGING_SKIN": ["피부가 처지는 게 느껴져요. 리프팅에 도움되는 성분 있을까요?"],
-}
+import json
+from pathlib import Path
+
+_DATASET_PATH = Path(__file__).resolve().parent.parent / "eval" / "dataset.jsonl"
+
+
+def load_scenarios() -> list[dict]:
+    """[{"id":, "message":, "concerns": [...]}, ...] concerns 비어있지 않은 것만."""
+    scenarios = []
+    for line in _DATASET_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        if row["concerns"]:
+            scenarios.append({"id": row["id"], "message": row["message"], "concerns": row["concerns"]})
+    return scenarios
+
+
+SCENARIOS: list[dict] = load_scenarios()

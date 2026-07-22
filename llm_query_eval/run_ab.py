@@ -1,17 +1,19 @@
 """A(프로덕션 고정 Cypher) vs B(LLM 생성 Cypher) 품질 비교.
 
-concern마다 자연어 질문(questions.py)에 대해:
+eval/dataset.jsonl의 시나리오(여러 고민이 한 문장에 섞인 실제 사용자 발화
+스타일, questions.py가 그대로 읽어옴)마다:
   - A: app.clients.neo4j_client.query_ingredients_by_effects를 **직접 호출**
     (텍스트를 복사하지 않음 — 복사본은 원본과 어긋날 수 있고, 실제로 이번 작업
     중 pg_experiment/queries.py와 eval/graphrag_ranking_eval.py의 복사본이
-    프로덕션과 어긋나 있는 걸 발견했음)
-  - B: LLM이 질문만 보고 생성한 Cypher(EXPLAIN 검증 통과분)를 실행
+    프로덕션과 어긋나 있는 걸 발견했음). 시나리오의 concerns 전체를 합친
+    effect 집합으로 호출 — 프로덕션이 다중 concern일 때 하는 것과 동일.
+  - B: LLM이 원문 메시지만 보고 생성한 Cypher(EXPLAIN 검증 통과분)를 실행
 정답 기준은 eval/gold_labels.py의 AFFECTS 엣지 evidence_type == 'pubmed_evidence'
 (그래프 자체의 근거 강도 프록시). A/B 모두 같은 기준으로 precision/recall/ndcg 채점.
 
 사용:
-    python run_ab.py --limit 3      # concern 3개만 (파이프라인 확인용)
-    python run_ab.py                # 26개 전체
+    python run_ab.py --limit 3      # 시나리오 3개만 (파이프라인 확인용)
+    python run_ab.py                # 전체
 """
 
 import argparse
@@ -37,7 +39,7 @@ from gold_labels import PRODUCTION_CONCERN_EFFECT_MAP, fetch_all_affects  # noqa
 from graphrag_ranking_eval import ndcg_at_k  # noqa: E402
 
 from generate import GenerationError, generate_and_validate, get_client  # noqa: E402
-from questions import QUESTIONS  # noqa: E402
+from questions import SCENARIOS  # noqa: E402
 
 # A는 Ingredient-[:AFFECTS]->Effect 단일 hop 구조로 고정돼 있음
 # (query_ingredients_by_effects의 구조적 사실 — 매 호출 텍스트를 파싱할 필요 없음).
@@ -51,6 +53,16 @@ def get_sync_driver():
     (A 호출은 그쪽을 그대로 씀), 이 드라이버와는 별개 커넥션이다.
     """
     return GraphDatabase.driver(settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password))
+
+
+def effects_for_concerns(concerns: list[str]) -> list[str]:
+    """여러 concern의 effect를 합친다 (순서 유지, 중복 제거) — 프로덕션이 다중
+    concern 메시지를 처리할 때 하는 것과 동일한 방식."""
+    seen: dict[str, None] = {}
+    for concern in concerns:
+        for effect in PRODUCTION_CONCERN_EFFECT_MAP[concern]:
+            seen.setdefault(effect, None)
+    return list(seen)
 
 
 def score_ingredients(names: list[str], affects_df: pd.DataFrame, effects: list[str]) -> dict:
@@ -82,8 +94,12 @@ def count_hops(cypher: str) -> int:
     return len(re.findall(r"-\s*\[", cypher))
 
 
-async def evaluate_one(concern: str, question: str, effects: list[str], affects_df, sync_driver, client, model) -> dict:
-    row: dict = {"concern": concern, "question": question, "effects": effects}
+async def evaluate_one(scenario: dict, affects_df, sync_driver, client, model) -> dict:
+    concerns = scenario["concerns"]
+    effects = effects_for_concerns(concerns)
+    row: dict = {
+        "id": scenario["id"], "message": scenario["message"], "concerns": concerns, "effects": effects,
+    }
 
     # A — 프로덕션 함수를 그대로 호출 (min_graph_score도 프로덕션 기본값 그대로)
     a_rows = await query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score)
@@ -91,9 +107,9 @@ async def evaluate_one(concern: str, question: str, effects: list[str], affects_
     row["a"] = score_ingredients(a_names, affects_df, effects)
     row["a"]["hops"] = A_HOPS
 
-    # B
+    # B — LLM은 concerns/effects를 미리 안 받고, 원문 메시지만 보고 스스로 판단
     try:
-        gen = await generate_and_validate(question, client, sync_driver, model)
+        gen = await generate_and_validate(scenario["message"], client, sync_driver, model)
         with sync_driver.session() as session:
             b_rows = session.run(gen["cypher"], **gen["params"]).data()
         if not b_rows or "name" not in b_rows[0]:
@@ -112,8 +128,9 @@ async def evaluate_one(concern: str, question: str, effects: list[str], affects_
 
 
 async def run(limit: int | None) -> list[dict]:
-    coverage_gap = set(QUESTIONS) ^ set(PRODUCTION_CONCERN_EFFECT_MAP)
-    assert not coverage_gap, f"questions.py와 PRODUCTION_CONCERN_EFFECT_MAP 불일치: {coverage_gap}"
+    all_concerns = {c for s in SCENARIOS for c in s["concerns"]}
+    unknown = all_concerns - set(PRODUCTION_CONCERN_EFFECT_MAP)
+    assert not unknown, f"dataset.jsonl에 PRODUCTION_CONCERN_EFFECT_MAP에 없는 concern이 있음: {unknown}"
 
     sync_driver = get_sync_driver()
     client = get_client()
@@ -121,24 +138,22 @@ async def run(limit: int | None) -> list[dict]:
 
     try:
         affects_df = fetch_all_affects(sync_driver)
-        concerns = list(PRODUCTION_CONCERN_EFFECT_MAP.items())
-        if limit:
-            concerns = concerns[:limit]
+        scenarios = SCENARIOS[:limit] if limit else SCENARIOS
 
         results = []
-        for concern, effects in concerns:
-            for question in QUESTIONS[concern]:
-                t0 = time.perf_counter()
-                row = await evaluate_one(concern, question, effects, affects_df, sync_driver, client, model)
-                row["elapsed_s"] = round(time.perf_counter() - t0, 2)
-                results.append(row)
-                b = row["b"]
-                b_summary = "FAILED" if b.get("failed") else (
-                    f"P={b['precision']:.2f} R={b['recall']:.2f} NDCG={b['ndcg']:.2f} hops={b['hops']}"
-                )
-                a = row["a"]
-                print(f"[{concern:20s}] A: P={a['precision']:.2f} R={a['recall']:.2f} NDCG={a['ndcg']:.2f}"
-                      f"  |  B: {b_summary}  ({row['elapsed_s']}s)")
+        for scenario in scenarios:
+            t0 = time.perf_counter()
+            row = await evaluate_one(scenario, affects_df, sync_driver, client, model)
+            row["elapsed_s"] = round(time.perf_counter() - t0, 2)
+            results.append(row)
+            b = row["b"]
+            b_summary = "FAILED" if b.get("failed") else (
+                f"P={b['precision']:.2f} R={b['recall']:.2f} NDCG={b['ndcg']:.2f} hops={b['hops']}"
+            )
+            a = row["a"]
+            label = "+".join(row["concerns"])
+            print(f"[id {row['id']:>2} {label[:30]:30s}] A: P={a['precision']:.2f} R={a['recall']:.2f}"
+                  f" NDCG={a['ndcg']:.2f}  |  B: {b_summary}  ({row['elapsed_s']}s)")
         return results
     finally:
         sync_driver.close()
@@ -166,7 +181,7 @@ def summarize(results: list[dict]) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=None, help="concern N개만 처리 (파이프라인 확인용)")
+    ap.add_argument("--limit", type=int, default=None, help="시나리오 N개만 처리 (파이프라인 확인용)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
