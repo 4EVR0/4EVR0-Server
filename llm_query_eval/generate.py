@@ -57,9 +57,14 @@ async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content
     return parsed, raw
 
 
-async def generate_cypher(question: str, client: openai.AsyncOpenAI, model: str) -> tuple[dict, str]:
-    """질문 1건에 대해 ({"cypher": ..., "params": ...}, raw 응답 문자열)을 생성한다."""
-    prompt = load_prompt("cypher_generation")
+async def generate_cypher(
+    question: str, client: openai.AsyncOpenAI, model: str, prompt_name: str = "cypher_generation"
+) -> tuple[dict, str]:
+    """질문 1건에 대해 ({"cypher": ..., "params": ...}, raw 응답 문자열)을 생성한다.
+
+    prompt_name: "cypher_generation"(성분) 또는 "cypher_generation_products"(제품).
+    """
+    prompt = load_prompt(prompt_name)
     return await _call_llm(client, prompt, question, model)
 
 
@@ -73,13 +78,26 @@ def validate_cypher(cypher: str, params: dict, driver) -> None:
         session.run(f"EXPLAIN {cypher}", **params)
 
 
-async def generate_and_validate(
-    question: str, client: openai.AsyncOpenAI, driver, model: str, max_attempts: int = 2
-) -> dict:
-    """생성 -> EXPLAIN 검증. 실패 시 에러 메시지를 덧붙여 1회만 재생성.
+def run_cypher(cypher: str, params: dict, driver) -> list[dict]:
+    """실제로 실행해서 결과를 받는다 (EXPLAIN이 아니라 진짜 실행).
 
-    반환: {"cypher": str, "params": dict, "attempts": int, "raw": str} 성공 시.
-    실패 시 GenerationError를 던진다 (호출부에서 "생성 실패" 케이스로 집계) —
+    문법 오류는 여기서 자연히 걸리고, 결과 0건도 여기서 감지할 수 있다 — EXPLAIN만
+    쓰면 "문법은 맞는데 조건이 너무 빡빡해서 아무것도 안 나오는" 쿼리를 성공으로
+    잘못 판정하게 된다. 프롬프트가 조회 전용(MATCH/WHERE/WITH/RETURN/ORDER BY/LIMIT)만
+    쓰라고 강제하므로 실제 실행 자체는 안전하다.
+    """
+    with driver.session() as session:
+        return session.run(cypher, **params).data()
+
+
+async def generate_and_validate(
+    question: str, client: openai.AsyncOpenAI, driver, model: str, max_attempts: int = 2,
+    prompt_name: str = "cypher_generation",
+) -> dict:
+    """생성 -> 실제 실행 -> 결과 0건이면 재시도. 실패 시 에러 메시지를 덧붙여 1회만 재생성.
+
+    반환: {"cypher": str, "params": dict, "rows": list[dict], "attempts": int, "raw": str}
+    성공 시. 실패 시 GenerationError를 던진다(호출부에서 "생성 실패" 케이스로 집계) —
     에러 메시지에 마지막 raw 응답을 잘라서 포함해 원인 진단이 가능하게 한다.
     """
     last_error: Exception | None = None
@@ -87,13 +105,15 @@ async def generate_and_validate(
     question_for_retry = question
     for attempt in range(1, max_attempts + 1):
         try:
-            result, raw = await generate_cypher(question_for_retry, client, model)
+            result, raw = await generate_cypher(question_for_retry, client, model, prompt_name)
             last_raw = raw
             if "cypher" not in result:
                 raise GenerationError(f"'cypher' 키 없음. raw={raw[:300]!r}")
             cypher, params = result["cypher"], result.get("params", {})
-            validate_cypher(cypher, params, driver)
-            return {"cypher": cypher, "params": params, "attempts": attempt, "raw": raw}
+            rows = run_cypher(cypher, params, driver)
+            if not rows:
+                raise GenerationError("실행은 됐지만 결과가 0건입니다 — 조건이 너무 빡빡하거나 잘못된 코드를 골랐을 수 있습니다.")
+            return {"cypher": cypher, "params": params, "rows": rows, "attempts": attempt, "raw": raw}
         except Exception as exc:  # noqa: BLE001 — 실험 스크립트, 원인 불문 재시도/집계
             last_error = exc
             question_for_retry = (
