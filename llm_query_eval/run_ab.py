@@ -1,15 +1,26 @@
-"""A(프로덕션 고정 Cypher) vs B(LLM 생성 Cypher) 품질 비교.
+"""A(프로덕션 파이프라인) vs B(LLM 생성 Cypher) 제품 추천 품질 비교.
 
-eval/dataset.jsonl의 시나리오(여러 고민이 한 문장에 섞인 실제 사용자 발화
-스타일, questions.py가 그대로 읽어옴)마다:
-  - A: app.clients.neo4j_client.query_ingredients_by_effects를 **직접 호출**
-    (텍스트를 복사하지 않음 — 복사본은 원본과 어긋날 수 있고, 실제로 이번 작업
+사용자는 성분이 아니라 제품을 원하므로, A/B 둘 다 최종적으로 **제품**을 비교한다.
+
+  - A: 프로덕션이 실제로 하는 것 그대로 재현 —
+    query_ingredients_by_effects → apply_caution_filter → select_products
+    (전부 app.services.recommend_service/app.clients.neo4j_client 함수를 직접
+    호출. 텍스트 복사 안 함 — 복사본은 원본과 어긋날 수 있고, 실제로 이번 작업
     중 pg_experiment/queries.py와 eval/graphrag_ranking_eval.py의 복사본이
-    프로덕션과 어긋나 있는 걸 발견했음). 시나리오의 concerns 전체를 합친
-    effect 집합으로 호출 — 프로덕션이 다중 concern일 때 하는 것과 동일.
-  - B: LLM이 원문 메시지만 보고 생성한 Cypher(EXPLAIN 검증 통과분)를 실행
-정답 기준은 eval/gold_labels.py의 AFFECTS 엣지 evidence_type == 'pubmed_evidence'
-(그래프 자체의 근거 강도 프록시). A/B 모두 같은 기준으로 precision/recall/ndcg 채점.
+    프로덕션과 어긋나 있는 걸 발견했음)
+  - B: LLM이 원문 메시지만 보고 생성한 Cypher(EXPLAIN 검증 통과분)로 제품까지 직접 조회
+
+채점 기준 3가지 (product_category_eval.py 방식 + 독립 신호):
+  - category_fit: 반환된 제품 카테고리가 concern에 적합한가 (recommend_service의
+    _appropriate_categories 그대로 재사용 — 씻어내는 제품/부적합 제형 배제)
+  - ingredient_grounded: 그 제품이 실제로 gold 성분(pubmed_evidence 근거)을 포함하는가
+  - review_score: 올리브영 실제 구매자 리뷰 태그(review_stats. "보습/주름·미백/진정"
+    3개 대분류)와 겹치는 concern이면 그 비율. 그래프 자체 데이터가 아니라 실제
+    구매자가 남긴 독립적인 신호라, 그래프가 틀렸어도 걸러낼 수 있음 — 다만 3개
+    대분류뿐이라 해당하는 concern에서만 계산됨(해당 없으면 None).
+
+정답 성분 기준은 여전히 eval/gold_labels.py의 AFFECTS 엣지
+evidence_type == 'pubmed_evidence'.
 
 사용:
     python run_ab.py --limit 3      # 시나리오 3개만 (파이프라인 확인용)
@@ -32,6 +43,13 @@ _APP_ROOT = Path(__file__).resolve().parent.parent  # 4EVR0-Server/
 sys.path.insert(0, str(_APP_ROOT))
 from app.clients.neo4j_client import query_ingredients_by_effects  # noqa: E402
 from app.core.config import settings  # noqa: E402
+from app.domain.enums import Concern  # noqa: E402
+from app.services.recommend_service import (  # noqa: E402
+    _appropriate_categories,
+    _requested_categories,
+    apply_caution_filter,
+    select_products,
+)
 
 _GRAPHDB_ROOT = _APP_ROOT.parent  # /home/graphdb
 sys.path.insert(0, str(_GRAPHDB_ROOT / "eval"))
@@ -41,13 +59,25 @@ from graphrag_ranking_eval import ndcg_at_k  # noqa: E402
 from generate import GenerationError, generate_and_validate, get_client  # noqa: E402
 from questions import SCENARIOS  # noqa: E402
 
-# A는 Ingredient-[:AFFECTS]->Effect 단일 hop 구조로 고정돼 있음
-# (query_ingredients_by_effects의 구조적 사실 — 매 호출 텍스트를 파싱할 필요 없음).
-A_HOPS = 1
+A_INGREDIENT_HOPS = 1  # Ingredient-[:AFFECTS]->Effect
+A_PRODUCT_HOPS = 2  # 위 + Product-[:CONTAINS]->Ingredient (별도 호출 2번이지만 순회 관계는 2종)
+
+# 올리브영 review_stats의 "피부고민" 태그는 3개 대분류뿐 — 26개 concern 전체를 못 커버함.
+_REVIEW_CONCERN_MAP: dict[str, set[str]] = {
+    "보습에 좋아요": {"DRY_SKIN", "DEHYDRATED_SKIN", "FLAKY_SKIN", "BARRIER_DAMAGE"},
+    "주름/미백에 좋아요": {
+        "WRINKLES", "AGING_SIGNS", "LOSS_OF_ELASTICITY", "SAGGING_SKIN",
+        "HYPERPIGMENTATION", "UNEVEN_SKIN_TONE", "DULLNESS", "BLEMISHES",
+        "DARK_CIRCLES", "POST_ACNE_MARKS",
+    },
+    "진정에 좋아요": {
+        "SENSITIVE_SKIN", "REDNESS", "IRRITATED_SKIN", "ATOPIC_PRONE", "ROSACEA_PRONE", "SUNBURN",
+    },
+}
 
 
 def get_sync_driver():
-    """실험 스크립트 전용 동기 드라이버 (B의 EXPLAIN 검증/실행, gold 후보 조회용).
+    """실험 스크립트 전용 동기 드라이버 (B의 EXPLAIN 검증/실행, gold/리뷰 조회용).
 
     app.clients.neo4j_client는 자체 비동기 드라이버 싱글턴을 내부에서 관리하므로
     (A 호출은 그쪽을 그대로 씀), 이 드라이버와는 별개 커넥션이다.
@@ -65,6 +95,11 @@ def effects_for_concerns(concerns: list[str]) -> list[str]:
     return list(seen)
 
 
+def gold_ingredient_names(affects_df: pd.DataFrame, effects: list[str]) -> set[str]:
+    candidates = affects_df[affects_df["effect_code"].isin(effects)]
+    return set(candidates.loc[candidates["is_gold"], "inci_name"])
+
+
 def score_ingredients(names: list[str], affects_df: pd.DataFrame, effects: list[str]) -> dict:
     """반환된 성분 이름 순서 리스트를 gold 기준(affects_df.is_gold)으로 채점한다.
 
@@ -73,7 +108,7 @@ def score_ingredients(names: list[str], affects_df: pd.DataFrame, effects: list[
     """
     candidates = affects_df[affects_df["effect_code"].isin(effects)]
     candidate_gold = int(candidates["is_gold"].sum())
-    gold_names = set(candidates.loc[candidates["is_gold"], "inci_name"])
+    gold_names = gold_ingredient_names(affects_df, effects)
 
     returned_total = len(names)
     relevances = [1 if n in gold_names else 0 for n in names]
@@ -89,6 +124,73 @@ def score_ingredients(names: list[str], affects_df: pd.DataFrame, effects: list[
     }
 
 
+def relevant_review_tag(concerns: list[str]) -> str | None:
+    """concern들이 review_stats 3개 대분류 중 하나와 겹치면 그 태그, 아니면 None."""
+    for tag, tag_concerns in _REVIEW_CONCERN_MAP.items():
+        if tag_concerns & set(concerns):
+            return tag
+    return None
+
+
+def _parse_review_pct(review_stats_raw, tag: str) -> float | None:
+    if not review_stats_raw:
+        return None
+    try:
+        data = json.loads(review_stats_raw)
+        val = data.get("피부고민", {}).get(tag)
+        return float(val.rstrip("%")) / 100 if val is not None else None
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        return None
+
+
+def score_products(
+    products: list[dict], gold_names: set[str], concerns: list[str], message: str, sync_driver,
+) -> dict:
+    """제품 추천 품질: category_fit + ingredient_grounded + (해당 시) review_score."""
+    n = len(products)
+    if n == 0:
+        return {"returned": 0, "category_fit": None, "ingredient_grounded": None,
+                "review_tag": relevant_review_tag(concerns), "review_score": None}
+
+    requested = _requested_categories(message)
+    concerns_enum = [Concern(c) for c in concerns]
+    appropriate = set(_appropriate_categories(concerns_enum, requested))
+    category_fit = sum(1 for p in products if p.get("category") in appropriate) / n
+
+    product_ids = [p["product_id"] for p in products if p.get("product_id")]
+    grounded_ids: set[str] = set()
+    review_by_id: dict[str, str | None] = {}
+    if product_ids:
+        with sync_driver.session() as session:
+            rows = session.run(
+                """
+                UNWIND $pids AS pid
+                MATCH (p:Product {product_id: pid})
+                OPTIONAL MATCH (p)-[:CONTAINS]->(i:Ingredient) WHERE i.inci_name IN $gold_names
+                WITH p, count(i) AS gold_count
+                RETURN p.product_id AS product_id, gold_count, p.review_stats AS review_stats
+                """,
+                pids=product_ids, gold_names=list(gold_names),
+            ).data()
+        grounded_ids = {r["product_id"] for r in rows if r["gold_count"] > 0}
+        review_by_id = {r["product_id"]: r["review_stats"] for r in rows}
+    ingredient_grounded = (sum(1 for pid in product_ids if pid in grounded_ids) / n) if product_ids else 0.0
+
+    tag = relevant_review_tag(concerns)
+    review_score = None
+    if tag:
+        pcts = [p for p in (_parse_review_pct(review_by_id.get(pid), tag) for pid in product_ids) if p is not None]
+        review_score = round(sum(pcts) / len(pcts), 4) if pcts else None
+
+    return {
+        "returned": n,
+        "category_fit": round(category_fit, 4),
+        "ingredient_grounded": round(ingredient_grounded, 4),
+        "review_tag": tag,
+        "review_score": review_score,
+    }
+
+
 def count_hops(cypher: str) -> int:
     """관계 순회(-[...]->) 개수를 정규식으로 근사 카운트한다. 대략적인 지표임."""
     return len(re.findall(r"-\s*\[", cypher))
@@ -96,33 +198,42 @@ def count_hops(cypher: str) -> int:
 
 async def evaluate_one(scenario: dict, affects_df, sync_driver, client, model) -> dict:
     concerns = scenario["concerns"]
+    message = scenario["message"]
     effects = effects_for_concerns(concerns)
-    row: dict = {
-        "id": scenario["id"], "message": scenario["message"], "concerns": concerns, "effects": effects,
-    }
+    concerns_enum = [Concern(c) for c in concerns]
+    gold_names = gold_ingredient_names(affects_df, effects)
+    row: dict = {"id": scenario["id"], "message": message, "concerns": concerns, "effects": effects}
 
-    # A — 프로덕션 함수를 그대로 호출 (min_graph_score도 프로덕션 기본값 그대로)
-    a_rows = await query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score)
-    a_names = [r["name"] for r in a_rows]
-    row["a"] = score_ingredients(a_names, affects_df, effects)
-    row["a"]["hops"] = A_HOPS
+    # A — 프로덕션 파이프라인 그대로: 성분 조회 → CAUTION 필터 → 제품 선정
+    a_ingredients_raw = await query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score)
+    a_ingredients_raw = await apply_caution_filter(a_ingredients_raw, concerns_enum)
+    row["a_ingredients"] = score_ingredients([r["name"] for r in a_ingredients_raw], affects_df, effects)
+    row["a_ingredients"]["hops"] = A_INGREDIENT_HOPS
 
-    # B — LLM은 concerns/effects를 미리 안 받고, 원문 메시지만 보고 스스로 판단
+    a_ingredient_scores = [
+        {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)} for r in a_ingredients_raw[:10]
+    ]
+    a_products = await select_products(message, concerns_enum, a_ingredient_scores)
+    row["a_products"] = score_products(a_products, gold_names, concerns, message, sync_driver)
+    row["a_products"]["hops"] = A_PRODUCT_HOPS
+
+    # B — LLM은 concerns/effects를 미리 안 받고, 원문 메시지만 보고 제품까지 직접 조회
     try:
-        gen = await generate_and_validate(scenario["message"], client, sync_driver, model)
+        gen = await generate_and_validate(
+            message, client, sync_driver, model, prompt_name="cypher_generation_products",
+        )
         with sync_driver.session() as session:
             b_rows = session.run(gen["cypher"], **gen["params"]).data()
-        if not b_rows or "name" not in b_rows[0]:
-            raise GenerationError(f"결과에 'name' 컬럼 없음: {list(b_rows[0].keys()) if b_rows else '결과 없음'}")
-        b_names = [r["name"] for r in b_rows]
-        row["b"] = score_ingredients(b_names, affects_df, effects)
-        row["b"]["hops"] = count_hops(gen["cypher"])
-        row["b"]["attempts"] = gen["attempts"]
-        row["b"]["failed"] = False
-        row["b"]["cypher"] = gen["cypher"]
-        row["b"]["params"] = gen["params"]
+        if b_rows and "product_id" not in b_rows[0]:
+            raise GenerationError(f"결과에 'product_id' 컬럼 없음: {list(b_rows[0].keys())}")
+        row["b_products"] = score_products(b_rows, gold_names, concerns, message, sync_driver)
+        row["b_products"]["hops"] = count_hops(gen["cypher"])
+        row["b_products"]["attempts"] = gen["attempts"]
+        row["b_products"]["failed"] = False
+        row["b_products"]["cypher"] = gen["cypher"]
+        row["b_products"]["params"] = gen["params"]
     except Exception as exc:  # noqa: BLE001 — 생성/검증/실행 실패를 전부 "실패" 케이스로 집계
-        row["b"] = {"failed": True, "error": f"{type(exc).__name__}: {exc}"}
+        row["b_products"] = {"failed": True, "error": f"{type(exc).__name__}: {exc}"}
 
     return row
 
@@ -146,14 +257,16 @@ async def run(limit: int | None) -> list[dict]:
             row = await evaluate_one(scenario, affects_df, sync_driver, client, model)
             row["elapsed_s"] = round(time.perf_counter() - t0, 2)
             results.append(row)
-            b = row["b"]
+            b = row["b_products"]
             b_summary = "FAILED" if b.get("failed") else (
-                f"P={b['precision']:.2f} R={b['recall']:.2f} NDCG={b['ndcg']:.2f} hops={b['hops']}"
+                f"cat_fit={b['category_fit']:.2f} grounded={b['ingredient_grounded']:.2f}"
+                f" review={b['review_score']} hops={b['hops']}"
             )
-            a = row["a"]
+            a = row["a_products"]
             label = "+".join(row["concerns"])
-            print(f"[id {row['id']:>2} {label[:30]:30s}] A: P={a['precision']:.2f} R={a['recall']:.2f}"
-                  f" NDCG={a['ndcg']:.2f}  |  B: {b_summary}  ({row['elapsed_s']}s)")
+            print(f"[id {row['id']:>2} {label[:30]:30s}] A: cat_fit={a['category_fit']:.2f}"
+                  f" grounded={a['ingredient_grounded']:.2f} review={a['review_score']}"
+                  f"  |  B: {b_summary}  ({row['elapsed_s']}s)")
         return results
     finally:
         sync_driver.close()
@@ -164,18 +277,18 @@ def summarize(results: list[dict]) -> dict:
         vals = [v for v in vals if v is not None]
         return round(sum(vals) / len(vals), 4) if vals else None
 
-    b_ok = [r for r in results if not r["b"].get("failed")]
+    b_ok = [r for r in results if not r["b_products"].get("failed")]
     return {
         "n_cases": len(results),
         "b_failure_rate": round(1 - len(b_ok) / len(results), 4) if results else None,
-        "a_precision": avg(r["a"]["precision"] for r in results),
-        "a_recall": avg(r["a"]["recall"] for r in results),
-        "a_ndcg": avg(r["a"]["ndcg"] for r in results),
-        "a_hops": avg(r["a"]["hops"] for r in results),
-        "b_precision": avg(r["b"]["precision"] for r in b_ok),
-        "b_recall": avg(r["b"]["recall"] for r in b_ok),
-        "b_ndcg": avg(r["b"]["ndcg"] for r in b_ok),
-        "b_hops": avg(r["b"]["hops"] for r in b_ok),
+        "a_category_fit": avg(r["a_products"]["category_fit"] for r in results),
+        "a_ingredient_grounded": avg(r["a_products"]["ingredient_grounded"] for r in results),
+        "a_review_score": avg(r["a_products"]["review_score"] for r in results),
+        "a_hops": avg(r["a_products"]["hops"] for r in results),
+        "b_category_fit": avg(r["b_products"]["category_fit"] for r in b_ok),
+        "b_ingredient_grounded": avg(r["b_products"]["ingredient_grounded"] for r in b_ok),
+        "b_review_score": avg(r["b_products"]["review_score"] for r in b_ok),
+        "b_hops": avg(r["b_products"]["hops"] for r in b_ok),
     }
 
 

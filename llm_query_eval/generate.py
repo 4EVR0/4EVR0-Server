@@ -57,9 +57,14 @@ async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content
     return parsed, raw
 
 
-async def generate_cypher(question: str, client: openai.AsyncOpenAI, model: str) -> tuple[dict, str]:
-    """질문 1건에 대해 ({"cypher": ..., "params": ...}, raw 응답 문자열)을 생성한다."""
-    prompt = load_prompt("cypher_generation")
+async def generate_cypher(
+    question: str, client: openai.AsyncOpenAI, model: str, prompt_name: str = "cypher_generation"
+) -> tuple[dict, str]:
+    """질문 1건에 대해 ({"cypher": ..., "params": ...}, raw 응답 문자열)을 생성한다.
+
+    prompt_name: "cypher_generation"(성분) 또는 "cypher_generation_products"(제품).
+    """
+    prompt = load_prompt(prompt_name)
     return await _call_llm(client, prompt, question, model)
 
 
@@ -74,7 +79,8 @@ def validate_cypher(cypher: str, params: dict, driver) -> None:
 
 
 async def generate_and_validate(
-    question: str, client: openai.AsyncOpenAI, driver, model: str, max_attempts: int = 2
+    question: str, client: openai.AsyncOpenAI, driver, model: str, max_attempts: int = 2,
+    prompt_name: str = "cypher_generation",
 ) -> dict:
     """생성 -> EXPLAIN 검증. 실패 시 에러 메시지를 덧붙여 1회만 재생성.
 
@@ -87,7 +93,7 @@ async def generate_and_validate(
     question_for_retry = question
     for attempt in range(1, max_attempts + 1):
         try:
-            result, raw = await generate_cypher(question_for_retry, client, model)
+            result, raw = await generate_cypher(question_for_retry, client, model, prompt_name)
             last_raw = raw
             if "cypher" not in result:
                 raise GenerationError(f"'cypher' 키 없음. raw={raw[:300]!r}")
