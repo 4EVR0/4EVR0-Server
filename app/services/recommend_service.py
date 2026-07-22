@@ -10,6 +10,7 @@ from app.clients.llm_fallback import extract_with_fallback
 from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import (
     query_cautioned_ingredients,
+    query_ingredient_kor_names,
     query_ingredients_by_effects,
     query_products_by_ingredients,
 )
@@ -396,7 +397,9 @@ _FOLLOWUP_SYSTEM = (
     "추천 / 비교 / 이유 / 사용 팁 (use only the relevant ones). Under each heading, concise sentences.\n"
     "Formatting for readability:\n"
     "- Wrap every PRODUCT name in **...** (double asterisks).\n"
-    "- Wrap every INGREDIENT name in *...* (single asterisks).\n"
+    "- For INGREDIENTS, use the EXACT '한글명 (INCI)' form given in the context, and wrap ONLY the "
+    "Korean part in *...* (single asterisks). Example: *트라넥사믹애씨드* (TRANEXAMIC ACID). "
+    "Never write an ingredient in English only.\n"
     "When you explain WHY a product has a property (heavy, rich, moisturizing, gentle, exfoliating, etc.), "
     "cite the concrete reason from the given data — the responsible ingredient(s) and/or the "
     "formulation/category (e.g., cream vs serum). Do NOT fabricate reasons.\n"
@@ -407,15 +410,21 @@ _FOLLOWUP_SYSTEM = (
 )
 
 
-def _followup_context(history: list[dict]) -> str:
-    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립."""
+def _fmt_ingredient(inci: str, ing_kor: dict[str, str]) -> str:
+    """'한글 (INCI)' 표기. 한글명 없으면 INCI만."""
+    kor = ing_kor.get(inci)
+    return f"{kor} ({inci})" if kor else inci
+
+
+def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
+    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'."""
     lines: list[str] = []
     last = next((t for t in reversed(history) if t.get("products")), None)
     if last and last.get("products"):
         lines.append("이전에 추천한 제품:")
         for p in last["products"]:
             rate = f" ⭐{p['rating']}" if p.get("rating") else ""
-            ings = ", ".join((p.get("matched_ingredients") or [])[:4])
+            ings = ", ".join(_fmt_ingredient(i, ing_kor) for i in (p.get("matched_ingredients") or [])[:4])
             ing_str = f" · 핵심성분: {ings}" if ings else ""
             lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}{ing_str}")
     lines.append("\n이전 대화:")
@@ -461,7 +470,11 @@ def _reorder_by_ranking(products: list[ProductResult], ranking: list[str]) -> li
 async def _handle_followup(session_id: str, turn_id: str, message: str,
                            history: list[dict]) -> RecommendResponse:
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
-    user_content = f"{_followup_context(history)}\n\n현재 질문: {message}"
+    # 이전 제품들의 핵심 성분 INCI → 한글명 조회('한글 (INCI)' 표기용).
+    last = next((t for t in reversed(history) if t.get("products")), None)
+    inci_all = {i for p in (last or {}).get("products", []) for i in (p.get("matched_ingredients") or [])}
+    ing_kor = await query_ingredient_kor_names(sorted(inci_all))
+    user_content = f"{_followup_context(history, ing_kor)}\n\n현재 질문: {message}"
     try:
         async with llm_slot():
             client = get_async_llm_client()

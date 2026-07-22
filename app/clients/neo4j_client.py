@@ -216,6 +216,27 @@ async def query_cautioned_ingredients(concern_codes: list[str]) -> set[str]:
         return set()
 
 
+async def query_ingredient_kor_names(inci_names: list[str]) -> dict[str, str]:
+    """INCI명 리스트 → {inci_name: kor_name} 맵. 후속 응답에서 '한글 (INCI)' 표기용.
+    미존재/장애 시 빈 맵(호출측이 INCI만 표시하도록 폴백)."""
+    if not inci_names:
+        return {}
+    driver = _get_driver()
+    query = """
+    UNWIND $names AS nm
+    MATCH (i:Ingredient {inci_name: nm})
+    WHERE i.kor_name IS NOT NULL AND i.kor_name <> ''
+    RETURN i.inci_name AS inci, i.kor_name AS kor
+    """
+    try:
+        async with driver.session() as session:
+            result = await session.run(query, names=inci_names)
+            return {r["inci"]: r["kor"] async for r in result}
+    except Exception as exc:
+        logger.warning("Neo4j kor_name query failed: %s", exc)
+        return {}
+
+
 async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
     """Effect → Ingredient → Product 추천 경로를 반환한다."""
     if not effects:

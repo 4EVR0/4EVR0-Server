@@ -246,6 +246,8 @@
   .answer-h { margin: 17px 0 7px; color: #5f8f13; font-size: 16px; font-weight: 850; letter-spacing: -0.3px; }
   .answer-h:first-child { margin-top: 0; }
   .answer-line { line-height: 1.72; }
+  .answer-line.bulleted { padding-left: 16px; text-indent: -16px; }
+  .bullet { color: #9bce26; font-weight: 900; margin-right: 6px; }
   .ing-emph { color: #5f8f13; font-weight: 800; }
   .prod-emph { color: #182010; font-weight: 850; }
   .effect-emph { color: #2f3d26; font-weight: 750; }
@@ -540,7 +542,12 @@
       if (!line.trim()) return '';
       const title = sectionTitle(line);
       if (title) return `<div class="answer-h">${escHtml(title)}</div>`;
-      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(mdInline(escHtml(line)), ingredients))}</div>`;
+      // 리스트 불릿(* 또는 - 뒤 공백)을 떼어 성분 *마커*와 충돌 방지, 깔끔한 •로 표시.
+      let bullet = '', content = line;
+      const m = content.match(/^\s*[*\-]\s+/);
+      if (m) { bullet = '<span class="bullet">•</span>'; content = content.slice(m[0].length); }
+      const body = emphasizeEffects(emphasizeIngredients(mdInline(escHtml(content)), ingredients));
+      return `<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`;
     }).join('');
   }
 
