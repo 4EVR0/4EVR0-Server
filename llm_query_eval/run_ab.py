@@ -231,9 +231,8 @@ async def evaluate_one(scenario: dict, affects_df, sync_driver, client, model) -
         gen = await generate_and_validate(
             message, client, sync_driver, model, prompt_name="cypher_generation_products",
         )
-        with sync_driver.session() as session:
-            b_rows = session.run(gen["cypher"], **gen["params"]).data()
-        if b_rows and "product_id" not in b_rows[0]:
+        b_rows = gen["rows"]  # generate_and_validate가 이미 실제로 실행해서 받아둔 결과 (재실행 안 함)
+        if "product_id" not in b_rows[0]:
             raise GenerationError(f"결과에 'product_id' 컬럼 없음: {list(b_rows[0].keys())}")
         row["b_products"] = score_products(b_rows, gold_names, concerns, message, sync_driver)
         row["b_products"]["hops"] = count_hops(gen["cypher"])

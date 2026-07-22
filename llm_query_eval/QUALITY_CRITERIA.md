@@ -101,10 +101,13 @@ select_products(message, concerns, ingredient_scores)     # CONTAINS 1-hop + 카
 
 ### B: LLM이 원문 메시지만 보고 직접 생성
 
-`prompts/cypher_generation_products.txt`가 그래프 스키마(CONTAINS/AFFECTS/CAUTION
-전부 포함) + effect_code 15개 목록 + 카테고리 값 + few-shot 3개를 준다. LLM은:
+`prompts/cypher_generation_products.txt`가 그래프 스키마(CONTAINS/AFFECTS/
+RELATES_TO/CAUTION 전부 포함) + **Concern 26개 목록**(concern_code + 한글명)
++ effect_code 15개 목록 + 카테고리 값 + few-shot 4개를 준다. LLM은:
 
-1. 메시지에서 관련 effect_code를 스스로 판단
+1. 메시지에서 관련 고민을 파악한 뒤, **(a) Concern 코드로 매치해서
+   `RELATES_TO`를 타고 Effect로 가거나, (b) Effect 코드 목록에서 바로 판단해서
+   고르거나** — 둘 중 어느 쪽이 메시지에 더 맞을지 스스로 판단 (아래 §5-1 참고)
 2. `Product-CONTAINS->Ingredient-AFFECTS->Effect` 경로로 제품까지 직접 조회하는
    Cypher를 생성 (성분에서 멈추지 말라고 명시)
 3. 부적합 카테고리(클렌징 등)를 스스로 거를지 판단
@@ -114,15 +117,52 @@ select_products(message, concerns, ingredient_scores)     # CONTAINS 1-hop + 카
    탐색 깊이를 조절하는가")에 제일 가까운 부분
 5. `{"cypher": ..., "params": ...}` JSON으로 응답
 
-`generate.py`가 실행 전 `EXPLAIN`으로 문법만 검증하고, 실패하면 에러 메시지를
-붙여서 1회만 재생성한다.
+`generate.py::generate_and_validate()`가 생성된 쿼리를 **실제로 실행**해서
+(EXPLAIN이 아님 — 문법은 맞는데 조건이 너무 빡빡해서 결과가 0건인 경우를
+EXPLAIN으론 못 잡아서 바꿈) 결과가 0건이거나 에러가 나면, 그 이유를 붙여서
+1회만 재생성한다.
 
-**hop 카운팅 주의점**: `run_ab.py::count_hops()`는 Cypher 문자열에서 `-[`
-개수를 세는 정규식 근사치다. 기본 2-hop 쿼리(CONTAINS+AFFECTS)는 정확히 2로
-나오지만, CAUTION을 `NOT EXISTS {...}` 서브쿼리로 추가하면 그 안에서 CONTAINS를
-한 번 더 타서 **4**로 나온다(관계 종류는 3개뿐인데 카운트는 4) — "관계가 몇
-종류 쓰였는가"가 아니라 "쿼리 문자열에 관계 패턴이 몇 번 나오는가"를 잰다는
-점을 감안해서 해석해야 한다.
+#### 5-1. RELATES_TO를 완전히 채운 이유
+
+원래 그래프의 `Concern` 노드는 15개뿐이었고(앱이 쓰는 `Concern` enum은 26개),
+`RELATES_TO`로 Effect와 연결된 건 7개뿐이었다. 이 상태로 B에게 "Concern부터
+타도 된다"고 안내해봐야, 26개 중 19개(73%)는 **LLM이 잘해도 데이터가 없어서
+실패**하는 상황이라 공정한 테스트가 안 됐다.
+
+그래서 `sync_relates_to.py`로 `CONCERN_EFFECT_MAP`(프로덕션 하드코딩 딕셔너리,
+§5의 A가 쓰는 것과 동일)을 그래프의 `RELATES_TO` 관계로 그대로 반영했다 —
+빠진 47개 관계 추가, 이미 있었지만 `CONCERN_EFFECT_MAP`과 어긋나 있던 3개
+삭제(`OILY_SKIN`/`HYPERPIGMENTATION`/`POST_ACNE_MARKS`, `eval/RESULTS.md` §1에
+이미 기록된 불일치). 이제 26개 concern 전부 `RELATES_TO`가 있어서, B가 Concern
+경로를 선택하는 것도 "선택"이지 "데이터 없어서 못 함"이 아니게 됐다.
+
+```bash
+python sync_relates_to.py --dry-run   # 뭐가 바뀔지만 확인
+python sync_relates_to.py             # 실제 적용 (MERGE 기반, 재실행해도 안전)
+```
+
+**주의**: 이 스크립트는 그래프 DB에 실제로 쓰기(write)를 한다 — 로컬 sandbox와
+GPU 서버가 같은 그래프를 보는 구성이면, 한 번만 실행하면 된다. 프로덕션 서빙
+경로(`app/clients/neo4j_client.py`)는 지금 `RELATES_TO`를 안 읽으므로 이 변경이
+실서비스 동작에 영향을 주진 않는다 — `eval/`, `pg_experiment/`처럼 그래프를
+읽기만 하는 진단 스크립트들의 결과가 더 정확해지는 부수 효과는 있다.
+
+#### 5-2. hop 상한
+
+지금 프롬프트가 노출하는 관계는 `CONTAINS`/`AFFECTS`/`RELATES_TO`/`CAUTION`
+4종류뿐이다. `run_ab.py::count_hops()`(Cypher 문자열의 `-[` 개수를 세는 정규식
+근사치)로 각 경로를 재보면:
+
+| 경로 | count_hops() |
+|---|---|
+| Effect 코드 직접 선택 + Product까지 (기본, 2-hop) | 2 |
+| Concern부터 RELATES_TO 타고 Product까지 (3-hop) | 3 |
+| 위 + CAUTION 배제까지 (서브쿼리에서 CONTAINS 재사용) | **5 (이론적 상한)** |
+
+CAUTION 배제 서브쿼리 안에서 `CONTAINS`를 한 번 더 타기 때문에 "관계 3종류
+추가"가 카운트로는 +2로 잡힌다 — "관계가 몇 종류 쓰였는가"가 아니라 "쿼리
+문자열에 관계 패턴이 몇 번 나오는가"를 잰다는 점을 감안해서 해석해야 한다.
+스키마에 없는 관계는 LLM이 만들어낼 수 없으므로 5가 사실상의 상한이다.
 
 **CAUTION 경로가 실제로 테스트되는 시나리오 비율**: 46개 중 12개(26%)가
 민감성 계열 concern(`SENSITIVE_SKIN`, `REDNESS`, `IRRITATED_SKIN`,
@@ -132,6 +172,14 @@ select_products(message, concerns, ingredient_scores)     # CONTAINS 1-hop + 카
 프로덕션의 CAUTION 적용 자체가 사용자가 "피해주세요"라고 명시했는지가 아니라
 concern 종류로 자동 판단되는 방식이라(`_is_sensitivity_query`), 이 12개
 시나리오가 실제 분포를 그대로 반영한다.
+
+#### 5-3. "유연한 방식이 더 나은가"는 아직 미검증
+
+이 문서를 쓰는 시점까지, GPU 서버 연결 없이는 B가 전부 "생성 실패"로만
+집계돼서(로컬엔 vLLM이 없음) **B가 실제로 만든 쿼리 결과를 한 번도 못 봤다**.
+"자유도를 주면 더 나은가"는 예측하지 않는다 — `run_ab.py`를 GPU 서버에서
+돌려서 `a_*`/`b_*` 지표(category_fit, ingredient_grounded, review_score,
+hops, b_failure_rate)를 직접 비교해야 답이 나온다.
 
 ### 질문(테스트 시나리오)
 
@@ -187,13 +235,21 @@ Cypher 원문 포함)이 남는다.
    import할 수 있으므로 사본 대신 원본을 씀 — A 쿼리·LLM 클라이언트에 이어
    **같은 "복사본 드리프트" 패턴이 이걸로 벌써 5번째**로 발견됨.
 7. **"hop"은 그래프에서 실제로 타는 관계 수**: Product-Ingredient-Effect-Concern을
-   전부 잇는 전체 개념 모델은 4노드/3관계(hop)지만, 지금 쿼리는 Concern을
-   그래프로 안 탄다 — concern→effect 변환이 `CONCERN_EFFECT_MAP`(파이썬 딕셔너리
-   조회)로 이뤄지고, 그 결과(effect_code 목록)를 `$effects` 파라미터로 Cypher에
-   꽂아 넣을 뿐이라 RELATES_TO 관계를 안 씀. 그래서 기본 제품 쿼리는
-   CONTAINS+AFFECTS 2개 관계 = 2-hop. RELATES_TO를 안 쓰는 이유는 그래프에
-   26개 concern 중 8개가 이 관계 자체가 없어서(`eval/RESULTS.md` §1) — 프로덕션이
-   원래부터 우회한 것.
+   전부 잇는 전체 개념 모델은 4노드/3관계(hop)다. 처음엔 A가 Concern→Effect를
+   `CONCERN_EFFECT_MAP`(파이썬 딕셔너리 조회)로 처리해서 그래프의 RELATES_TO를
+   안 탔고, B의 프롬프트도 "Concern 매치하지 말라"고 지침을 줘서 똑같이
+   우회하고 있었음 — 그래프 8개 concern에 RELATES_TO가 아예 없어서
+   (`eval/RESULTS.md` §1) 프로덕션이 원래 그렇게 우회한 것이었는데, B한테도
+   똑같은 우회를 강요한 셈이라 "LLM이 자유롭게 판단"하는 실험 취지에 안 맞았음.
+   §5-1에서 그래프 자체를 채워서 해결.
+8. **`CONCERN_EFFECT_MAP`을 그래프의 RELATES_TO로 직접 채움**: 위 7번 문제의
+   근본 해결책. `sync_relates_to.py`로 그래프에 실제로 write — 자세한 내용과
+   주의사항은 §5-1.
+9. **EXPLAIN만으론 "결과 0건"을 못 잡음**: 원래 생성된 쿼리를 EXPLAIN(문법만
+   확인, 실행 안 함)으로만 검증했는데, 이러면 조건이 너무 빡빡해서 결과가
+   0건인 쿼리도 "성공"으로 잘못 판정됨. `generate_and_validate()`가 이제
+   실제로 실행해서 0건이면 에러로 취급하고 재시도하도록 수정
+   (`generate.py::run_cypher`).
 
 ## 8. 아직 다루지 않은 것
 
