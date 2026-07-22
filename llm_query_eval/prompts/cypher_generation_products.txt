@@ -16,6 +16,10 @@
   - evidence_type: "pubmed_evidence"(논문 근거, 신뢰도 높음) 또는 "cosing_function"(성분 기능표, 신뢰도 낮음)
 - (Effect)-[:RELATES_TO]->(Concern) — 일부만 존재. Concern을 직접 매치하기보다
   아래 Effect 코드 목록에서 메시지와 관련된 effect_code를 직접 선택하세요.
+- (Ingredient)-[:CAUTION {evidence_type, graph_score, paper_count}]->(Concern) — 그 성분이
+  이 고민(예: 민감성, 홍조, 자극)에 오히려 자극/악화를 유발한다는 논문 근거. 사용자가
+  민감성/자극/저자극 관련 언급을 하면, CAUTION 엣지가 있는 성분을 포함한 제품을
+  제외하는 조건을 추가하는 게 좋습니다 (`NOT EXISTS`로 확인).
 
 # Effect 코드 목록 (effect_code: 설명)
 
@@ -48,12 +52,17 @@
    (성분만 반환하고 끝내지 마세요).
 3. 씻어내는 제품(클렌징폼/클렌징오일 등)은 웬만하면 제외하세요 — 필요하다고 판단되면
    WHERE 조건으로 직접 거르세요 (카테고리 목록은 위 참고).
-4. 결과 컬럼은 반드시 다음 이름으로 alias하세요: `product_id`(prod.product_id),
+4. **필요한 만큼만 관계를 타세요 — 정해진 hop 수는 없습니다.** 메시지가 단순히
+   "~에 좋은 제품"이면 위 2번 경로(2-hop)로 충분합니다. 하지만 메시지에 "민감성",
+   "자극 없이", "저자극", "~는 피하고 싶어요" 같은 회피/제약 조건이 있으면
+   CAUTION 관계까지 추가로 확인해서(3번째 관계) 그 성분을 포함한 제품을 걸러내세요.
+   반대로 메시지가 아주 단순하면 불필요한 조건을 억지로 추가하지 마세요.
+5. 결과 컬럼은 반드시 다음 이름으로 alias하세요: `product_id`(prod.product_id),
    `product_name`(prod.product_name), `category`(prod.category). 매칭된 성분 수나
    근거 강도로 정렬하는 것을 권장합니다.
-5. 조회 전용(MATCH/WHERE/WITH/RETURN/ORDER BY/LIMIT)만 사용하세요. CREATE, MERGE,
+6. 조회 전용(MATCH/WHERE/WITH/RETURN/ORDER BY/LIMIT)만 사용하세요. CREATE, MERGE,
    DELETE, SET, REMOVE는 절대 쓰지 마세요.
-6. 결과는 최대 5개로 제한하세요 (LIMIT 5).
+7. 결과는 최대 5개로 제한하세요 (LIMIT 5).
 
 # 출력 형식
 
@@ -72,3 +81,11 @@
 메시지: "피지가 많고 모공이 막혀서 블랙헤드랑 여드름이 자꾸 나요. 제품 추천해주세요."
 답변:
 {"cypher": "MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects AND NOT prod.category IN ['클렌징폼', '클렌징오일', '크림'] WITH prod, count(DISTINCT i) AS matched_count, collect(DISTINCT i.inci_name) AS matched_ingredients WHERE matched_count > 0 RETURN prod.product_id AS product_id, prod.product_name AS product_name, prod.category AS category, matched_count, matched_ingredients ORDER BY matched_count DESC LIMIT 5", "params": {"effects": ["SEBUM_REGULATION", "KERATOLYTIC", "COMEDOLYTIC", "ANTI_INFLAMMATORY", "ANTIMICROBIAL"]}}
+
+아래는 회피 조건이 있는 경우 — CAUTION까지 확인하는 3번째 관계가 필요합니다(위 2개
+예시보다 한 단계 더 들어감. 항상 이렇게 하라는 뜻이 아니라, 메시지에 회피 조건이
+있을 때만 이렇게 하라는 뜻입니다):
+
+메시지: "피부가 자극에 약해서, 트러블 유발 성분은 피하고 순한 제품으로 추천해주세요."
+답변:
+{"cypher": "MATCH (prod:Product)-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects AND NOT prod.category IN ['클렌징폼', '클렌징오일'] AND NOT EXISTS { MATCH (prod)-[:CONTAINS]->(ci:Ingredient)-[:CAUTION]->(:Concern {concern_code: $avoid_concern}) } WITH prod, count(DISTINCT i) AS matched_count, collect(DISTINCT i.inci_name) AS matched_ingredients WHERE matched_count > 0 RETURN prod.product_id AS product_id, prod.product_name AS product_name, prod.category AS category, matched_count, matched_ingredients ORDER BY matched_count DESC LIMIT 5", "params": {"effects": ["SOOTHING", "ANTI_INFLAMMATORY"], "avoid_concern": "SENSITIVE_SKIN"}}

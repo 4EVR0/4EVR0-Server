@@ -50,10 +50,19 @@ from app.services.recommend_service import (  # noqa: E402
     apply_caution_filter,
     select_products,
 )
+from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP as _REAL_CONCERN_EFFECT_MAP  # noqa: E402
+
+# eval/gold_labels.py의 PRODUCTION_CONCERN_EFFECT_MAP은 이 원본을 손으로 베낀 사본인데
+# (eval/이 다른 저장소라 그때는 import가 안 됐음), 실제로 4개 concern에서 이미 어긋나
+# 있는 걸 발견했다(OILY_SKIN/HYPERPIGMENTATION/DULLNESS/WRINKLES). llm_query_eval은
+# 4EVR0-Server 안에 있어서 원본을 바로 import할 수 있으므로 사본 대신 이걸 쓴다.
+PRODUCTION_CONCERN_EFFECT_MAP: dict[str, list[str]] = {
+    concern.value: [effect.value for effect in effects] for concern, effects in _REAL_CONCERN_EFFECT_MAP.items()
+}
 
 _GRAPHDB_ROOT = _APP_ROOT.parent  # /home/graphdb
 sys.path.insert(0, str(_GRAPHDB_ROOT / "eval"))
-from gold_labels import PRODUCTION_CONCERN_EFFECT_MAP, fetch_all_affects  # noqa: E402
+from gold_labels import fetch_all_affects  # noqa: E402
 from graphrag_ranking_eval import ndcg_at_k  # noqa: E402
 
 from generate import GenerationError, generate_and_validate, get_client  # noqa: E402
