@@ -227,7 +227,8 @@
     font-size: 12px; font-weight: 800; flex-shrink: 0;
   }
   .avatar.user { background: linear-gradient(135deg, #9BCE26, #6BAA18); color: white; }
-  .avatar.ai { background: #f3f8e8; color: #5f8f13; border: 1px solid var(--line); }
+  .avatar.ai { background: #f3f8e8; color: #5f8f13; border: 1px solid var(--line); overflow: hidden; }
+  .avatar.ai img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
 
   .bubble {
     max-width: min(78%, 680px);
@@ -242,6 +243,11 @@
   .answer-kicker { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 9px; color: #5f8f13; font-size: 11px; font-weight: 800; letter-spacing: -0.1px; }
   .answer-kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
   .answer-body { color: #25301d; }
+  .answer-h { margin: 17px 0 7px; color: #5f8f13; font-size: 16px; font-weight: 850; letter-spacing: -0.3px; }
+  .answer-h:first-child { margin-top: 0; }
+  .answer-line { line-height: 1.72; }
+  .ing-emph { color: #5f8f13; font-weight: 800; }
+  .effect-emph { color: #2f3d26; font-weight: 750; }
   .product-section { margin-top: 16px; }
   .product-card {
     cursor: pointer;
@@ -286,16 +292,16 @@
   .ingredients-grid { display: grid; gap: 8px; }
   .ingredient-row {
     display: grid;
-    grid-template-columns: minmax(110px, 0.8fr) minmax(180px, 1.6fr) auto;
-    gap: 10px;
+    grid-template-columns: 1fr auto;
+    gap: 10px 18px;
     align-items: center;
-    padding: 10px 12px;
+    padding: 10px 16px;
     border-radius: 14px;
     background: #fbfdf7;
     border: 1px solid rgba(60, 80, 34, 0.10);
   }
   .ingredient-name { color: #5f8f13; font-size: 13px; font-weight: 850; }
-  .ingredient-claim { color: #56624b; font-size: 12px; line-height: 1.45; }
+  .ingredient-claim { color: #56624b; font-size: 12px; line-height: 1.45; text-align: right; justify-self: end; }
   .tier { font-size: 10px; padding: 4px 9px; border-radius: 999px; font-weight: 800; white-space: nowrap; letter-spacing: 0.2px; }
   .tier-confirmed { background: rgba(20, 83, 45, 0.9); color: #bbf7d0; }
   .tier-promising { background: rgba(113, 63, 18, 0.9); color: #fde68a; }
@@ -380,6 +386,7 @@
     .product-main { grid-template-columns: 86px 1fr auto; gap: 12px; padding: 13px; }
     .product-image-slot { width: 86px; border-radius: 15px; }
     .ingredient-row { grid-template-columns: 1fr; gap: 5px; }
+    .ingredient-claim { text-align: left; justify-self: start; }
     .dashboard-link, #model-badge, .status-pill { font-size: 11px; padding: 7px 9px; }
   }
 </style>
@@ -393,7 +400,6 @@
       <div class="sub">GraphRAG 기반 화장품 성분 추천 AI</div>
     </div>
     <div class="header-spacer"></div>
-    <a class="dashboard-link" href="/iceberg">Iceberg 현황판</a>
     <div id="model-badge"></div>
     <div class="status-pill"><span id="status-dot" title="연결 중..."></span><span>Live API</span></div>
   </header>
@@ -484,7 +490,7 @@
     row.className = 'row';
     row.id = 'typing-row';
     row.innerHTML = `
-      <div class="avatar ai">AI</div>
+      <div class="avatar ai"><img src="/static/logo.png" alt="AI"></div>
       <div class="bubble ai"><div class="typing"><span></span><span></span><span></span></div></div>`;
     chat.appendChild(row);
     scrollBottom();
@@ -493,6 +499,37 @@
   function removeTyping() {
     const el = document.getElementById('typing-row');
     if (el) el.remove();
+  }
+
+  // 답변 버블 렌더: 소제목은 올리브 헤딩으로, 본문의 성분명은 강조.
+  const SECTION_TITLES = ['고민 분석', '성분 설명', '추천 제품', '사용 팁'];
+  function isSectionTitle(line) {
+    const t = line.trim().replace(/\s+/g, '');
+    return SECTION_TITLES.some(s => s.replace(/\s+/g, '') === t);
+  }
+  function emphasizeIngredients(escapedText, ingredients) {
+    const names = [];
+    (ingredients || []).forEach(i => {
+      if (i.kor_name && i.kor_name.trim()) names.push(i.kor_name.trim());
+    });
+    if (!names.length) return escapedText;
+    const uniq = [...new Set(names)].sort((a, b) => b.length - a.length);
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(' + uniq.map(esc).join('|') + ')', 'g');
+    return escapedText.replace(re, '<strong class="ing-emph">$1</strong>');
+  }
+  // 효능 문구 강조: "명사(조사) + 효능동사(어미)" 청크를 볼드. 성분명 강조 뒤에 적용.
+  const EFFECT_VERBS = '개선|완화|강화|공급|억제|조절|예방|회복|진정|보습|재생|촉진|수리|완충|보호|유지|방지|케어';
+  function emphasizeEffects(html) {
+    const re = new RegExp('([가-힣]{2,10}(?:을|를|이|가|과|와)\\s*)?(' + EFFECT_VERBS + ')(하는|하며|하고|하여|시키는|시키며|되는|해|함|합니다|을 돕는|를 돕는)?', 'g');
+    return html.replace(re, m => `<strong class="effect-emph">${m}</strong>`);
+  }
+  function renderAnswerBody(text, ingredients) {
+    return String(text || '').split('\n').map(line => {
+      if (!line.trim()) return '';
+      if (isSectionTitle(line)) return `<div class="answer-h">${escHtml(line.trim())}</div>`;
+      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(escHtml(line), ingredients))}</div>`;
+    }).join('');
   }
 
   // 응답을 "고민분석+성분설명"(intro)과 "추천 제품"(제품별 설명 원문)으로 분리.
@@ -613,10 +650,10 @@
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = `
-      <div class="avatar ai">AI</div>
+      <div class="avatar ai"><img src="/static/logo.png" alt="AI"></div>
       <div class="bubble ai">
         <div class="answer-kicker">4EVR0 추천 답변</div>
-        <div class="answer-body">${escHtml(bodyText).replace(/\n/g, '<br>')}</div>
+        <div class="answer-body">${renderAnswerBody(bodyText, ingredients)}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
     chat.appendChild(row);
@@ -627,7 +664,7 @@
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = `
-      <div class="avatar ai">AI</div>
+      <div class="avatar ai"><img src="/static/logo.png" alt="AI"></div>
       <div class="bubble error">${escHtml(msg)}</div>`;
     chat.appendChild(row);
     scrollBottom();
