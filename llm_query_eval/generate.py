@@ -27,7 +27,14 @@ def load_prompt(name: str) -> str:
     return (_PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8").strip()
 
 
-async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content: str, model: str) -> dict:
+async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content: str, model: str) -> tuple[dict, str]:
+    """(파싱된 dict, 원본 응답 문자열)을 반환한다.
+
+    raw를 같이 돌려주는 이유: JSON에 "cypher" 키가 없는 등 실패 케이스에서 raw가
+    없으면 LLM이 정확히 뭘 뱉었는지 못 보고 "실패했다"는 사실만 남아 원인 파악이
+    안 됨 (실제로 이번 실행에서 KeyError('cypher')로 실패한 케이스 2건의 원인을
+    확인할 수 없었음).
+    """
     resp = await client.chat.completions.create(
         model=model,
         messages=[
@@ -38,11 +45,16 @@ async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content
         max_tokens=settings.gen_max_tokens,
         response_format={"type": "json_object"},
     )
-    return json.loads(resp.choices[0].message.content or "{}")
+    raw = resp.choices[0].message.content or "{}"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GenerationError(f"JSON 파싱 실패: {exc}. raw={raw[:300]!r}") from exc
+    return parsed, raw
 
 
-async def generate_cypher(question: str, client: openai.AsyncOpenAI, model: str) -> dict:
-    """질문 1건에 대해 {"cypher": ..., "params": ...} 를 생성한다."""
+async def generate_cypher(question: str, client: openai.AsyncOpenAI, model: str) -> tuple[dict, str]:
+    """질문 1건에 대해 ({"cypher": ..., "params": ...}, raw 응답 문자열)을 생성한다."""
     prompt = load_prompt("cypher_generation")
     return await _call_llm(client, prompt, question, model)
 
@@ -62,24 +74,31 @@ async def generate_and_validate(
 ) -> dict:
     """생성 -> EXPLAIN 검증. 실패 시 에러 메시지를 덧붙여 1회만 재생성.
 
-    반환: {"cypher": str, "params": dict, "attempts": int} 성공 시.
-    실패 시 GenerationError를 던진다 (호출부에서 "생성 실패" 케이스로 집계).
+    반환: {"cypher": str, "params": dict, "attempts": int, "raw": str} 성공 시.
+    실패 시 GenerationError를 던진다 (호출부에서 "생성 실패" 케이스로 집계) —
+    에러 메시지에 마지막 raw 응답을 잘라서 포함해 원인 진단이 가능하게 한다.
     """
     last_error: Exception | None = None
+    last_raw: str | None = None
     question_for_retry = question
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await generate_cypher(question_for_retry, client, model)
+            result, raw = await generate_cypher(question_for_retry, client, model)
+            last_raw = raw
+            if "cypher" not in result:
+                raise GenerationError(f"'cypher' 키 없음. raw={raw[:300]!r}")
             cypher, params = result["cypher"], result.get("params", {})
             validate_cypher(cypher, params, driver)
-            return {"cypher": cypher, "params": params, "attempts": attempt}
+            return {"cypher": cypher, "params": params, "attempts": attempt, "raw": raw}
         except Exception as exc:  # noqa: BLE001 — 실험 스크립트, 원인 불문 재시도/집계
             last_error = exc
             question_for_retry = (
                 f"{question}\n\n(이전 시도가 다음 에러로 실패했습니다: {exc}. "
                 "쿼리를 수정해서 다시 작성하세요.)"
             )
-    raise GenerationError(f"{max_attempts}회 시도 후 실패: {last_error}") from last_error
+    raise GenerationError(
+        f"{max_attempts}회 시도 후 실패: {last_error} (마지막 raw 응답: {(last_raw or '')[:300]!r})"
+    ) from last_error
 
 
 class GenerationError(Exception):

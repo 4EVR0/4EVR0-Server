@@ -104,6 +104,7 @@ async def evaluate_one(concern: str, question: str, effects: list[str], affects_
         row["b"]["attempts"] = gen["attempts"]
         row["b"]["failed"] = False
         row["b"]["cypher"] = gen["cypher"]
+        row["b"]["params"] = gen["params"]
     except Exception as exc:  # noqa: BLE001 — 생성/검증/실행 실패를 전부 "실패" 케이스로 집계
         row["b"] = {"failed": True, "error": f"{type(exc).__name__}: {exc}"}
 

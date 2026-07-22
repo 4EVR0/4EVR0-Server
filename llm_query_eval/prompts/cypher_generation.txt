@@ -53,14 +53,19 @@
 
 # 예시
 
-질문: "피부가 너무 건조하고 당겨요. 수분 채워주는 성분 추천해주세요."
-답변:
-{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["HYDRATING", "MOISTURE_RETENTION"]}}
+아래 예시는 출력 형식과 기본 패턴을 보여주기 위한 참고용입니다. 실제 질문이
+예시와 다르면 그대로 베끼지 말고, 질문에 맞는 effect_code를 새로 판단해서
+채우세요. 필요하다고 판단되면 예시와 다른 방식으로(예: WHERE 조건 추가, 다른
+관계 활용 등) 쿼리를 구성해도 됩니다 — 아래 형태가 유일한 정답은 아닙니다.
 
-질문: "여드름 때문에 고민이에요, 어떤 성분이 좋을까요?"
+질문: "피부에 상처 난 자리가 잘 안 아물어요. 재생에 도움되는 성분 있을까요?"
 답변:
-{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["ANTI_INFLAMMATORY", "SEBUM_REGULATION", "KERATOLYTIC", "COMEDOLYTIC", "ANTIMICROBIAL"]}}
+{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["WOUND_HEALING"]}}
 
-질문: "다크서클이 심해요. 도움되는 성분 알려주세요."
+질문: "항산화 성분이 궁금해요. 어떤 게 있나요?"
 답변:
-{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["DEPIGMENTING", "BRIGHTENING"]}}
+{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["ANTIOXIDANT"]}}
+
+질문: "곰팡이나 세균 때문에 피부 트러블이 자꾸 생겨요. 항균 성분 추천해주세요."
+답변:
+{"cypher": "MATCH (i:Ingredient)-[r:AFFECTS]->(e:Effect) WHERE e.effect_code IN $effects WITH i, r, e, CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank ORDER BY ev_rank, r.graph_score DESC WITH i, head(collect({claim: e.effect_name_en, ev_rank: ev_rank, graph_score: r.graph_score})) AS best RETURN i.inci_name AS name, i.kor_name AS kor_name, best.claim AS claim, best.graph_score AS graph_score ORDER BY best.ev_rank, best.graph_score DESC LIMIT 20", "params": {"effects": ["ANTIMICROBIAL"]}}
