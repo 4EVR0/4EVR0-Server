@@ -247,6 +247,7 @@
   .answer-h:first-child { margin-top: 0; }
   .answer-line { line-height: 1.72; }
   .ing-emph { color: #5f8f13; font-weight: 800; }
+  .prod-emph { color: #182010; font-weight: 850; }
   .effect-emph { color: #2f3d26; font-weight: 750; }
   .product-section { margin-top: 16px; }
   .product-card {
@@ -502,10 +503,13 @@
   }
 
   // 답변 버블 렌더: 소제목은 올리브 헤딩으로, 본문의 성분명은 강조.
-  const SECTION_TITLES = ['고민 분석', '성분 설명', '추천 제품', '사용 팁'];
-  function isSectionTitle(line) {
-    const t = line.trim().replace(/\s+/g, '');
-    return SECTION_TITLES.some(s => s.replace(/\s+/g, '') === t);
+  const SECTION_TITLES = ['고민 분석', '성분 설명', '추천 제품', '사용 팁',
+                          '추천', '비교', '이유', '요약', '정리', '주의'];
+  // 소제목이면 장식([]·**·# 등) 벗긴 제목 반환, 아니면 null. "[추천]"·"**성분 설명**"도 인식.
+  function sectionTitle(line) {
+    const clean = line.trim().replace(/[[\]()*#:：]/g, '').trim();
+    const norm = clean.replace(/\s+/g, '');
+    return SECTION_TITLES.some(s => s.replace(/\s+/g, '') === norm) ? clean : null;
   }
   function emphasizeIngredients(escapedText, ingredients) {
     const names = [];
@@ -524,15 +528,19 @@
     const re = new RegExp('([가-힣]{2,10}(?:을|를|이|가|과|와)\\s*)?(' + EFFECT_VERBS + ')(하는|하며|하고|하여|시키는|시키며|되는|해|함|합니다|을 돕는|를 돕는)?', 'g');
     return html.replace(re, m => `<strong class="effect-emph">${m}</strong>`);
   }
-  // 마크다운 **볼드** → 올리브 강조(후속 응답이 마크다운을 쓸 때 raw ** 노출 방지).
-  function mdBold(html) {
-    return html.replace(/\*\*(.+?)\*\*/g, '<strong class="ing-emph">$1</strong>');
+  // 마크다운 마커 → 강조. 제품명 **...** = 검정 볼드, 성분 *...* = 올리브 볼드.
+  // (** 를 먼저 처리해야 * 규칙과 안 겹침)
+  function mdInline(html) {
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="prod-emph">$1</strong>');
+    html = html.replace(/\*([^*\n]+?)\*/g, '<strong class="ing-emph">$1</strong>');
+    return html;
   }
   function renderAnswerBody(text, ingredients) {
     return String(text || '').split('\n').map(line => {
       if (!line.trim()) return '';
-      if (isSectionTitle(line)) return `<div class="answer-h">${escHtml(line.trim())}</div>`;
-      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(mdBold(escHtml(line)), ingredients))}</div>`;
+      const title = sectionTitle(line);
+      if (title) return `<div class="answer-h">${escHtml(title)}</div>`;
+      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(mdInline(escHtml(line)), ingredients))}</div>`;
     }).join('');
   }
 
