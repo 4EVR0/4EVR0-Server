@@ -271,6 +271,19 @@ def _record_latency(spans: dict[str, float], cache: str) -> None:
     logger.info("latency_trace cache=%s %s", cache, parts)
 
 
+def _refresh_cached_images(cached: dict | None) -> dict | None:
+    """캐시된 products의 presigned image_url을 goods_no로 재생성.
+    presigned URL은 1h 만료인데 캐시 TTL은 24h이라, 만료된 URL이 서빙되면 이미지가 깨진다.
+    → 서빙 시점에 항상 새 URL로 갱신(만료 무관)."""
+    if not cached:
+        return cached
+    for p in cached.get("products") or []:
+        gid = p.get("goods_no") or p.get("product_id")
+        if gid:
+            p["image_url"] = build_product_image_url(gid)
+    return cached
+
+
 def _slim_products(products) -> list[dict]:
     """대화 이력용 제품 요약(ProductResult 또는 캐시 dict 둘 다 처리).
     후속 턴에서 카드를 복원할 수 있게 표시 필드를 담는다. image_url은 presigned라
@@ -518,7 +531,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
-    cached = await recommend_cache.get(message, gen_prompt_name)
+    cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
@@ -541,7 +554,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             spans["flight_wait"] = time.perf_counter() - _t
 
             # 대기 중 리더가 캐시를 채웠으면 GPU 없이 히트로 처리(coalesced).
-            cached = await recommend_cache.get(message, gen_prompt_name)
+            cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
                 metrics.recommend_requests_total.labels(status="ok").inc()
@@ -808,7 +821,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     spans: dict[str, float] = {}
 
     _t = time.perf_counter()
-    cached = await recommend_cache.get(message, gen_prompt_name)
+    cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
@@ -833,7 +846,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             spans["flight_wait"] = time.perf_counter() - _t
 
             # 대기 중 리더가 캐시를 채웠으면 캐시 히트와 같은 프레임으로 서빙(coalesced).
-            cached = await recommend_cache.get(message, gen_prompt_name)
+            cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
                 metrics.recommend_requests_total.labels(status="ok").inc()
