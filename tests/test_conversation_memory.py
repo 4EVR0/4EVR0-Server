@@ -87,6 +87,13 @@ class RankingTest(unittest.TestCase):
         out = _reorder_by_ranking(prods, [])
         self.assertEqual(["A", "B"], [p.product_name for p in out])
 
+    def test_reorder_by_mention_fallback(self):
+        # 마커 없으면 응답 내 첫 언급 순으로 정렬(B가 먼저 언급 → 먼저)
+        prods = [_Prod("미샤 앰플"), _Prod("네오젠 세럼")]
+        text = "지성피부엔 네오젠 세럼이 가볍고 좋습니다. 미샤 앰플도 괜찮습니다."
+        out = _reorder_by_ranking(prods, [], text)
+        self.assertEqual(["네오젠 세럼", "미샤 앰플"], [p.product_name for p in out])
+
 
 if __name__ == "__main__":
     unittest.main()
