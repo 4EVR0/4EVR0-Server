@@ -392,8 +392,13 @@ _FOLLOWUP_SYSTEM = (
     "you already recommended. Use ONLY the previously recommended products and the prior "
     "conversation provided. NEVER invent products, ingredients, studies, or facts. "
     "Answer the user's question (compare the products, explain differences, help them choose) "
-    "concisely in Korean within ~600 characters. Base comparisons on the given info "
-    "(category, rating, reviews). If the info is insufficient, say so briefly.\n"
+    "concisely in Korean within ~700 characters. Base comparisons on the given info "
+    "(category, key ingredients, rating, reviews). If the info is insufficient, say so briefly.\n"
+    "Wrap EVERY product name in **...** (markdown bold) for readability.\n"
+    "When you explain WHY a product has a property (heavy, rich, moisturizing, gentle, exfoliating, etc.), "
+    "cite the concrete reason from the given data — the responsible key ingredient(s) and/or the "
+    "formulation/category (e.g., cream vs serum). Do NOT invent ingredients or facts; if the reason "
+    "is not identifiable from the data, do not fabricate one.\n"
     "If you recommend or rank specific products as better choices, END your answer with a "
     "separate final line EXACTLY in this format:\n"
     "[추천순위] 제품명1 | 제품명2 | 제품명3\n"
@@ -409,8 +414,10 @@ def _followup_context(history: list[dict]) -> str:
     if last and last.get("products"):
         lines.append("이전에 추천한 제품:")
         for p in last["products"]:
-            rate = f" (⭐{p['rating']})" if p.get("rating") else ""
-            lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}")
+            rate = f" ⭐{p['rating']}" if p.get("rating") else ""
+            ings = ", ".join((p.get("matched_ingredients") or [])[:4])
+            ing_str = f" · 핵심성분: {ings}" if ings else ""
+            lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}{ing_str}")
     lines.append("\n이전 대화:")
     for turn in history[-3:]:
         if turn.get("user"):
