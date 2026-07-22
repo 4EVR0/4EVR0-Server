@@ -16,7 +16,7 @@ from app.core import metrics
 from app.core.config import settings
 from app.domain.enums import Concern
 from app.prompts import load_prompt
-from app.repositories import recommend_cache
+from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 from app.services.product_image_service import build_product_image_url
 
@@ -269,6 +269,29 @@ def _record_latency(spans: dict[str, float], cache: str) -> None:
     logger.info("latency_trace cache=%s %s", cache, parts)
 
 
+def _slim_products(products) -> list[dict]:
+    """대화 이력용 제품 요약(ProductResult 또는 캐시 dict 둘 다 처리)."""
+    out = []
+    for p in products or []:
+        if isinstance(p, dict):
+            out.append({"name": p.get("product_name"), "brand": p.get("brand"),
+                        "category": p.get("category"), "rating": p.get("rating")})
+        else:
+            out.append({"name": p.product_name, "brand": p.brand,
+                        "category": p.category, "rating": p.rating})
+    return out
+
+
+async def _store_turn(session_id, message, products, response_text, concerns=None) -> None:
+    """이 턴을 대화 이력에 저장(best-effort). 캐시 히트/미스 모든 경로에서 호출 —
+    캐시는 글로벌이라 히트여도 이 세션 이력엔 남겨야 후속 질문이 맥락을 본다."""
+    await conversation_store.append_turn(
+        session_id, user=message, assistant=response_text or "",
+        products=_slim_products(products),
+        concerns=[c.value for c in concerns] if concerns else [],
+    )
+
+
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
     reset_gate_wait()
@@ -286,6 +309,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         spans["overhead"] = spans["total"] - spans["cache_lookup"]
         _record_latency(spans, cache="hit")
         # session_id·turn_id는 요청마다 새로 부여(캐시는 콘텐츠만 보관).
+        await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
         return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
     metrics.recommend_cache_total.labels(result="miss").inc()
 
@@ -306,6 +330,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 spans["total"] = time.perf_counter() - t_req
                 spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
                 _record_latency(spans, cache="coalesced")
+                await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
                 return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
 
             # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
@@ -380,6 +405,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         _record_latency(spans, cache="miss")
 
         metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, products, response_text, profile.concerns)
         return RecommendResponse(
             session_id=session_id,
             turn_id=turn_id,
@@ -576,6 +602,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
         spans["total"] = time.perf_counter() - t_req
         spans["overhead"] = spans["total"] - spans["cache_lookup"]
         _record_latency(spans, cache="hit")
+        await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
         yield _sse("done", {"finish_reason": "cache"})
         return
     metrics.recommend_cache_total.labels(result="miss").inc()
@@ -599,6 +626,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 spans["total"] = time.perf_counter() - t_req
                 spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
                 _record_latency(spans, cache="coalesced")
+                await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
                 yield _sse("done", {"finish_reason": "cache"})
                 return
 
@@ -686,6 +714,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                              - spans["extract"] - spans["retrieval"] - gen_total)
         _record_latency(spans, cache="miss")
         metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, products, response_text, profile.concerns)
         yield _sse("done", {"finish_reason": "stop"})
     except LLMOverCapacityError:
         # 스트림은 이미 200으로 시작됐을 수 있어 429 대신 error 이벤트로 전달.
