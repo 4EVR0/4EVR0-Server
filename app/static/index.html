@@ -521,14 +521,34 @@
     if (!names.length) return escapedText;
     const uniq = [...new Set(names)].sort((a, b) => b.length - a.length);
     const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp('(' + uniq.map(esc).join('|') + ')', 'g');
-    return escapedText.replace(re, '<strong class="ing-emph">$1</strong>');
+    const alt = uniq.map(esc).join('|');
+    // 성분명 자체가 통째로 prod-emph로 잘못 감싸진 경우 → ing-emph(올리브)로 재분류.
+    escapedText = escapedText.replace(
+      new RegExp('<strong class="prod-emph">(' + alt + ')</strong>', 'g'),
+      '<strong class="ing-emph">$1</strong>');
+    // 맨텍스트 성분명만 강조. <strong>...</strong>(제품명 등) 내부는 건드리지 않는다
+    // (제품명 안에 성분명이 포함돼 중첩되는 문제 방지) — 태그 세그먼트 밖에서만 치환.
+    const ingRe = new RegExp('(' + alt + ')', 'g');
+    return escapedText.split(/(<strong[^>]*>.*?<\/strong>)/g).map(seg =>
+      seg.startsWith('<strong') ? seg : seg.replace(ingRe, '<strong class="ing-emph">$1</strong>')
+    ).join('');
   }
   // 효능 문구 강조: "명사(조사) + 효능동사(어미)" 청크를 볼드. 성분명 강조 뒤에 적용.
   const EFFECT_VERBS = '개선|완화|강화|공급|억제|조절|예방|회복|진정|보습|재생|촉진|수리|완충|보호|유지|방지|케어';
   function emphasizeEffects(html) {
     const re = new RegExp('([가-힣]{2,10}(?:을|를|이|가|과|와)\\s*)?(' + EFFECT_VERBS + ')(하는|하며|하고|하여|시키는|시키며|되는|해|함|합니다|을 돕는|를 돕는)?', 'g');
     return html.replace(re, m => `<strong class="effect-emph">${m}</strong>`);
+  }
+  // 안전망: '한글 (INCI)' 패턴의 한글 성분명을 올리브 볼드로(LLM이 *마커*를 놓쳐도).
+  // 이미 <strong>으로 감싸진 부분은 안 건드림(중첩 방지).
+  function emphasizeInciKorean(html) {
+    return html.replace(/([가-힣]{2,20})(\s*\([A-Z][A-Z0-9\-\/ ]*\))/g, (m, kor, eng, offset, full) => {
+      const before = full.slice(0, offset);
+      const opens = (before.match(/<strong/g) || []).length;
+      const closes = (before.match(/<\/strong>/g) || []).length;
+      if (opens > closes) return m;  // 이미 강조 안(중첩) → 그대로
+      return `<strong class="ing-emph">${kor}</strong>${eng}`;
+    });
   }
   // 마크다운 마커 → 강조. 제품명 **...** = 검정 볼드, 성분 *...* = 올리브 볼드.
   // (** 를 먼저 처리해야 * 규칙과 안 겹침)
@@ -537,8 +557,27 @@
     html = html.replace(/\*([^*\n]+?)\*/g, '<strong class="ing-emph">$1</strong>');
     return html;
   }
+  // 한자 안전망: LLM이 간헐적으로 섞는 한자(漢字)를 한글로 치환하거나 제거.
+  // 자주 새는 한국어 한자어를 매핑하고, 매핑에 없는 한자는 앞뒤가 한글이면 삭제(오염 제거).
+  const HANJA_MAP = {
+    '肤': '부', '膚': '부', '感': '감', '性': '성', '水分': '수분', '保濕': '보습',
+    '油': '유', '毛孔': '모공', '皮脂': '피지', '效果': '효과', '成分': '성분',
+    '製': '제', '劑': '제', '型': '형', '色素': '색소', '沈着': '침착', '改善': '개선',
+    '鎭靜': '진정', '强化': '강화', '皮膚': '피부', '角質': '각질', '乾燥': '건조',
+  };
+  function stripHanja(text) {
+    if (!/[一-鿿]/.test(text)) return text;
+    // 다글자 매핑 우선
+    for (const [h, k] of Object.entries(HANJA_MAP)) {
+      if (h.length > 1) text = text.split(h).join(k);
+    }
+    // 한 글자 매핑
+    text = text.replace(/[一-鿿]/g, ch => HANJA_MAP[ch] || '');
+    return text;
+  }
+
   function renderAnswerBody(text, ingredients) {
-    return String(text || '').split('\n').map(line => {
+    return stripHanja(String(text || '')).split('\n').map(line => {
       if (!line.trim()) return '';
       const title = sectionTitle(line);
       if (title) return `<div class="answer-h">${escHtml(title)}</div>`;
@@ -546,7 +585,7 @@
       let bullet = '', content = line;
       const m = content.match(/^\s*[*\-]\s+/);
       if (m) { bullet = '<span class="bullet">•</span>'; content = content.slice(m[0].length); }
-      const body = emphasizeEffects(emphasizeIngredients(mdInline(escHtml(content)), ingredients));
+      const body = emphasizeEffects(emphasizeInciKorean(emphasizeIngredients(mdInline(escHtml(content)), ingredients)));
       return `<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`;
     }).join('');
   }

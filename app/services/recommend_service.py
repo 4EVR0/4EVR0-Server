@@ -351,11 +351,15 @@ _CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건
                  "칙칙", "주름", "탄력", "노화", "각질", "아토피", "다크서클")
 
 
+def _has_followup_cue(message: str) -> bool:
+    return any(c in message for c in _FOLLOWUP_CUES)
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
         return "new"
-    if any(c in message for c in _FOLLOWUP_CUES):
+    if _has_followup_cue(message):
         return "followup"
     if any(c in message for c in _CONCERN_CUES):
         return "new"
@@ -439,7 +443,11 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
             rate = f" ⭐{p['rating']}" if p.get("rating") else ""
             ings = ", ".join(_fmt_ingredient(i, ing_kor) for i in (p.get("matched_ingredients") or [])[:4])
             ing_str = f" · 핵심성분: {ings}" if ings else ""
-            lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}{ing_str}")
+            # product_name에 이미 브랜드가 포함된 경우가 많아 brand를 앞에 안 붙인다(중복 방지).
+            name = p.get("name") or ""
+            brand = p.get("brand") or ""
+            display = name if (brand and brand in name) else f"{brand} {name}".strip()
+            lines.append(f"- [{p.get('category', '')}] {display}{rate}{ing_str}")
     lines.append("\n이전 대화:")
     for turn in history[-3:]:
         if turn.get("user"):
@@ -465,8 +473,28 @@ def _extract_ranking(response_text: str) -> tuple[str, list[str]]:
     return "\n".join(kept).strip(), ranking
 
 
-def _reorder_by_ranking(products: list[ProductResult], ranking: list[str]) -> list[ProductResult]:
-    """최종 추천(마커) 순서로 카드를 재정렬. 매칭 안 되면 원래 순서 유지(폴백)."""
+def _mention_order(products: list[ProductResult], text: str) -> list[str]:
+    """응답 텍스트에서 각 제품이 처음 언급된 위치 순으로 제품명 리스트를 만든다.
+    LLM은 보통 추천 섹션에서 최선을 먼저 말하므로, 마커가 없을 때의 정렬 폴백."""
+    pos = []
+    for p in products:
+        name = p.product_name or ""
+        # 제품명 전체 또는 앞부분(브랜드+첫 토큰)으로 첫 등장 위치 탐색
+        idx = text.find(name)
+        if idx < 0 and name:
+            head = " ".join(name.split()[:2])  # 앞 두 토큰
+            idx = text.find(head) if head else -1
+        pos.append((idx if idx >= 0 else 10**9, name))
+    pos.sort()
+    return [n for _, n in pos if _ < 10**9]
+
+
+def _reorder_by_ranking(products: list[ProductResult], ranking: list[str],
+                        response_text: str = "") -> list[ProductResult]:
+    """최종 추천 순서로 카드를 재정렬.
+    우선순위: (1) [추천순위] 마커 → (2) 응답 내 첫 언급 순 → (3) 원래 순서."""
+    if not ranking and response_text:
+        ranking = _mention_order(products, response_text)  # 폴백: 언급 순
     if not ranking:
         return products
 
@@ -475,7 +503,7 @@ def _reorder_by_ranking(products: list[ProductResult], ranking: list[str]) -> li
         for i, rn in enumerate(ranking):
             if rn and (rn in name or name in rn):  # 이름 부분매칭
                 return i
-        return len(ranking) + 1  # 마커에 없는 제품은 뒤로(원래 순서 유지)
+        return len(ranking) + 1  # 랭킹에 없는 제품은 뒤로(원래 순서 유지)
 
     return sorted(products, key=rank_of)  # stable — 미매칭끼리는 원래 순서
 
@@ -510,9 +538,12 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     response_text, ranking = _extract_ranking(response_text)
     # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
     last = next((t for t in reversed(history) if t.get("products")), None)
-    products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])), ranking)
+    products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])),
+                                   ranking, response_text)
+    # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
+    ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     await _store_turn(session_id, message, products, response_text, None)
-    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients,
                              products=products, response_text=response_text,
                              model_used=settings.gpu_model)
 
@@ -528,6 +559,15 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     history = await conversation_store.load_recent(session_id)
     if history and await _is_followup(message, history):
         return await _handle_followup(session_id, turn_id, message, history)
+    # 명백한 후속 표현("방금/이 중에서")인데 이력이 없으면(세션 만료·재시작) 새 추천 파이프라인이
+    # "제품 없음" 류 혼란스러운 답을 내므로, 안내 메시지로 graceful 처리.
+    if not history and _has_followup_cue(message):
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
+                "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
+                "(예: \"여드름이랑 모공이 고민이에요\")")
+        return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
+                                 products=[], response_text=text, model_used=settings.gpu_model)
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
