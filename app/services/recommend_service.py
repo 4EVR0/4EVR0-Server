@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -392,7 +393,12 @@ _FOLLOWUP_SYSTEM = (
     "conversation provided. NEVER invent products, ingredients, studies, or facts. "
     "Answer the user's question (compare the products, explain differences, help them choose) "
     "concisely in Korean within ~600 characters. Base comparisons on the given info "
-    "(category, rating, reviews). If the info is insufficient, say so briefly."
+    "(category, rating, reviews). If the info is insufficient, say so briefly.\n"
+    "If you recommend or rank specific products as better choices, END your answer with a "
+    "separate final line EXACTLY in this format:\n"
+    "[추천순위] 제품명1 | 제품명2 | 제품명3\n"
+    "listing the product names (exactly as given) from most to least recommended. "
+    "Include only products you actually recommend. If you are NOT ranking or picking, OMIT this line."
 )
 
 
@@ -412,6 +418,37 @@ def _followup_context(history: list[dict]) -> str:
         if turn.get("assistant"):
             lines.append(f"어시스턴트: {turn['assistant'][:200]}")
     return "\n".join(lines)
+
+
+_RANK_RE = re.compile(r"^\s*\[?\s*추천순위\s*\]?\s*[:：]?\s*(.+)$")
+
+
+def _extract_ranking(response_text: str) -> tuple[str, list[str]]:
+    """응답에서 '[추천순위] a | b' 마커 줄을 뽑아 (마커 제거된 텍스트, [이름...]) 반환.
+    마커 없으면 (원문, [])."""
+    kept, ranking = [], []
+    for line in response_text.split("\n"):
+        m = _RANK_RE.match(line)
+        if m and "추천순위" in line:
+            ranking = [n.strip() for n in m.group(1).split("|") if n.strip()]
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip(), ranking
+
+
+def _reorder_by_ranking(products: list[ProductResult], ranking: list[str]) -> list[ProductResult]:
+    """최종 추천(마커) 순서로 카드를 재정렬. 매칭 안 되면 원래 순서 유지(폴백)."""
+    if not ranking:
+        return products
+
+    def rank_of(p: ProductResult) -> int:
+        name = p.product_name or ""
+        for i, rn in enumerate(ranking):
+            if rn and (rn in name or name in rn):  # 이름 부분매칭
+                return i
+        return len(ranking) + 1  # 마커에 없는 제품은 뒤로(원래 순서 유지)
+
+    return sorted(products, key=rank_of)  # stable — 미매칭끼리는 원래 순서
 
 
 async def _handle_followup(session_id: str, turn_id: str, message: str,
@@ -436,9 +473,11 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         metrics.recommend_requests_total.labels(status="error").inc()
         raise
     metrics.recommend_requests_total.labels(status="ok").inc()
+    # LLM이 최종 추천 순위 마커를 냈으면 그 순서로 카드 재정렬(없으면 원래 순서 폴백).
+    response_text, ranking = _extract_ranking(response_text)
     # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
     last = next((t for t in reversed(history) if t.get("products")), None)
-    products = _reconstruct_products((last or {}).get("products", []))
+    products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])), ranking)
     await _store_turn(session_id, message, products, response_text, None)
     return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
                              products=products, response_text=response_text,

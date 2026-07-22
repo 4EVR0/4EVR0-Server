@@ -3,7 +3,12 @@
 import unittest
 
 from app.repositories.conversation_store import _key
-from app.services.recommend_service import _heuristic_kind, _slim_products
+from app.services.recommend_service import (
+    _extract_ranking,
+    _heuristic_kind,
+    _reorder_by_ranking,
+    _slim_products,
+)
 
 
 class ConversationKeyTest(unittest.TestCase):
@@ -53,6 +58,34 @@ class HeuristicClassifyTest(unittest.TestCase):
     def test_ambiguous_returns_none(self):
         # 후속 큐도 고민 큐도 없으면 None(→ LLM 위임)
         self.assertIsNone(_heuristic_kind("이 제품들 사용 순서 알려줘", self._HIST))
+
+
+class _Prod:
+    def __init__(self, name):
+        self.product_name = name
+
+
+class RankingTest(unittest.TestCase):
+    def test_extract_marker(self):
+        text = "가장 순한 건 A입니다.\n[추천순위] 제품A | 제품B"
+        clean, ranking = _extract_ranking(text)
+        self.assertEqual("가장 순한 건 A입니다.", clean)
+        self.assertEqual(["제품A", "제품B"], ranking)
+
+    def test_no_marker(self):
+        clean, ranking = _extract_ranking("그냥 비교 답변입니다.")
+        self.assertEqual("그냥 비교 답변입니다.", clean)
+        self.assertEqual([], ranking)
+
+    def test_reorder_matched_first(self):
+        prods = [_Prod("미샤 잡티 앰플"), _Prod("네오젠 세럼"), _Prod("동아 크림")]
+        out = _reorder_by_ranking(prods, ["네오젠 세럼", "동아 크림"])
+        self.assertEqual(["네오젠 세럼", "동아 크림", "미샤 잡티 앰플"], [p.product_name for p in out])
+
+    def test_reorder_empty_ranking_keeps_order(self):
+        prods = [_Prod("A"), _Prod("B")]
+        out = _reorder_by_ranking(prods, [])
+        self.assertEqual(["A", "B"], [p.product_name for p in out])
 
 
 if __name__ == "__main__":
