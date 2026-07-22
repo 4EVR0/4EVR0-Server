@@ -292,11 +292,133 @@ async def _store_turn(session_id, message, products, response_text, concerns=Non
     )
 
 
+# ── 멀티턴: 후속(이전 추천에 대한 질문) 감지 + 처리 (P2) ────────────────────
+# 후속 지시어/비교 큐 — 있으면 이전 추천에 대한 질문
+_FOLLOWUP_CUES = ("그 중", "그중", "이 중", "이중", "저 중", "저중", "중에서", "비교",
+                  "차이", "몇 번", "몇번", "이거", "그거", "저거", "골라", "방금", "위에",
+                  "장단점", "뭐가 더", "어떤 게", "어떤게", "어느", "낫", "추천한")
+# 새 추천 신호(피부 고민 어휘) — 있으면 새 요청
+_CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건조", "속건조", "수분",
+                 "민감", "붉은", "홍조", "자극", "트러블", "기미", "잡티", "미백", "색소",
+                 "칙칙", "주름", "탄력", "노화", "각질", "아토피", "다크서클")
+
+
+def _heuristic_kind(message: str, history: list[dict]) -> str | None:
+    """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
+    if not history:
+        return "new"
+    if any(c in message for c in _FOLLOWUP_CUES):
+        return "followup"
+    if any(c in message for c in _CONCERN_CUES):
+        return "new"
+    return None
+
+
+_CLASSIFY_SYSTEM = (
+    "You classify a Korean chat turn in a cosmetics recommendation chat. "
+    "FOLLOWUP = the message is about the previously recommended products "
+    "(compare them, ask details, pick one). "
+    "NEW = the message states a new skin concern or asks for a fresh recommendation. "
+    "Answer with exactly one word: FOLLOWUP or NEW."
+)
+
+
+async def _llm_classify(message: str, history: list[dict]) -> str:
+    """애매한 턴만 vLLM으로 분류. 실패 시 안전하게 'new'."""
+    last_products: list[str] = []
+    for turn in reversed(history):
+        if turn.get("products"):
+            last_products = [p.get("name") for p in turn["products"] if p.get("name")]
+            break
+    prod_str = ", ".join(last_products[:6]) or "(없음)"
+    try:
+        client = get_async_llm_client()
+        resp = await client.chat.completions.create(
+            model=settings.gpu_model, temperature=0, max_tokens=8,
+            messages=[{"role": "system", "content": _CLASSIFY_SYSTEM},
+                      {"role": "user", "content": f"이전 추천 제품: {prod_str}\n새 메시지: {message}"}],
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        out = (resp.choices[0].message.content or "").strip().upper()
+        return "followup" if "FOLLOW" in out else "new"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("turn classify failed: %s", exc)
+        return "new"
+
+
+async def _is_followup(message: str, history: list[dict]) -> bool:
+    kind = _heuristic_kind(message, history)
+    if kind is None:  # 애매 → LLM
+        kind = await _llm_classify(message, history)
+    return kind == "followup"
+
+
+_FOLLOWUP_SYSTEM = (
+    "You are a Korean cosmetics assistant answering a FOLLOW-UP question about products "
+    "you already recommended. Use ONLY the previously recommended products and the prior "
+    "conversation provided. NEVER invent products, ingredients, studies, or facts. "
+    "Answer the user's question (compare the products, explain differences, help them choose) "
+    "concisely in Korean within ~600 characters. Base comparisons on the given info "
+    "(category, rating, reviews). If the info is insufficient, say so briefly."
+)
+
+
+def _followup_context(history: list[dict]) -> str:
+    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립."""
+    lines: list[str] = []
+    last = next((t for t in reversed(history) if t.get("products")), None)
+    if last and last.get("products"):
+        lines.append("이전에 추천한 제품:")
+        for p in last["products"]:
+            rate = f" (⭐{p['rating']})" if p.get("rating") else ""
+            lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}")
+    lines.append("\n이전 대화:")
+    for turn in history[-3:]:
+        if turn.get("user"):
+            lines.append(f"사용자: {turn['user']}")
+        if turn.get("assistant"):
+            lines.append(f"어시스턴트: {turn['assistant'][:200]}")
+    return "\n".join(lines)
+
+
+async def _handle_followup(session_id: str, turn_id: str, message: str,
+                           history: list[dict]) -> RecommendResponse:
+    """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
+    user_content = f"{_followup_context(history)}\n\n현재 질문: {message}"
+    try:
+        async with llm_slot():
+            client = get_async_llm_client()
+            resp = await client.chat.completions.create(
+                model=settings.gpu_model,
+                messages=[{"role": "system", "content": _FOLLOWUP_SYSTEM},
+                          {"role": "user", "content": user_content}],
+                temperature=settings.gen_temperature, max_tokens=settings.gen_max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+        response_text = resp.choices[0].message.content or ""
+    except LLMOverCapacityError:
+        metrics.recommend_requests_total.labels(status="rejected").inc()
+        raise
+    except Exception:
+        metrics.recommend_requests_total.labels(status="error").inc()
+        raise
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    await _store_turn(session_id, message, [], response_text, None)
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
+                             products=[], response_text=response_text, model_used=settings.gpu_model)
+
+
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
     reset_gate_wait()
     t_req = time.perf_counter()
     spans: dict[str, float] = {}
+
+    # 멀티턴(P2): 이력이 있고 이번 턴이 후속(이전 추천에 대한 질문)이면 검색을 스킵하고
+    # 대화 맥락으로 답한다. 세션 의존이라 콘텐츠 캐시는 우회.
+    history = await conversation_store.load_recent(session_id)
+    if history and await _is_followup(message, history):
+        return await _handle_followup(session_id, turn_id, message, history)
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
