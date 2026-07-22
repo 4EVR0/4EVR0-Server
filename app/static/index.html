@@ -281,6 +281,7 @@
   .product-card.open .product-toggle { transform: rotate(180deg); }
   .product-ingredients { display: none; border-top: 1px solid rgba(60, 80, 34, 0.10); padding: 14px 16px 16px; background: #ffffff; }
   .product-card.open .product-ingredients { display: block; }
+  .product-rationale { margin-bottom: 14px; padding: 12px 14px; background: #f4faf3; border-left: 3px solid var(--green, #4caf72); border-radius: 8px; color: #3a4a33; font-size: 13px; line-height: 1.6; }
   .ingredients-heading { margin-bottom: 10px; color: #3f4b35; font-size: 12px; font-weight: 850; }
   .ingredients-grid { display: grid; gap: 8px; }
   .ingredient-row {
@@ -494,8 +495,34 @@
     if (el) el.remove();
   }
 
+  // 응답을 "고민분석+성분설명"(intro)과 "추천 제품"(제품별 설명 원문)으로 분리.
+  function splitResponse(text) {
+    const lines = String(text || '').split('\n');
+    const i = lines.findIndex(l => /^\s*#*\s*추천\s*제품/.test(l));
+    if (i < 0) return { intro: String(text || ''), productSection: '' };
+    return { intro: lines.slice(0, i).join('\n').trim(), productSection: lines.slice(i + 1).join('\n') };
+  }
+
+  // 추천 제품 원문에서 해당 제품 문장을 찾아 제품명 이후만 깔끔히 뽑는다.
+  function productDescription(product, productSection) {
+    if (!productSection || !product.product_name) return '';
+    const name = product.product_name;
+    for (const raw of productSection.split('\n')) {
+      const line = raw.trim();
+      if (!line || !line.includes(name)) continue;
+      let d = line.replace(/^[-•*]\s*/, '').replace(/^\s*\[[^\]]*\]\s*/, '');
+      const ni = d.indexOf(name);
+      if (ni >= 0) d = d.slice(ni + name.length).replace(/^\s*[은는이가을를]\s*/, '').trim();
+      return d;
+    }
+    return '';
+  }
+
   function appendAIBubble(responseText, ingredients, products, modelUsed) {
     if (modelUsed) { badge.textContent = modelUsed; badge.style.display = 'inline-flex'; }
+    const hasProducts = !!(products && products.length);
+    const { intro, productSection } = splitResponse(responseText);
+    const bodyText = hasProducts ? intro : String(responseText || '');
 
     const productCardsHtml = products && products.length
       ? `<div class="product-section">${products.map(product => `
@@ -520,12 +547,12 @@
               <div class="product-toggle">⌄</div>
             </div>
             <div class="product-ingredients">
+              ${productDescription(product, productSection) ? `<div class="product-rationale">${escHtml(productDescription(product, productSection))}</div>` : ''}
               <div class="ingredients-heading">이 화장품에 포함된 추천 성분</div>
               <div class="ingredients-grid">${(product.matched_ingredients || []).map(name => `
                 <div class="ingredient-row">
                   <div class="ingredient-name">${ingredientNameByInci(name, ingredients)}</div>
                   <div class="ingredient-claim">${ingredientClaimByInci(name, ingredients)}</div>
-                  <span class="tier ${tierClass(ingredientTierByInci(name, ingredients))}">${escHtml(ingredientTierByInci(name, ingredients))}</span>
                 </div>`).join('')}</div>
             </div>
           </div>`).join('')}</div>`
@@ -549,8 +576,7 @@
               <div class="ingredients-grid">${ingredients.map(ing => `
                 <div class="ingredient-row">
                   <div class="ingredient-name">${ingredientName(ing)}</div>
-                  <div class="ingredient-claim" title="${escHtml(ing.claim)}">${escHtml(ing.claim)}</div>
-                  <span class="tier ${tierClass(ing.eligibility_tier)}">${escHtml(ing.eligibility_tier)}</span>
+                  <div class="ingredient-claim" title="${escAttr(ing.claim || '')}">${claimKo(ing.claim)}</div>
                 </div>`).join('')}</div>
             </div>
           </div>
@@ -563,7 +589,7 @@
       <div class="avatar ai">AI</div>
       <div class="bubble ai">
         <div class="answer-kicker">4EVR0 추천 답변</div>
-        <div class="answer-body">${escHtml(responseText).replace(/\n/g, '<br>')}</div>
+        <div class="answer-body">${escHtml(bodyText).replace(/\n/g, '<br>')}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
     chat.appendChild(row);
@@ -685,9 +711,25 @@
     return ing ? ingredientName(ing) : escHtml(name);
   }
 
+  // 효능(effect) 영문 → 한글. 15개 effect. claim은 effect_name_en(예: "Barrier repair").
+  const EFFECT_KO = {
+    'anti-inflammatory': '항염', 'soothing': '진정', 'barrier repair': '장벽 강화',
+    'hydrating': '수분 공급', 'moisture retention': '수분 유지', 'sebum regulation': '피지 조절',
+    'antimicrobial': '항균', 'keratolytic': '각질 용해', 'comedolytic': '면포 용해',
+    'wound healing': '상처 회복', 'depigmenting': '색소 억제', 'brightening': '미백/광채',
+    'antioxidant': '항산화', 'photoprotective': '광보호', 'anti-aging': '노화 방지',
+  };
+
+  // "한글 (영문)" 형식. 매핑 없으면 영문만.
+  function claimKo(claim) {
+    if (!claim) return '매칭 성분';
+    const ko = EFFECT_KO[String(claim).trim().toLowerCase()];
+    return ko ? `${ko} (${escHtml(claim)})` : escHtml(claim);
+  }
+
   function ingredientClaimByInci(name, ingredients) {
     const ing = ingredientByInci(name, ingredients);
-    return ing && ing.claim ? escHtml(ing.claim) : '매칭 성분';
+    return ing && ing.claim ? claimKo(ing.claim) : '매칭 성분';
   }
 
   function ingredientTierByInci(name, ingredients) {
