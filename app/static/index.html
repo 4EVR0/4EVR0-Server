@@ -522,13 +522,16 @@
     const uniq = [...new Set(names)].sort((a, b) => b.length - a.length);
     const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const alt = uniq.map(esc).join('|');
-    // mdInline이 성분명을 prod-emph(검정)로 잘못 감쌌으면 ing-emph(올리브)로 재분류.
+    // 성분명 자체가 통째로 prod-emph로 잘못 감싸진 경우 → ing-emph(올리브)로 재분류.
     escapedText = escapedText.replace(
       new RegExp('<strong class="prod-emph">(' + alt + ')</strong>', 'g'),
       '<strong class="ing-emph">$1</strong>');
-    // 마커 없이 맨텍스트로 있으면 강조(이미 strong 안이면 위에서 처리됨).
-    return escapedText.replace(new RegExp('(?<!>)(' + alt + ')(?!<)', 'g'),
-      '<strong class="ing-emph">$1</strong>');
+    // 맨텍스트 성분명만 강조. <strong>...</strong>(제품명 등) 내부는 건드리지 않는다
+    // (제품명 안에 성분명이 포함돼 중첩되는 문제 방지) — 태그 세그먼트 밖에서만 치환.
+    const ingRe = new RegExp('(' + alt + ')', 'g');
+    return escapedText.split(/(<strong[^>]*>.*?<\/strong>)/g).map(seg =>
+      seg.startsWith('<strong') ? seg : seg.replace(ingRe, '<strong class="ing-emph">$1</strong>')
+    ).join('');
   }
   // 효능 문구 강조: "명사(조사) + 효능동사(어미)" 청크를 볼드. 성분명 강조 뒤에 적용.
   const EFFECT_VERBS = '개선|완화|강화|공급|억제|조절|예방|회복|진정|보습|재생|촉진|수리|완충|보호|유지|방지|케어';
