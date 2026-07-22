@@ -44,6 +44,10 @@ async def _call_llm(client: openai.AsyncOpenAI, system_prompt: str, user_content
         temperature=settings.gen_temperature,
         max_tokens=settings.gen_max_tokens,
         response_format={"type": "json_object"},
+        # app/services/recommend_service.py, eval/run_eval.py, eval/run_response_eval.py
+        # 전부 Qwen3 계열의 "생각하기" 모드를 꺼서 씀 — 안 끄면 <think> 추론이
+        # max_tokens를 잡아먹어 정작 JSON 답변이 잘리는 문제가 있었음(실제로 발생).
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     raw = resp.choices[0].message.content or "{}"
     try:

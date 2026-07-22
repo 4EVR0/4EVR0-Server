@@ -56,7 +56,7 @@ llm_query_eval/
 
 ```mermaid
 flowchart TD
-    Q["questions.py<br/>concern별 한국어 질문 26개"] --> RUN[run_ab.py]
+    Q["questions.py<br/>eval/dataset.jsonl 재사용<br/>(여러 고민이 섞인 실제 발화 46개)"] --> RUN[run_ab.py]
 
     subgraph A["A 경로"]
         AF["app.clients.neo4j_client<br/>.query_ingredients_by_effects()<br/>(프로덕션 함수 그대로 호출)"]
@@ -81,9 +81,14 @@ flowchart TD
 
 ### 1. `questions.py`
 
-26개 concern(ACNE, DRY_SKIN, WRINKLES...) 각각에 대해 "여드름 때문에 고민이에요" 같은
-자연스러운 한국어 질문을 하나씩 만들어 둔 파일. B 경로에서 LLM에게 실제로 던지는 입력이
-이 질문들입니다.
+처음엔 "여드름 때문에 고민이에요" 같은 concern 1개당 질문 1개(26개)를 직접 썼는데,
+이러면 항상 단일 고민 → 단일 effect 집합이라 실제 사용자 발화보다 너무 단순했습니다.
+지금은 `4EVR0-Server/eval/dataset.jsonl`(프로필 추출 평가용으로 이미 있던 정답셋 —
+"피지는 많은데 속은 건조하고, 좁쌀과 막힌 모공에 여드름 자국까지 있어요"처럼 여러 고민이
+한 문장에 섞인 실제 발화 스타일, concern 라벨도 이미 붙어 있음)을 그대로 재사용합니다.
+concern이 비어 있는 시나리오(예: "그냥 무난한 보습 제품 추천해줘")는 채점 대상이
+아니라서 뺐고, 46개가 남았습니다. B 경로에서 LLM에게 실제로 던지는 입력은 원문
+메시지 그대로입니다 (concern/effect를 미리 안 알려줌 — 그것도 LLM이 스스로 판단해야 함).
 
 ### 2. `prompts/cypher_generation.txt`
 
@@ -105,12 +110,14 @@ Cypher를 스스로 짜서 JSON으로 답해라"라고 알려주는 지시문. �
 - **정답 기준(gold label)**: "이 성분이 이 효능에 실제로 효과가 있다"는 근거가 논문(pubmed)
   기반인 것만 정답으로 침 (그래프 안에 이미 있는 신뢰도 표시를 그대로 활용, `eval/gold_labels.py`
   재사용).
-- **A는 실제 프로덕션 함수를 그대로 호출**해서 결과를 받음.
+- **A는 실제 프로덕션 함수를 그대로 호출**해서 결과를 받음 — 시나리오에 고민이 여러 개면
+  (`effects_for_concerns()`) 전부 합친 effect 집합으로 호출, 프로덕션이 다중 고민 메시지를
+  처리하는 방식과 동일.
 - **B는 generate.py로 만든 쿼리를 실행**해서 결과를 받음.
 - 둘 다 같은 정답 기준으로 **Precision@20**(내가 보여준 20개 중 진짜 맞는 게 몇 개인지),
   **Recall@20**(전체 정답 중에 내가 몇 개나 찾아냈는지), **NDCG@20**(맞는 걸 앞쪽에 잘
   배치했는지)을 계산.
-- concern마다 A와 B를 나란히 출력하고, 전체 평균과 JSON 결과 파일을 남김.
+- 시나리오마다 A와 B를 나란히 출력하고, 전체 평균과 JSON 결과 파일을 남김.
 
 ## 설계에서 제일 중요한 결정: "A는 복사하지 않고 직접 불러쓴다"
 
@@ -137,6 +144,23 @@ B가 "문법 오류 쿼리를 만듦" / "결과에 필요한 컬럼이 없음" �
 "쿼리는 만들었는데 결과가 부실한 것"은 원인이 완전히 다른 문제라서, 섞어버리면 나중에
 "LLM이 애초에 문법을 못 지키는 건지, 아니면 문법은 맞는데 엉뚱한 걸 찾아오는 건지"를
 구분할 수 없게 됩니다.
+
+## 첫 실행에서 발견하고 고친 것
+
+첫 26개(concern 단일 질문) 전체 실행 결과를 보고 발견한 문제 3가지:
+
+1. **few-shot 오염**: `prompts/cypher_generation.txt`의 few-shot 질문 3개가 테스트 질문과
+   토씨 하나 안 다르게 겹쳐 있어서, 그 케이스들은 LLM이 생성한 게 아니라 예시를 베껴 쓴
+   것이었음 → 안 겹치는 예시로 교체.
+2. **`enable_thinking` 안 끔**: 프로덕션(`recommend_service.py`)과 다른 eval 스크립트들은
+   전부 Qwen3 "생각하기" 모드를 꺼서 호출하는데 `generate.py`만 빠져 있었음 → 생각하는 데
+   토큰을 다 써서 `{"cypher": ...}` 응답이 잘리는 실패(`KeyError: 'cypher'`)로 이어졌을
+   가능성이 높음 → `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` 추가.
+3. **진단 정보 부족**: B가 왜 A보다 점수가 낮은지(effect_code를 잘못 골랐는지) 확인할
+   `params`가 결과에 없었고, 실패 원인을 알 raw 응답도 안 남기고 있었음 → 둘 다 추가.
+
+그리고 질문 세트 자체가 concern 1개짜리라 너무 단순했던 것도 이번에
+`eval/dataset.jsonl` 재사용으로 고쳤습니다 (위 1번 참고).
 
 ## 지금까지 확인한 것 / 아직 안 한 것
 
