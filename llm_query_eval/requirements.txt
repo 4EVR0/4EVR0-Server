@@ -1,0 +1,3 @@
+# app.* 를 직접 import하므로 4EVR0-Server/requirements.txt가 이미 openai/neo4j/
+# pydantic-settings/python-dotenv를 제공한다. 여기서는 거기 없는 것만 추가한다.
+pandas
