@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # 데이터가 거의 안 변해 TTL을 길게(기본 24h). 부하 테스트 on/off 비교용으로 토글 가능.
     recommend_cache_enabled: bool = True
     recommend_cache_ttl_seconds: int = 86400
+    # 대화 이력(멀티턴 맥락). Redis LIST(conv:{session_id})에 턴 저장 → 후속 질문이 이전 추천 참조.
+    conversation_enabled: bool = True
+    conversation_max_turns: int = 8       # 최근 N턴만 유지(LTRIM) — 프롬프트 크기 상한
+    conversation_ttl_seconds: int = 7200  # 대화는 휘발성(기본 2h), 턴마다 갱신
 
     # 제품 검색 정밀도 (이슈: 성분 겹침으로 목적-불일치 제품이 추천되던 문제):
     #   (a) 제품을 "성분 개수"가 아니라 "성분의 고민-관련도(graph_score) 합"으로 랭킹.
