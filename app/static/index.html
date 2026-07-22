@@ -524,11 +524,15 @@
     const re = new RegExp('([가-힣]{2,10}(?:을|를|이|가|과|와)\\s*)?(' + EFFECT_VERBS + ')(하는|하며|하고|하여|시키는|시키며|되는|해|함|합니다|을 돕는|를 돕는)?', 'g');
     return html.replace(re, m => `<strong class="effect-emph">${m}</strong>`);
   }
+  // 마크다운 **볼드** → 올리브 강조(후속 응답이 마크다운을 쓸 때 raw ** 노출 방지).
+  function mdBold(html) {
+    return html.replace(/\*\*(.+?)\*\*/g, '<strong class="ing-emph">$1</strong>');
+  }
   function renderAnswerBody(text, ingredients) {
     return String(text || '').split('\n').map(line => {
       if (!line.trim()) return '';
       if (isSectionTitle(line)) return `<div class="answer-h">${escHtml(line.trim())}</div>`;
-      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(escHtml(line), ingredients))}</div>`;
+      return `<div class="answer-line">${emphasizeEffects(emphasizeIngredients(mdBold(escHtml(line)), ingredients))}</div>`;
     }).join('');
   }
 
