@@ -270,15 +270,48 @@ def _record_latency(spans: dict[str, float], cache: str) -> None:
 
 
 def _slim_products(products) -> list[dict]:
-    """대화 이력용 제품 요약(ProductResult 또는 캐시 dict 둘 다 처리)."""
+    """대화 이력용 제품 요약(ProductResult 또는 캐시 dict 둘 다 처리).
+    후속 턴에서 카드를 복원할 수 있게 표시 필드를 담는다. image_url은 presigned라
+    만료되므로 저장하지 않고 goods_no로 후속 시점에 재생성한다."""
+    def g(p, attr, key):
+        return p.get(key) if isinstance(p, dict) else getattr(p, attr, None)
     out = []
     for p in products or []:
-        if isinstance(p, dict):
-            out.append({"name": p.get("product_name"), "brand": p.get("brand"),
-                        "category": p.get("category"), "rating": p.get("rating")})
-        else:
-            out.append({"name": p.product_name, "brand": p.brand,
-                        "category": p.category, "rating": p.rating})
+        out.append({
+            "product_id": g(p, "product_id", "product_id"),
+            "name": g(p, "product_name", "product_name"),
+            "brand": g(p, "brand", "brand"),
+            "category": g(p, "category", "category"),
+            "goods_no": g(p, "goods_no", "goods_no"),
+            "product_url": g(p, "product_url", "product_url"),
+            "rating": g(p, "rating", "rating"),
+            "review_count": g(p, "review_count", "review_count"),
+            "review_stats": g(p, "review_stats", "review_stats"),
+            "matched_count": g(p, "matched_count", "matched_count"),
+            "matched_ingredients": g(p, "matched_ingredients", "matched_ingredients") or [],
+        })
+    return out
+
+
+def _reconstruct_products(slim: list[dict]) -> list[ProductResult]:
+    """이력의 slim 제품을 카드 표시용 ProductResult로 복원. image_url은 goods_no로 재생성."""
+    out = []
+    for p in slim or []:
+        gid = p.get("goods_no") or p.get("product_id")
+        out.append(ProductResult(
+            product_id=p.get("product_id") or "",
+            goods_no=p.get("goods_no"),
+            product_name=p.get("name") or "",
+            brand=p.get("brand") or "",
+            category=p.get("category") or "",
+            image_url=build_product_image_url(gid) if gid else None,
+            product_url=p.get("product_url"),
+            matched_count=p.get("matched_count") or 0,
+            matched_ingredients=p.get("matched_ingredients") or [],
+            rating=p.get("rating"),
+            review_count=p.get("review_count"),
+            review_stats=p.get("review_stats"),
+        ))
     return out
 
 
@@ -403,9 +436,13 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         metrics.recommend_requests_total.labels(status="error").inc()
         raise
     metrics.recommend_requests_total.labels(status="ok").inc()
-    await _store_turn(session_id, message, [], response_text, None)
+    # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
+    last = next((t for t in reversed(history) if t.get("products")), None)
+    products = _reconstruct_products((last or {}).get("products", []))
+    await _store_turn(session_id, message, products, response_text, None)
     return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
-                             products=[], response_text=response_text, model_used=settings.gpu_model)
+                             products=products, response_text=response_text,
+                             model_used=settings.gpu_model)
 
 
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:

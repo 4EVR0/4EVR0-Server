@@ -13,19 +13,23 @@ class ConversationKeyTest(unittest.TestCase):
 
 class SlimProductsTest(unittest.TestCase):
     def test_from_dicts(self):
-        rows = [{"product_name": "토너A", "brand": "브랜드", "category": "토너", "rating": 4.7, "x": 1}]
-        self.assertEqual(
-            [{"name": "토너A", "brand": "브랜드", "category": "토너", "rating": 4.7}],
-            _slim_products(rows),
-        )
+        rows = [{"product_name": "토너A", "brand": "브랜드", "category": "토너", "rating": 4.7,
+                 "goods_no": "A1", "matched_count": 3, "matched_ingredients": ["X"]}]
+        s = _slim_products(rows)[0]
+        self.assertEqual("토너A", s["name"])
+        self.assertEqual("A1", s["goods_no"])
+        self.assertEqual(3, s["matched_count"])
+        self.assertEqual(["X"], s["matched_ingredients"])
 
     def test_from_objects(self):
         class P:
-            product_name, brand, category, rating = "크림B", "B", "크림", 4.2
-        self.assertEqual(
-            [{"name": "크림B", "brand": "B", "category": "크림", "rating": 4.2}],
-            _slim_products([P()]),
-        )
+            product_id, product_name, brand, category = "id1", "크림B", "B", "크림"
+            goods_no, product_url, rating, review_count, review_stats = "A2", "u", 4.2, 10, None
+            matched_count, matched_ingredients = 2, ["Y"]
+        s = _slim_products([P()])[0]
+        self.assertEqual("크림B", s["name"])
+        self.assertEqual("A2", s["goods_no"])
+        self.assertEqual(4.2, s["rating"])
 
     def test_empty(self):
         self.assertEqual([], _slim_products(None))
