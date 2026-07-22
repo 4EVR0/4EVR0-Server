@@ -291,16 +291,16 @@
   .ingredients-grid { display: grid; gap: 8px; }
   .ingredient-row {
     display: grid;
-    grid-template-columns: minmax(110px, 0.8fr) minmax(180px, 1.6fr) auto;
-    gap: 10px;
+    grid-template-columns: 1fr auto;
+    gap: 10px 18px;
     align-items: center;
-    padding: 10px 12px;
+    padding: 10px 16px;
     border-radius: 14px;
     background: #fbfdf7;
     border: 1px solid rgba(60, 80, 34, 0.10);
   }
   .ingredient-name { color: #5f8f13; font-size: 13px; font-weight: 850; }
-  .ingredient-claim { color: #56624b; font-size: 12px; line-height: 1.45; }
+  .ingredient-claim { color: #56624b; font-size: 12px; line-height: 1.45; text-align: right; justify-self: end; }
   .tier { font-size: 10px; padding: 4px 9px; border-radius: 999px; font-weight: 800; white-space: nowrap; letter-spacing: 0.2px; }
   .tier-confirmed { background: rgba(20, 83, 45, 0.9); color: #bbf7d0; }
   .tier-promising { background: rgba(113, 63, 18, 0.9); color: #fde68a; }
@@ -385,6 +385,7 @@
     .product-main { grid-template-columns: 86px 1fr auto; gap: 12px; padding: 13px; }
     .product-image-slot { width: 86px; border-radius: 15px; }
     .ingredient-row { grid-template-columns: 1fr; gap: 5px; }
+    .ingredient-claim { text-align: left; justify-self: start; }
     .dashboard-link, #model-badge, .status-pill { font-size: 11px; padding: 7px 9px; }
   }
 </style>
