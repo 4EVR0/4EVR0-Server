@@ -503,19 +503,46 @@
     return { intro: lines.slice(0, i).join('\n').trim(), productSection: lines.slice(i + 1).join('\n') };
   }
 
-  // 추천 제품 원문에서 해당 제품 문장을 찾아 제품명 이후만 깔끔히 뽑는다.
-  function productDescription(product, productSection) {
-    if (!productSection || !product.product_name) return '';
+  // 성분의 표시명(한글 우선, 평문) / 효능 한글(평문)
+  function plainIngName(n, ingredients) {
+    const ing = ingredientByInci(n, ingredients);
+    if (ing && ing.kor_name && ing.kor_name.trim() &&
+        ing.kor_name.trim().toLowerCase() !== String(ing.name).toLowerCase()) return ing.kor_name.trim();
+    return ing ? ing.name : n;
+  }
+  function plainEffectKo(n, ingredients) {
+    const ing = ingredientByInci(n, ingredients);
+    return ing && ing.claim ? (EFFECT_KO[String(ing.claim).trim().toLowerCase()] || '') : '';
+  }
+
+  // LLM이 설명 안 한 제품용 폴백: 핵심 성분(효능) + 리뷰 하이라이트로 생성.
+  function buildFallbackDesc(product, ingredients) {
+    const parts = (product.matched_ingredients || []).slice(0, 2).map(n => {
+      const nm = plainIngName(n, ingredients), ef = plainEffectKo(n, ingredients);
+      return ef ? `${nm}(${ef})` : nm;
+    }).filter(Boolean);
+    let s = parts.length
+      ? `${parts.join(', ')} 등 추천 성분 ${product.matched_count}개를 담은 ${product.category} 제품입니다.`
+      : `추천 성분 ${product.matched_count}개가 매칭된 ${product.category} 제품입니다.`;
+    const rh = reviewHighlight(product);
+    if (rh) s += ` 리뷰에서 '${rh}' 평가가 많아요.`;
+    return s;
+  }
+
+  // 추천 제품 원문에서 해당 제품 문장을 뽑고, 없으면 구조 데이터로 폴백(모든 제품 설명 보장).
+  function productDescription(product, productSection, ingredients) {
     const name = product.product_name;
-    for (const raw of productSection.split('\n')) {
-      const line = raw.trim();
-      if (!line || !line.includes(name)) continue;
-      let d = line.replace(/^[-•*]\s*/, '').replace(/^\s*\[[^\]]*\]\s*/, '');
-      const ni = d.indexOf(name);
-      if (ni >= 0) d = d.slice(ni + name.length).replace(/^\s*[은는이가을를]\s*/, '').trim();
-      return d;
+    if (productSection && name) {
+      for (const raw of productSection.split('\n')) {
+        const line = raw.trim();
+        if (!line || !line.includes(name)) continue;
+        let d = line.replace(/^[-•*]\s*/, '').replace(/^\s*\[[^\]]*\]\s*/, '');
+        const ni = d.indexOf(name);
+        if (ni >= 0) d = d.slice(ni + name.length).replace(/^\s*[은는이가을를]\s*/, '').trim();
+        if (d) return d;
+      }
     }
-    return '';
+    return buildFallbackDesc(product, ingredients);
   }
 
   function appendAIBubble(responseText, ingredients, products, modelUsed) {
@@ -547,7 +574,7 @@
               <div class="product-toggle">⌄</div>
             </div>
             <div class="product-ingredients">
-              ${productDescription(product, productSection) ? `<div class="product-rationale">${escHtml(productDescription(product, productSection))}</div>` : ''}
+              <div class="product-rationale">${escHtml(productDescription(product, productSection, ingredients))}</div>
               <div class="ingredients-heading">이 화장품에 포함된 추천 성분</div>
               <div class="ingredients-grid">${(product.matched_ingredients || []).map(name => `
                 <div class="ingredient-row">
