@@ -439,7 +439,11 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
             rate = f" ⭐{p['rating']}" if p.get("rating") else ""
             ings = ", ".join(_fmt_ingredient(i, ing_kor) for i in (p.get("matched_ingredients") or [])[:4])
             ing_str = f" · 핵심성분: {ings}" if ings else ""
-            lines.append(f"- [{p.get('category', '')}] {p.get('brand', '')} {p.get('name', '')}{rate}{ing_str}")
+            # product_name에 이미 브랜드가 포함된 경우가 많아 brand를 앞에 안 붙인다(중복 방지).
+            name = p.get("name") or ""
+            brand = p.get("brand") or ""
+            display = name if (brand and brand in name) else f"{brand} {name}".strip()
+            lines.append(f"- [{p.get('category', '')}] {display}{rate}{ing_str}")
     lines.append("\n이전 대화:")
     for turn in history[-3:]:
         if turn.get("user"):
@@ -511,8 +515,10 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
     last = next((t for t in reversed(history) if t.get("products")), None)
     products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])), ranking)
+    # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
+    ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     await _store_turn(session_id, message, products, response_text, None)
-    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients,
                              products=products, response_text=response_text,
                              model_used=settings.gpu_model)
 

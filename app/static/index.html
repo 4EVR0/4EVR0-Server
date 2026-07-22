@@ -521,14 +521,31 @@
     if (!names.length) return escapedText;
     const uniq = [...new Set(names)].sort((a, b) => b.length - a.length);
     const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp('(' + uniq.map(esc).join('|') + ')', 'g');
-    return escapedText.replace(re, '<strong class="ing-emph">$1</strong>');
+    const alt = uniq.map(esc).join('|');
+    // mdInline이 성분명을 prod-emph(검정)로 잘못 감쌌으면 ing-emph(올리브)로 재분류.
+    escapedText = escapedText.replace(
+      new RegExp('<strong class="prod-emph">(' + alt + ')</strong>', 'g'),
+      '<strong class="ing-emph">$1</strong>');
+    // 마커 없이 맨텍스트로 있으면 강조(이미 strong 안이면 위에서 처리됨).
+    return escapedText.replace(new RegExp('(?<!>)(' + alt + ')(?!<)', 'g'),
+      '<strong class="ing-emph">$1</strong>');
   }
   // 효능 문구 강조: "명사(조사) + 효능동사(어미)" 청크를 볼드. 성분명 강조 뒤에 적용.
   const EFFECT_VERBS = '개선|완화|강화|공급|억제|조절|예방|회복|진정|보습|재생|촉진|수리|완충|보호|유지|방지|케어';
   function emphasizeEffects(html) {
     const re = new RegExp('([가-힣]{2,10}(?:을|를|이|가|과|와)\\s*)?(' + EFFECT_VERBS + ')(하는|하며|하고|하여|시키는|시키며|되는|해|함|합니다|을 돕는|를 돕는)?', 'g');
     return html.replace(re, m => `<strong class="effect-emph">${m}</strong>`);
+  }
+  // 안전망: '한글 (INCI)' 패턴의 한글 성분명을 올리브 볼드로(LLM이 *마커*를 놓쳐도).
+  // 이미 <strong>으로 감싸진 부분은 안 건드림(중첩 방지).
+  function emphasizeInciKorean(html) {
+    return html.replace(/([가-힣]{2,20})(\s*\([A-Z][A-Z0-9\-\/ ]*\))/g, (m, kor, eng, offset, full) => {
+      const before = full.slice(0, offset);
+      const opens = (before.match(/<strong/g) || []).length;
+      const closes = (before.match(/<\/strong>/g) || []).length;
+      if (opens > closes) return m;  // 이미 강조 안(중첩) → 그대로
+      return `<strong class="ing-emph">${kor}</strong>${eng}`;
+    });
   }
   // 마크다운 마커 → 강조. 제품명 **...** = 검정 볼드, 성분 *...* = 올리브 볼드.
   // (** 를 먼저 처리해야 * 규칙과 안 겹침)
@@ -546,7 +563,7 @@
       let bullet = '', content = line;
       const m = content.match(/^\s*[*\-]\s+/);
       if (m) { bullet = '<span class="bullet">•</span>'; content = content.slice(m[0].length); }
-      const body = emphasizeEffects(emphasizeIngredients(mdInline(escHtml(content)), ingredients));
+      const body = emphasizeEffects(emphasizeInciKorean(emphasizeIngredients(mdInline(escHtml(content)), ingredients)));
       return `<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`;
     }).join('');
   }
