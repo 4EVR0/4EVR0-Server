@@ -242,6 +242,10 @@
   .answer-kicker { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 9px; color: #5f8f13; font-size: 11px; font-weight: 800; letter-spacing: -0.1px; }
   .answer-kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
   .answer-body { color: #25301d; }
+  .answer-h { margin: 17px 0 7px; color: #5f8f13; font-size: 16px; font-weight: 850; letter-spacing: -0.3px; }
+  .answer-h:first-child { margin-top: 0; }
+  .answer-line { line-height: 1.72; }
+  .ing-emph { color: #5f8f13; font-weight: 800; }
   .product-section { margin-top: 16px; }
   .product-card {
     cursor: pointer;
@@ -495,6 +499,31 @@
     if (el) el.remove();
   }
 
+  // 답변 버블 렌더: 소제목은 올리브 헤딩으로, 본문의 성분명은 강조.
+  const SECTION_TITLES = ['고민 분석', '성분 설명', '추천 제품', '사용 팁'];
+  function isSectionTitle(line) {
+    const t = line.trim().replace(/\s+/g, '');
+    return SECTION_TITLES.some(s => s.replace(/\s+/g, '') === t);
+  }
+  function emphasizeIngredients(escapedText, ingredients) {
+    const names = [];
+    (ingredients || []).forEach(i => {
+      if (i.kor_name && i.kor_name.trim()) names.push(i.kor_name.trim());
+    });
+    if (!names.length) return escapedText;
+    const uniq = [...new Set(names)].sort((a, b) => b.length - a.length);
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(' + uniq.map(esc).join('|') + ')', 'g');
+    return escapedText.replace(re, '<strong class="ing-emph">$1</strong>');
+  }
+  function renderAnswerBody(text, ingredients) {
+    return String(text || '').split('\n').map(line => {
+      if (!line.trim()) return '';
+      if (isSectionTitle(line)) return `<div class="answer-h">${escHtml(line.trim())}</div>`;
+      return `<div class="answer-line">${emphasizeIngredients(escHtml(line), ingredients)}</div>`;
+    }).join('');
+  }
+
   // 응답을 "고민분석+성분설명"(intro)과 "추천 제품"(제품별 설명 원문)으로 분리.
   function splitResponse(text) {
     const lines = String(text || '').split('\n');
@@ -616,7 +645,7 @@
       <div class="avatar ai">AI</div>
       <div class="bubble ai">
         <div class="answer-kicker">4EVR0 추천 답변</div>
-        <div class="answer-body">${escHtml(bodyText).replace(/\n/g, '<br>')}</div>
+        <div class="answer-body">${renderAnswerBody(bodyText, ingredients)}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
     chat.appendChild(row);
