@@ -1,6 +1,9 @@
+import logging
 from urllib.parse import quote
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def build_product_image_url(goods_no: str | None) -> str | None:
@@ -38,6 +41,12 @@ def _build_presigned_url(key: str) -> str | None:
         import boto3
         from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
     except ImportError:
+        # presigned 모드인데 boto3 미설치 → 이미지 URL이 전부 None 이 된다.
+        # 조용히 삼키면 "사진이 안 나오는" 원인 파악이 어려우니 명시적으로 경고한다.
+        logger.warning(
+            "presigned image URL mode is enabled but boto3 is not installed; "
+            "product images will be unavailable. Add boto3 to requirements."
+        )
         return None
 
     try:
@@ -54,5 +63,6 @@ def _build_presigned_url(key: str) -> str | None:
             Params={"Bucket": settings.product_image_bucket, "Key": key},
             ExpiresIn=settings.product_image_presigned_expires_seconds,
         )
-    except (BotoCoreError, ClientError, NoCredentialsError):
+    except (BotoCoreError, ClientError, NoCredentialsError) as exc:
+        logger.warning("failed to generate presigned image URL: %s", exc)
         return None
