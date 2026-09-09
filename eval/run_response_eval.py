@@ -12,6 +12,12 @@
 
 기본 동작은 생성기와 다른 외부 judge를 요구하고, 생성 temperature를 0으로 고정한다.
 self-judge는 편향을 명시적으로 감수하는 --allow-self-judge 없이는 실행되지 않는다.
+
+세션 격리(중요): 케이스마다 고유 session_id를 쓰고 실행 전후로 대화 이력을 비운다.
+공유 세션이면 recommend()가 앞 케이스의 이력을 읽어 후속 질문으로 오판할 수 있고, 그때는
+검색을 건너뛴 채 **앞 케이스의 제품**으로 답을 만든다(recommend_service._handle_followup).
+응답 캐시를 꺼도 대화 이력은 Redis에 따로 남으므로 캐시 OFF만으로는 격리되지 않는다.
+--session-mode shared 는 격리 도입 이전 동작을 재현해 오염 영향을 측정할 때만 쓴다.
 """
 
 import argparse
@@ -21,6 +27,7 @@ import os
 import statistics
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +40,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import settings  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
+from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import (  # noqa: E402
     _evidence_label,
     _ingredient_display_name,
@@ -50,6 +58,12 @@ JUDGE_PROMPT_NAME = "response_judge"
 DEFAULT_GEN_PROMPT = "recommend_response"  # 평가 대상 응답 생성 프롬프트(--gen-prompt로 교체)
 DIMS = ["concern_fit", "grounding", "conciseness", "korean_quality", "format_adherence"]
 DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
+
+# 세션 격리 모드.
+#   isolated — 케이스마다 고유 session_id. 독립 평가의 기본값.
+#   shared   — 전 케이스가 한 session_id 공유(격리 도입 이전 동작). 오염 영향 측정용으로만 사용.
+SESSION_MODES = ("isolated", "shared")
+LEGACY_SHARED_SESSION_ID = "eval-response"  # shared 모드가 재현하는 기존 세션 ID
 
 
 @dataclass(frozen=True)
@@ -232,6 +246,7 @@ async def run(
     bootstrap_samples: int = 2_000,
     seed: int = 23,
     human_labels_path: Path | None = None,
+    session_mode: str = "isolated",
 ) -> dict:
     cases = load_dataset(dataset_path)
     if limit:
@@ -240,21 +255,41 @@ async def run(
         raise ValueError("judge_repeats must be at least 1")
     if bootstrap_samples < 1:
         raise ValueError("bootstrap_samples must be at least 1")
+    if session_mode not in SESSION_MODES:
+        raise ValueError(f"session_mode must be one of {SESSION_MODES}")
     settings.gen_temperature = gen_temperature
     client = build_judge_client(judge_config)
     judge_prompt = load_prompt(JUDGE_PROMPT_NAME)
+
+    # 실행 ID — isolated 모드의 session_id 네임스페이스. 이력 TTL(기본 2h) 안에 같은 평가를
+    # 여러 번 돌려도 실행 간 이력이 섞이지 않도록 실행마다 새로 만든다.
+    run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
     results = []
     dim_scores = {d: [] for d in DIMS}
     errors = 0
     gen_latencies = []
     repeat_stddevs: list[float] = []
+    contaminated = 0  # 실행 시점에 이전 이력이 남아 있던 케이스 수(오염 노출)
 
     for case in cases:
         row = {"id": case["id"], "label": case.get("label", ""), "message": case["message"]}
+        session_id = (
+            LEGACY_SHARED_SESSION_ID if session_mode == "shared"
+            else f"eval-{run_id}-{case['id']}"
+        )
+        # 격리 모드: 남은 이력(키 충돌·이전 중단 실행)을 지우고 깨끗한 상태에서 시작.
+        if session_mode == "isolated":
+            await conversation_store.clear(session_id)
+        # 이 케이스가 '이전 대화가 있는 상태'로 실행됐는지 기록 — 오염을 사후에 증명하는 근거.
+        history_before = len(await conversation_store.load_recent(session_id))
+        row["session_id"] = session_id
+        row["history_len_before"] = history_before
+        if history_before:
+            contaminated += 1
         try:
             t0 = time.perf_counter()
-            rec = await recommend("eval-response", case["message"], gen_prompt)  # 실제 파이프라인 (Neo4j+vLLM)
+            rec = await recommend(session_id, case["message"], gen_prompt)  # 실제 파이프라인 (Neo4j+vLLM)
             gen_latencies.append(time.perf_counter() - t0)
             score_runs = [
                 await judge_response(
@@ -286,6 +321,10 @@ async def run(
             results.append(row)
             print(f"  [id {case['id']:>2}] ERROR {type(exc).__name__}: {exc}")
             continue
+        finally:
+            # 이 케이스가 남긴 이력은 다음 케이스로 넘기지 않는다(성공·실패 무관).
+            if session_mode == "isolated":
+                await conversation_store.clear(session_id)
 
         valid = [scores[d] for d in DIMS if scores[d] is not None]
         for d in DIMS:
@@ -323,6 +362,9 @@ async def run(
     metrics["judge_repeat_stddev"] = (
         round(statistics.mean(repeat_stddevs), 4) if repeat_stddevs else 0.0
     )
+    # 이전 대화 이력이 남은 채로 실행된 케이스 — isolated 모드에서는 0이어야 한다.
+    metrics["contaminated_cases"] = contaminated
+    metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
 
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -342,6 +384,11 @@ async def run(
         "n_scored": scored,
         "bootstrap_samples": bootstrap_samples,
         "bootstrap_seed": seed,
+        # 평가 조건을 리포트만 보고 재현·해석할 수 있도록 세션 격리 상태를 함께 남긴다.
+        "run_id": run_id,
+        "session_mode": session_mode,
+        "conversation_enabled": settings.conversation_enabled,
+        "conversation_ttl_seconds": settings.conversation_ttl_seconds,
     }
     report = {"run": run_info, "metrics": metrics, "cases": results}
     if human_labels_path:
@@ -361,6 +408,8 @@ def print_summary(report: dict) -> None:
         f"gen_prompt={r['gen_prompt_version']}  judge_prompt={r['judge_prompt_version']}"
     )
     print(f"  n={r['n_cases']} (scored {r['n_scored']})")
+    session_note = "" if r.get("session_mode") == "isolated" else "  ⚠️ 케이스 간 이력 공유"
+    print(f"  session_mode={r.get('session_mode')}  run_id={r.get('run_id')}{session_note}")
     print("─" * 60)
     for d in DIMS:
         if f"resp_{d}" in m:
@@ -377,6 +426,9 @@ def print_summary(report: dict) -> None:
     print(f"  {'에러율':<20} {m['error_rate']}")
     print(f"  {'응답생성 p50':<20} {m.get('gen_latency_p50')}s")
     print(f"  {'judge 반복 표준편차':<20} {m.get('judge_repeat_stddev')}")
+    contaminated = m.get("contaminated_cases", 0)
+    flag = "" if not contaminated else f"  ⚠️ 이전 이력 노출({m.get('contamination_rate')})"
+    print(f"  {'오염 케이스':<20} {contaminated}{flag}")
     if "human_calibration" in report:
         calibration = report["human_calibration"]
         print(
@@ -403,6 +455,7 @@ def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
             "gen_prompt", "gen_prompt_version", "judge_model", "judge_base_url",
             "judge_temperature", "judge_repeats", "judge_prompt_version",
             "dataset_sha256", "n_cases", "n_scored", "bootstrap_samples", "bootstrap_seed",
+            "run_id", "session_mode", "conversation_enabled",
         )
         mlflow.log_params({key: run[key] for key in parameter_names})
         mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
@@ -440,6 +493,8 @@ def main():
                     help="생성기와 동일한 judge 사용을 명시적으로 허용")
     ap.add_argument("--human-labels", default=None,
                     help="전문가 점수 JSONL; judge-vs-human MAE/상관 산출")
+    ap.add_argument("--session-mode", choices=SESSION_MODES, default="isolated",
+                    help="isolated=케이스별 세션 격리(기본), shared=격리 이전 동작 재현(오염 영향 측정용)")
     ap.add_argument("--bootstrap-samples", type=int, default=2_000)
     ap.add_argument("--seed", type=int, default=23)
     ap.add_argument("--out", default=None)
@@ -465,6 +520,7 @@ def main():
                 bootstrap_samples=args.bootstrap_samples,
                 seed=args.seed,
                 human_labels_path=Path(args.human_labels) if args.human_labels else None,
+                session_mode=args.session_mode,
             )
         )
     except ValueError as exc:

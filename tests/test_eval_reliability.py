@@ -117,6 +117,143 @@ def test_human_calibration_reports_agreement(tmp_path):
     assert calibration["overall"] == {"mae": 0.0, "pearson": 1.0, "spearman": 1.0}
 
 
+class _FakeConversationStore:
+    """Redis 대화 이력 스텁 — 세션별 턴 보관 + clear 호출 기록."""
+
+    def __init__(self):
+        self.turns: dict[str, list] = {}
+        self.cleared: list[str] = []
+
+    async def clear(self, session_id):
+        self.cleared.append(session_id)
+        self.turns.pop(session_id, None)
+
+    async def load_recent(self, session_id, limit=None):
+        return list(self.turns.get(session_id, []))
+
+    async def append_turn(self, session_id, **entry):
+        self.turns.setdefault(session_id, []).append(entry)
+
+
+def _write_dataset(path: Path, n: int) -> Path:
+    """n개 케이스짜리 최소 데이터셋."""
+    path.write_text(
+        "\n".join(
+            json.dumps({
+                "id": i,
+                "label": f"case{i}",
+                "message": f"고민 {i}",
+                "skin_types": [],
+                "concerns": ["DULLNESS"],
+                "constraints": [],
+            })
+            for i in range(1, n + 1)
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _run_response_eval(dataset, monkeypatch, store, *, session_mode):
+    """recommend/judge를 스텁으로 갈아끼우고 평가를 돌린다.
+
+    스텁 recommend는 실제 파이프라인처럼 턴을 이력에 남긴다 — 공유 세션일 때
+    다음 케이스가 그 이력을 보게 되는지 확인하기 위함.
+    """
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        await store.append_turn(session_id, user=message, assistant="응답")
+        return SimpleNamespace(ingredients=[], products=[], response_text="추천 응답")
+
+    async def fake_judge(*_args):
+        return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", lambda _config: object())
+    monkeypatch.setattr(response_eval, "judge_response", fake_judge)
+    config = response_eval.JudgeConfig(
+        model="external/judge",
+        base_url="https://judge.example/v1",
+        api_key="secret",
+        timeout_seconds=30,
+    )
+    return asyncio.run(
+        response_eval.run(
+            dataset,
+            None,
+            response_eval.DEFAULT_GEN_PROMPT,
+            config,
+            bootstrap_samples=100,
+            seed=23,
+            session_mode=session_mode,
+        )
+    )
+
+
+def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 3)
+    store = _FakeConversationStore()
+
+    report = _run_response_eval(dataset, monkeypatch, store, session_mode="isolated")
+
+    sessions = [row["session_id"] for row in report["cases"]]
+    assert len(set(sessions)) == 3, "케이스마다 서로 다른 세션이어야 한다"
+    # 어떤 케이스도 이전 대화가 남은 상태로 실행되지 않는다.
+    assert all(row["history_len_before"] == 0 for row in report["cases"])
+    assert report["metrics"]["contaminated_cases"] == 0
+    assert report["metrics"]["contamination_rate"] == 0.0
+    # 케이스가 남긴 이력을 다음으로 넘기지 않는다(실행 전/후 정리).
+    assert store.turns == {}
+    for session_id in sessions:
+        assert store.cleared.count(session_id) == 2
+
+
+def test_isolated_sessions_differ_between_runs(tmp_path, monkeypatch):
+    """이력 TTL 안에 같은 평가를 다시 돌려도 실행 간 이력이 섞이지 않는다."""
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 2)
+
+    first = _run_response_eval(dataset, monkeypatch, _FakeConversationStore(), session_mode="isolated")
+    second = _run_response_eval(dataset, monkeypatch, _FakeConversationStore(), session_mode="isolated")
+
+    assert first["run"]["run_id"] != second["run"]["run_id"]
+    assert not set(row["session_id"] for row in first["cases"]) & set(
+        row["session_id"] for row in second["cases"]
+    )
+
+
+def test_shared_mode_reproduces_cross_case_contamination(tmp_path, monkeypatch):
+    """격리 이전 동작 재현 — 2번째 케이스부터 앞 케이스의 이력을 본다."""
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 3)
+    store = _FakeConversationStore()
+
+    report = _run_response_eval(dataset, monkeypatch, store, session_mode="shared")
+
+    assert {row["session_id"] for row in report["cases"]} == {
+        response_eval.LEGACY_SHARED_SESSION_ID
+    }
+    assert [row["history_len_before"] for row in report["cases"]] == [0, 1, 2]
+    assert report["metrics"]["contaminated_cases"] == 2
+    assert store.cleared == [], "shared 모드는 이력을 지우지 않는다"
+
+
+def test_run_records_session_isolation_conditions(tmp_path, monkeypatch):
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+
+    report = _run_response_eval(dataset, monkeypatch, _FakeConversationStore(), session_mode="isolated")
+
+    assert report["run"]["session_mode"] == "isolated"
+    assert report["run"]["run_id"]
+    assert "conversation_enabled" in report["run"]
+    assert "conversation_ttl_seconds" in report["run"]
+
+
+def test_run_rejects_unknown_session_mode(tmp_path, monkeypatch):
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+
+    with pytest.raises(ValueError, match="session_mode"):
+        _run_response_eval(dataset, monkeypatch, _FakeConversationStore(), session_mode="nope")
+
+
 def test_response_run_records_reproducibility_metadata(tmp_path, monkeypatch):
     dataset = tmp_path / "dataset.jsonl"
     dataset.write_text(
