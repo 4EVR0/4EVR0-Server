@@ -55,7 +55,10 @@ from eval.eval_utils import (  # noqa: E402
 )
 
 JUDGE_PROMPT_NAME = "response_judge"
-DEFAULT_GEN_PROMPT = "recommend_response"  # 평가 대상 응답 생성 프롬프트(--gen-prompt로 교체)
+# 평가 대상 응답 생성 프롬프트. 기준선은 **운영이 실제로 쓰는 프롬프트**를 측정해야 하므로
+# settings.gen_prompt_name을 따른다(고정 문자열로 두면 운영 기본이 바뀌어도 평가가 따라가지
+# 않는다). 과거 버전과 비교할 때만 --gen-prompt로 명시 지정한다.
+DEFAULT_GEN_PROMPT = settings.gen_prompt_name
 DIMS = ["concern_fit", "grounding", "conciseness", "korean_quality", "format_adherence"]
 DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
 
@@ -373,6 +376,10 @@ async def run(
         "generator_temperature": gen_temperature,
         "gen_prompt": gen_prompt,
         "gen_prompt_version": prompt_version(gen_prompt),
+        # 운영 기본 프롬프트와 같은 것을 평가했는지 — 다르면 이 리포트는 기준선이 아니다.
+        "service_gen_prompt": settings.gen_prompt_name,
+        "service_gen_prompt_version": prompt_version(settings.gen_prompt_name),
+        "matches_service_prompt": gen_prompt == settings.gen_prompt_name,
         "judge_model": judge_config.model,
         "judge_base_url": judge_config.base_url,
         "judge_temperature": 0,
@@ -410,6 +417,10 @@ def print_summary(report: dict) -> None:
     print(f"  n={r['n_cases']} (scored {r['n_scored']})")
     session_note = "" if r.get("session_mode") == "isolated" else "  ⚠️ 케이스 간 이력 공유"
     print(f"  session_mode={r.get('session_mode')}  run_id={r.get('run_id')}{session_note}")
+    if r.get("matches_service_prompt") is False:
+        print(f"  ⚠️ 운영 기본 프롬프트가 아님 — 운영={r.get('service_gen_prompt')} "
+              f"({r.get('service_gen_prompt_version')}), 평가={r.get('gen_prompt')} "
+              f"({r.get('gen_prompt_version')})")
     print("─" * 60)
     for d in DIMS:
         if f"resp_{d}" in m:
@@ -477,7 +488,7 @@ def main():
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--gen-prompt", default=DEFAULT_GEN_PROMPT,
-                    help="응답 생성 프롬프트 이름 (예: recommend_response.v2)")
+                    help=f"응답 생성 프롬프트 이름 (기본: 운영과 동일한 {DEFAULT_GEN_PROMPT})")
     ap.add_argument("--gen-temperature", type=float, default=0.0,
                     help="재현성을 위해 기본 0.0 (운영값 재현 시 명시적으로 변경)")
     ap.add_argument("--judge-model", default=None,

@@ -236,6 +236,50 @@ def test_shared_mode_reproduces_cross_case_contamination(tmp_path, monkeypatch):
     assert store.cleared == [], "shared 모드는 이력을 지우지 않는다"
 
 
+def test_eval_default_prompt_follows_service_setting():
+    """기준선은 운영이 실제로 쓰는 프롬프트를 측정해야 한다."""
+    assert response_eval.DEFAULT_GEN_PROMPT == settings.gen_prompt_name
+
+
+def test_run_flags_prompt_mismatch_with_service(tmp_path, monkeypatch):
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+    store = _FakeConversationStore()
+
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        return SimpleNamespace(ingredients=[], products=[], response_text="응답")
+
+    async def fake_judge(*_args):
+        return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", lambda _config: object())
+    monkeypatch.setattr(response_eval, "judge_response", fake_judge)
+    config = response_eval.JudgeConfig(
+        model="external/judge", base_url="https://judge.example/v1",
+        api_key="secret", timeout_seconds=30,
+    )
+
+    def _run(gen_prompt):
+        return asyncio.run(
+            response_eval.run(dataset, None, gen_prompt, config,
+                              bootstrap_samples=50, seed=23, session_mode="isolated")
+        )
+
+    same = _run(settings.gen_prompt_name)
+    assert same["run"]["matches_service_prompt"] is True
+
+    other = "recommend_response"  # 운영 기본이 아닌 과거 버전
+    assert other != settings.gen_prompt_name
+    differing = _run(other)
+    assert differing["run"]["matches_service_prompt"] is False
+    assert differing["run"]["service_gen_prompt"] == settings.gen_prompt_name
+    assert (
+        differing["run"]["service_gen_prompt_version"]
+        != differing["run"]["gen_prompt_version"]
+    )
+
+
 def test_run_records_session_isolation_conditions(tmp_path, monkeypatch):
     dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
 
