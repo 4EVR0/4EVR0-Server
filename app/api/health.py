@@ -71,8 +71,10 @@ async def _check_llm() -> str:
     url = settings.gpu_server_url.rstrip("/")
     base_url = url if url.endswith("/v1") else f"{url}/v1"
     try:
+        # 서빙 앞단에 인증 프록시가 있으면 토큰 없이는 401 → 준비됐는데도 error로 오판한다.
+        headers = {"Authorization": f"Bearer {settings.gpu_api_key}"}
         async with httpx.AsyncClient(timeout=settings.llm_health_timeout_seconds) as client:
-            resp = await client.get(f"{base_url}/models")
+            resp = await client.get(f"{base_url}/models", headers=headers)
         if resp.status_code == 200:
             return "ok"
         logger.warning("vLLM readiness ping returned HTTP %d", resp.status_code)
