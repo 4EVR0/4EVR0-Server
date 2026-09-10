@@ -17,17 +17,5 @@ Dimensions:
 - format_adherence: Does it follow the intended format (brief concern analysis → recommended products
   with reasons → optional usage tips) and AVOID dumping a raw list of ingredient names at the end?
 
-When [Provided products] is "(없음)" — no products were retrieved:
-  Declining to name products is the CORRECT behaviour, not a defect. Score as follows.
-  - grounding: 5 if the response names NO specific product and makes no unsupported factual claim.
-    Naming ANY specific brand or product here is fabrication — score 1.
-    General, clearly-hedged ingredient guidance ("look for ceramides on the label") is acceptable and is NOT a deduction.
-  - format_adherence: judge the format it can follow (concern analysis, explanation, guidance).
-    Do NOT deduct merely because a product section is absent or empty.
-  - concern_fit: judge whether it usefully responds to the user given that no data was available
-    (e.g. explains the limitation, asks for more detail, or gives safe general guidance).
-    Do NOT deduct merely for the absence of product names.
-  Never reward a response for inventing products to fill the gap.
-
 Return JSON only (no markdown):
 {"concern_fit": 0, "grounding": 0, "conciseness": 0, "korean_quality": 0, "format_adherence": 0, "comment": "one short reason in Korean"}

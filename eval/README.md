@@ -76,6 +76,37 @@ service. Reports record `service_gen_prompt`, `service_gen_prompt_version`, and
 `matches_service_prompt`; the summary prints a warning when they diverge. Pass
 `--gen-prompt` explicitly only to compare against an older version.
 
+### Changing the rubric
+
+Editing `response_judge.txt` changes what the scores mean, so `judge_prompt_version`
+is recorded in every report and old rubrics are kept as `response_judge.v1.txt` etc.
+
+Do not measure a rubric change by re-running the whole evaluation: vLLM is not fully
+deterministic even at temperature 0, so the responses change too and the score delta
+mixes both effects. Re-score the **stored** responses instead:
+
+```bash
+python eval/rejudge.py --report eval/results/<report>.json \
+  --judge-prompt response_judge --judge-repeats 3 --out eval/results/<report>-rejudged.json
+
+python eval/rejudge.py --compare eval/results/<report>.json eval/results/<report>-rejudged.json
+```
+
+`rejudge.py` needs no GPU and no Neo4j — it reuses each case's saved `response` and
+`evidence`, so the only thing that varies is the rubric. `--compare` prints the
+per-dimension delta and every case whose score moved.
+
+### Deterministic checks
+
+Not everything belongs in the rubric. Hanja (漢字) leakage is checked with a regex
+and reported as `hanja_leak_cases` / `hanja_leak_rate`, independent of judge scores.
+
+This was a measured decision, not a preference. Adding a "penalize Chinese characters"
+clause to `korean_quality` moved scores the wrong way: the three cases that actually
+leaked went **up** (+0.33) while clean cases went **down** (−0.16). The judge does not
+detect it reliably; a regex does, exactly. Prefer a deterministic check whenever the
+property is mechanically decidable.
+
 ## Judge validation
 
 A judge score is not evidence until the judge itself has been checked. Two

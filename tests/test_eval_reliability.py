@@ -236,6 +236,74 @@ def test_shared_mode_reproduces_cross_case_contamination(tmp_path, monkeypatch):
     assert store.cleared == [], "shared 모드는 이력을 지우지 않는다"
 
 
+def test_hanja_detection_is_deterministic():
+    """한자 누출은 judge가 아니라 정규식으로 잡는다.
+
+    루브릭에 한자 감점 조항을 넣어 측정했더니 정작 누출된 케이스의 korean_quality가 오르고
+    (+0.33) 멀쩡한 케이스가 내려갔다(-0.16). judge에 맡기지 않는 이유를 테스트로 남긴다.
+    """
+    assert response_eval.find_hanja("피부 수분을牢牢히 잡아") == ["牢"]
+    assert set(response_eval.find_hanja("您需求的")) == {"您", "需", "求", "的"}
+    assert response_eval.find_hanja("순수 한글 응답입니다") == []
+    assert response_eval.find_hanja("영문 mixed 표기 OK") == []
+    assert response_eval.find_hanja(None) == []
+    # 중복 제거 + 정렬
+    assert response_eval.find_hanja("修护 修护") == ["修", "护"]
+
+
+def test_judge_rubric_defines_the_no_products_case():
+    """'추천 0건'이 정의돼 있지 않으면 judge가 정직한 거절을 날조와 같은 1점으로 채점한다."""
+    from app.prompts import load_prompt
+
+    rubric = load_prompt(response_eval.JUDGE_PROMPT_NAME)
+
+    assert "(없음)" in rubric, "제품 없음 상태를 루브릭이 명시해야 한다"
+    assert "fabrication" in rubric.lower()
+    # 거절을 감점하지 말라는 지시와, 지어내면 최저점이라는 지시가 모두 있어야 한다.
+    assert "Do NOT deduct" in rubric
+    assert "score 1" in rubric
+
+
+def test_report_records_hanja_leaks(tmp_path, monkeypatch):
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 2)
+    store = _FakeConversationStore()
+    texts = iter(["피부 수분을牢牢히 잡아줍니다", "순수 한글 응답입니다"])
+
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        return SimpleNamespace(ingredients=[], products=[], response_text=next(texts))
+
+    async def fake_judge(*_args):
+        return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", lambda _config: object())
+    monkeypatch.setattr(response_eval, "judge_response", fake_judge)
+    config = response_eval.JudgeConfig(model="external/judge", base_url="https://judge.example/v1",
+                                       api_key="secret", timeout_seconds=30)
+
+    report = asyncio.run(
+        response_eval.run(dataset, None, response_eval.DEFAULT_GEN_PROMPT, config,
+                          bootstrap_samples=50, seed=23, session_mode="isolated")
+    )
+
+    assert report["cases"][0]["hanja"] == ["牢"]
+    assert report["cases"][1]["hanja"] == []
+    assert report["metrics"]["hanja_leak_cases"] == 1
+    assert report["metrics"]["hanja_leak_rate"] == 0.5
+
+
+def test_run_records_judge_prompt_used(tmp_path, monkeypatch):
+    """루브릭을 바꾸면 점수 의미가 바뀌므로 어떤 루브릭으로 채점했는지 남아야 한다."""
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+
+    report = _run_response_eval(dataset, monkeypatch, _FakeConversationStore(),
+                                session_mode="isolated")
+
+    assert report["run"]["judge_prompt"] == response_eval.JUDGE_PROMPT_NAME
+    assert report["run"]["judge_prompt_version"]
+
+
 def test_report_stores_evidence_context_for_human_labeling(tmp_path, monkeypatch):
     """사람 라벨러가 judge와 같은 근거를 보고 채점하려면 리포트에 근거가 남아야 한다."""
     from app.schemas.recommend import IngredientResult, ProductResult

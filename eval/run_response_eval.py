@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -54,7 +55,7 @@ from eval.eval_utils import (  # noqa: E402
     spearman_correlation,
 )
 
-JUDGE_PROMPT_NAME = "response_judge"
+JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과거 버전 지정 가능)
 # 평가 대상 응답 생성 프롬프트. 기준선은 **운영이 실제로 쓰는 프롬프트**를 측정해야 하므로
 # settings.gen_prompt_name을 따른다(고정 문자열로 두면 운영 기본이 바뀌어도 평가가 따라가지
 # 않는다). 과거 버전과 비교할 때만 --gen-prompt로 명시 지정한다.
@@ -67,6 +68,17 @@ DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
 #   shared   — 전 케이스가 한 session_id 공유(격리 도입 이전 동작). 오염 영향 측정용으로만 사용.
 SESSION_MODES = ("isolated", "shared")
 LEGACY_SHARED_SESSION_ID = "eval-response"  # shared 모드가 재현하는 기존 세션 ID
+
+# 한자(Hanja/漢字) 누출 — 응답은 순한글이어야 한다.
+# LLM judge에 맡기지 않는 이유: 루브릭에 한자 감점 조항을 넣어 측정해 봤더니 정작 누출된
+# 케이스의 korean_quality는 오르고(+0.33) 멀쩡한 케이스가 내려갔다(-0.16). judge는 이걸
+# 신뢰성 있게 못 잡는다. 정규식은 100% 정확하므로 결정적 검사로 분리한다.
+HANJA_PATTERN = re.compile(r"[一-鿿]")
+
+
+def find_hanja(text: str | None) -> list[str]:
+    """응답에 섞인 한자 목록(중복 제거·정렬). 없으면 빈 리스트."""
+    return sorted(set(HANJA_PATTERN.findall(text or "")))
 
 
 @dataclass(frozen=True)
@@ -161,9 +173,12 @@ def render_evidence_context(ingredients, products) -> dict[str, str]:
     return {"ingredients": ing_lines, "products": prod_lines}
 
 
-async def judge_response(client, model, message, ingredients, products, response, judge_prompt) -> dict:
-    """응답을 심판 LLM에게 채점받아 dict 반환."""
-    evidence = render_evidence_context(ingredients, products)
+async def judge_with_evidence(client, model, message, evidence, response, judge_prompt) -> dict:
+    """이미 조립된 근거 컨텍스트로 채점.
+
+    리포트에 저장된 evidence만으로 재채점할 수 있어야 루브릭 변경 효과를 생성 비결정성과
+    분리해 측정할 수 있다(같은 응답을 다른 루브릭으로 다시 채점 — eval/rejudge.py).
+    """
     content = (
         f"[User message]\n{message}\n\n"
         f"[Provided ingredients]\n{evidence['ingredients']}\n\n"
@@ -192,6 +207,15 @@ async def judge_response(client, model, message, ingredients, products, response
         raise ValueError(f"judge response is missing numeric scores: {missing_scores}")
     scores["comment"] = str(data.get("comment", ""))[:200]
     return scores
+
+
+async def judge_response(client, model, message, ingredients, products, response, judge_prompt) -> dict:
+    """추천 결과 객체로부터 근거 컨텍스트를 조립해 채점."""
+    return await judge_with_evidence(
+        client, model, message,
+        render_evidence_context(ingredients, products),
+        response, judge_prompt,
+    )
 
 
 def load_human_scores(path: Path) -> dict[int | str, dict[str, float]]:
@@ -260,6 +284,7 @@ async def run(
     seed: int = 23,
     human_labels_path: Path | None = None,
     session_mode: str = "isolated",
+    judge_prompt_name: str = JUDGE_PROMPT_NAME,
 ) -> dict:
     cases = load_dataset(dataset_path)
     if limit:
@@ -272,7 +297,7 @@ async def run(
         raise ValueError(f"session_mode must be one of {SESSION_MODES}")
     settings.gen_temperature = gen_temperature
     client = build_judge_client(judge_config)
-    judge_prompt = load_prompt(JUDGE_PROMPT_NAME)
+    judge_prompt = load_prompt(judge_prompt_name)
 
     # 실행 ID — isolated 모드의 session_id 네임스페이스. 이력 TTL(기본 2h) 안에 같은 평가를
     # 여러 번 돌려도 실행 간 이력이 섞이지 않도록 실행마다 새로 만든다.
@@ -351,6 +376,8 @@ async def run(
             "response": rec.response_text,
             # 사람 라벨러가 judge와 같은 근거를 보고 채점할 수 있도록 함께 저장.
             "evidence": render_evidence_context(rec.ingredients, rec.products),
+            # 결정적 검사 — judge 점수와 독립적으로 집계한다.
+            "hanja": find_hanja(rec.response_text),
         })
         results.append(row)
         _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
@@ -378,6 +405,9 @@ async def run(
         round(statistics.mean(repeat_stddevs), 4) if repeat_stddevs else 0.0
     )
     # 이전 대화 이력이 남은 채로 실행된 케이스 — isolated 모드에서는 0이어야 한다.
+    hanja_cases = [row for row in results if row.get("hanja")]
+    metrics["hanja_leak_cases"] = len(hanja_cases)
+    metrics["hanja_leak_rate"] = round(len(hanja_cases) / scored, 4) if scored else 0.0
     metrics["contaminated_cases"] = contaminated
     metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
 
@@ -396,7 +426,8 @@ async def run(
         "judge_base_url": judge_config.base_url,
         "judge_temperature": 0,
         "judge_repeats": judge_repeats,
-        "judge_prompt_version": prompt_version(JUDGE_PROMPT_NAME),
+        "judge_prompt": judge_prompt_name,
+        "judge_prompt_version": prompt_version(judge_prompt_name),
         "dataset": str(dataset_path),
         "dataset_sha256": file_sha256(dataset_path),
         "n_cases": len(cases),
@@ -449,6 +480,9 @@ def print_summary(report: dict) -> None:
     print(f"  {'에러율':<20} {m['error_rate']}")
     print(f"  {'응답생성 p50':<20} {m.get('gen_latency_p50')}s")
     print(f"  {'judge 반복 표준편차':<20} {m.get('judge_repeat_stddev')}")
+    leaks = m.get("hanja_leak_cases", 0)
+    leak_flag = "" if not leaks else f"  ⚠️ 순한글 위반({m.get('hanja_leak_rate')})"
+    print(f"  {'한자 누출':<20} {leaks}{leak_flag}")
     contaminated = m.get("contaminated_cases", 0)
     flag = "" if not contaminated else f"  ⚠️ 이전 이력 노출({m.get('contamination_rate')})"
     print(f"  {'오염 케이스':<20} {contaminated}{flag}")
@@ -516,6 +550,8 @@ def main():
                     help="생성기와 동일한 judge 사용을 명시적으로 허용")
     ap.add_argument("--human-labels", default=None,
                     help="전문가 점수 JSONL; judge-vs-human MAE/상관 산출")
+    ap.add_argument("--judge-prompt", default=JUDGE_PROMPT_NAME,
+                    help=f"채점 루브릭 이름 (기본 {JUDGE_PROMPT_NAME}; 과거 루브릭 비교 시 response_judge.v1)")
     ap.add_argument("--session-mode", choices=SESSION_MODES, default="isolated",
                     help="isolated=케이스별 세션 격리(기본), shared=격리 이전 동작 재현(오염 영향 측정용)")
     ap.add_argument("--bootstrap-samples", type=int, default=2_000)
@@ -544,6 +580,7 @@ def main():
                 seed=args.seed,
                 human_labels_path=Path(args.human_labels) if args.human_labels else None,
                 session_mode=args.session_mode,
+                judge_prompt_name=args.judge_prompt,
             )
         )
     except ValueError as exc:
