@@ -236,6 +236,44 @@ def test_shared_mode_reproduces_cross_case_contamination(tmp_path, monkeypatch):
     assert store.cleared == [], "shared 모드는 이력을 지우지 않는다"
 
 
+def test_report_stores_evidence_context_for_human_labeling(tmp_path, monkeypatch):
+    """사람 라벨러가 judge와 같은 근거를 보고 채점하려면 리포트에 근거가 남아야 한다."""
+    from app.schemas.recommend import IngredientResult, ProductResult
+
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+    store = _FakeConversationStore()
+    ingredient = IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드",
+                                  claim="피지 조절", eligibility_tier="A", paper_ref="p1")
+    product = ProductResult(product_id="P1", product_name="테스트 세럼", brand="브랜드",
+                            category="세럼", matched_count=1,
+                            matched_ingredients=["NIACINAMIDE"])
+
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        return SimpleNamespace(ingredients=[ingredient], products=[product],
+                               response_text="추천 응답")
+
+    async def fake_judge(*_args):
+        return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", lambda _config: object())
+    monkeypatch.setattr(response_eval, "judge_response", fake_judge)
+    config = response_eval.JudgeConfig(model="external/judge", base_url="https://judge.example/v1",
+                                       api_key="secret", timeout_seconds=30)
+
+    report = asyncio.run(
+        response_eval.run(dataset, None, response_eval.DEFAULT_GEN_PROMPT, config,
+                          bootstrap_samples=50, seed=23, session_mode="isolated")
+    )
+
+    evidence = report["cases"][0]["evidence"]
+    assert "NIACINAMIDE" in evidence["ingredients"]
+    assert "테스트 세럼" in evidence["products"]
+    # judge에게 준 것과 같은 문자열이어야 한다.
+    assert evidence == response_eval.render_evidence_context([ingredient], [product])
+
+
 def test_eval_default_prompt_follows_service_setting():
     """기준선은 운영이 실제로 쓰는 프롬프트를 측정해야 한다."""
     assert response_eval.DEFAULT_GEN_PROMPT == settings.gen_prompt_name

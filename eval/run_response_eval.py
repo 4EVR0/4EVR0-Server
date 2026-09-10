@@ -124,11 +124,15 @@ def build_judge_client(config: JudgeConfig) -> openai.AsyncOpenAI:
     )
 
 
-async def judge_response(client, model, message, ingredients, products, response, judge_prompt) -> dict:
-    """응답을 심판 LLM에게 채점받아 dict 반환.
+def render_evidence_context(ingredients, products) -> dict[str, str]:
+    """채점자에게 보여줄 근거 컨텍스트(제공된 성분·제품)를 문자열로 조립.
 
     심판에게 생성기와 '동일한' 근거 컨텍스트(근거 수준·제품 핵심성분)를 줘야 grounding을
     공정하게 채점한다. 안 주면 응답의 '논문 근거 N건' 인용을 검증 못 해 hallucination으로 오판한다.
+    잘림 규칙(성분 10개·제품별 핵심성분 3개)은 생성기(_compose_user_content)와 맞춘다.
+
+    LLM judge와 사람 라벨러가 **같은 근거**를 보도록 리포트에도 이 결과를 저장한다
+    (judge-vs-human 비교가 성립하려면 채점 입력이 같아야 한다).
     """
     ingredient_by_name = {ingredient.name: ingredient for ingredient in ingredients}
     ing_lines = "\n".join(
@@ -154,10 +158,16 @@ async def judge_response(client, model, message, ingredients, products, response
         f"- [{p.category}] {p.brand} {p.product_name} (핵심성분: {_annotate(p.matched_ingredients)})"
         for p in products
     ) or "(없음)"
+    return {"ingredients": ing_lines, "products": prod_lines}
+
+
+async def judge_response(client, model, message, ingredients, products, response, judge_prompt) -> dict:
+    """응답을 심판 LLM에게 채점받아 dict 반환."""
+    evidence = render_evidence_context(ingredients, products)
     content = (
         f"[User message]\n{message}\n\n"
-        f"[Provided ingredients]\n{ing_lines}\n\n"
-        f"[Provided products]\n{prod_lines}\n\n"
+        f"[Provided ingredients]\n{evidence['ingredients']}\n\n"
+        f"[Provided products]\n{evidence['products']}\n\n"
         f"[Assistant response]\n{response}"
     )
     resp = await client.chat.completions.create(
@@ -339,6 +349,8 @@ async def run(
             "comment": scores["comment"],
             "n_products": len(rec.products), "n_ingredients": len(rec.ingredients),
             "response": rec.response_text,
+            # 사람 라벨러가 judge와 같은 근거를 보고 채점할 수 있도록 함께 저장.
+            "evidence": render_evidence_context(rec.ingredients, rec.products),
         })
         results.append(row)
         _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
