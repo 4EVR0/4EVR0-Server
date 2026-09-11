@@ -38,16 +38,116 @@ Each report records:
 - generator/judge temperatures and prompt hashes;
 - dataset SHA-256, sample count, bootstrap seed, and 95% confidence intervals;
 - repeated-judge standard deviation;
-- case-level responses and scores.
+- run ID, session mode, and the number of contaminated cases;
+- case-level responses, scores, session IDs, and pre-run history lengths.
 
-To calibrate the external judge against independently labeled expert scores:
+### Session isolation
+
+Every case runs under its own `eval-{run_id}-{case_id}` session, and its
+conversation history is cleared before and after the case. This matters because
+`recommend()` loads the session history first: with a shared session, a later case
+can be classified as a follow-up question, which **skips retrieval entirely** and
+answers from the *previous case's* products
+(`recommend_service._handle_followup`). Disabling the response cache does not
+prevent this — conversation history lives in a separate Redis key with its own TTL
+(default 2h), so re-running an evaluation within that window could also inherit the
+previous run's history.
+
+Reports expose `metrics.contaminated_cases` — the number of cases that started with
+non-empty history. It must be `0` for an isolated run.
+
+`--session-mode shared` reproduces the pre-isolation behavior. Use it only to
+measure the impact of contamination, never to produce a baseline:
 
 ```bash
+# Contamination impact (A/B on the same dataset and judge)
+python eval/run_response_eval.py --session-mode shared    --out eval/results/shared.json
+python eval/run_response_eval.py --session-mode isolated  --out eval/results/isolated.json
+```
+
+Multi-turn scenarios will need turns to share one session on purpose; that is a
+separate mode from the per-case isolation described here.
+
+### Prompt under evaluation
+
+`--gen-prompt` defaults to `settings.gen_prompt_name`, i.e. the prompt production
+actually serves. A baseline measured with any other prompt does not describe the
+service. Reports record `service_gen_prompt`, `service_gen_prompt_version`, and
+`matches_service_prompt`; the summary prints a warning when they diverge. Pass
+`--gen-prompt` explicitly only to compare against an older version.
+
+### Changing the rubric
+
+Editing `response_judge.txt` changes what the scores mean, so `judge_prompt_version`
+is recorded in every report and old rubrics are kept as `response_judge.v1.txt` etc.
+
+Do not measure a rubric change by re-running the whole evaluation: vLLM is not fully
+deterministic even at temperature 0, so the responses change too and the score delta
+mixes both effects. Re-score the **stored** responses instead:
+
+```bash
+python eval/rejudge.py --report eval/results/<report>.json \
+  --judge-prompt response_judge --judge-repeats 3 --out eval/results/<report>-rejudged.json
+
+python eval/rejudge.py --compare eval/results/<report>.json eval/results/<report>-rejudged.json
+```
+
+`rejudge.py` needs no GPU and no Neo4j — it reuses each case's saved `response` and
+`evidence`, so the only thing that varies is the rubric. `--compare` prints the
+per-dimension delta and every case whose score moved.
+
+### Deterministic checks
+
+Not everything belongs in the rubric. Hanja (漢字) leakage is checked with a regex
+and reported as `hanja_leak_cases` / `hanja_leak_rate`, independent of judge scores.
+
+This was a measured decision, not a preference. Adding a "penalize Chinese characters"
+clause to `korean_quality` moved scores the wrong way: the three cases that actually
+leaked went **up** (+0.33) while clean cases went **down** (−0.16). The judge does not
+detect it reliably; a regex does, exactly. Prefer a deterministic check whenever the
+property is mechanically decidable.
+
+## Judge validation
+
+A judge score is not evidence until the judge itself has been checked. Two
+independent checks are supported.
+
+**Judge self-consistency** — `--judge-repeats 3` scores each response three times
+and reports `judge_repeat_stddev`. This is the noise floor: score differences
+smaller than it must not be read as regressions.
+
+**Judge vs. human** — collect blind human labels first, then calibrate:
+
+```bash
+# 1. Label 40 sampled responses without seeing judge scores.
+python eval/label_responses.py \
+  --report eval/results/<report>.json --labeler <name> --sample 40
+
+# 2. (Optional) A second labeler on the same sample — same --sample and --seed.
+python eval/label_responses.py \
+  --report eval/results/<report>.json --labeler <other> --sample 40
+
+# 3. Inter-labeler agreement — the ceiling any judge can realistically reach.
+python eval/label_responses.py \
+  --agreement eval/labels/<name>.jsonl eval/labels/<other>.jsonl
+
+# 4. Judge vs. human.
 python eval/run_response_eval.py \
-  --human-labels eval/human_labels.jsonl \
+  --human-labels eval/labels/<name>.jsonl \
   --out eval/results/calibrated.json
 ```
 
-The output includes judge-vs-human MAE, Pearson correlation, and Spearman
-correlation globally and per rubric dimension. Human label format and review rules
-are documented in `LABELING.md`.
+The calibrated output includes judge-vs-human MAE, Pearson correlation, and
+Spearman correlation globally and per rubric dimension.
+
+`label_responses.py` never prints judge scores or comments — labeling against a
+visible model score inflates agreement. It shows the same evidence context and the
+same rubric (extracted from `response_judge.txt`) that the judge receives, samples
+without reference to judge scores, shuffles presentation order, and appends after
+each case so an interrupted session resumes with the same command. Human label
+format and review rules are documented in `LABELING.md`.
+
+Reports store each case's `evidence` — the rendered ingredient and product context
+handed to the judge. Labelers need it to score `grounding` at all; reports produced
+before this field existed can still be labeled, but grounding is not assessable
+from them.

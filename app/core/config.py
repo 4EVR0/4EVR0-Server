@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
     gpu_timeout_seconds: int = 60
+    # 서빙 엔드포인트 인증 토큰. 자체 vLLM은 인증이 없어 기본 "EMPTY"면 충분하지만,
+    # 프록시(예: vast.ai Instance Portal의 Caddy)가 앞단에 붙으면 이 값이 필요하다.
+    # Authorization: Bearer <값> 으로 전달된다(OpenAI SDK 기본 동작).
+    gpu_api_key: str = "EMPTY"
     # /health의 llm 상태 판정용 vLLM /v1/models 핑 타임아웃(초). LB 헬스체크 주기 안에
     # 끝나야 하므로 요청 타임아웃(gpu_timeout_seconds)보다 훨씬 짧게.
     llm_health_timeout_seconds: float = 3.0
