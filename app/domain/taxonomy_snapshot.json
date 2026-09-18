@@ -1,0 +1,452 @@
+{
+  "_generated_from": "GraphRAG_Pipeline/db/seed/taxonomy.yaml",
+  "default_categories": [
+    "크림",
+    "세럼",
+    "앰플",
+    "에센스",
+    "로션",
+    "토너",
+    "미스트",
+    "올인원"
+  ],
+  "concerns": {
+    "ACNE": {
+      "effects": [
+        "ANTI_INFLAMMATORY",
+        "SEBUM_REGULATION",
+        "KERATOLYTIC",
+        "COMEDOLYTIC",
+        "ANTIMICROBIAL"
+      ],
+      "categories": [
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "필링스크럽"
+      ]
+    },
+    "COMEDONES": {
+      "effects": [
+        "KERATOLYTIC",
+        "COMEDOLYTIC",
+        "SEBUM_REGULATION"
+      ],
+      "categories": [
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "PORE_CONGESTION": {
+      "effects": [
+        "KERATOLYTIC",
+        "COMEDOLYTIC",
+        "SEBUM_REGULATION"
+      ],
+      "categories": [
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "ENLARGED_PORES": {
+      "effects": [
+        "SEBUM_REGULATION",
+        "KERATOLYTIC"
+      ],
+      "categories": [
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "OILY_SKIN": {
+      "effects": [
+        "SEBUM_REGULATION",
+        "ANTI_INFLAMMATORY"
+      ],
+      "categories": [
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "SENSITIVE_SKIN": {
+      "effects": [
+        "SOOTHING",
+        "ANTI_INFLAMMATORY",
+        "BARRIER_REPAIR",
+        "HYDRATING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "REDNESS": {
+      "effects": [
+        "ANTI_INFLAMMATORY",
+        "SOOTHING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "IRRITATED_SKIN": {
+      "effects": [
+        "ANTI_INFLAMMATORY",
+        "SOOTHING",
+        "BARRIER_REPAIR"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "ATOPIC_PRONE": {
+      "effects": [
+        "ANTI_INFLAMMATORY",
+        "SOOTHING",
+        "BARRIER_REPAIR",
+        "HYDRATING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "ROSACEA_PRONE": {
+      "effects": [
+        "ANTI_INFLAMMATORY",
+        "SOOTHING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "DRY_SKIN": {
+      "effects": [
+        "HYDRATING",
+        "MOISTURE_RETENTION",
+        "BARRIER_REPAIR"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "페이스오일"
+      ]
+    },
+    "DEHYDRATED_SKIN": {
+      "effects": [
+        "HYDRATING",
+        "MOISTURE_RETENTION"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "페이스오일"
+      ]
+    },
+    "FLAKY_SKIN": {
+      "effects": [
+        "HYDRATING",
+        "KERATOLYTIC",
+        "MOISTURE_RETENTION"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "페이스오일",
+        "필링스크럽"
+      ]
+    },
+    "ROUGH_TEXTURE": {
+      "effects": [
+        "KERATOLYTIC",
+        "MOISTURE_RETENTION"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "필링스크럽"
+      ]
+    },
+    "BARRIER_DAMAGE": {
+      "effects": [
+        "BARRIER_REPAIR",
+        "HYDRATING",
+        "MOISTURE_RETENTION",
+        "SOOTHING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원",
+        "페이스오일"
+      ]
+    },
+    "HYPERPIGMENTATION": {
+      "effects": [
+        "DEPIGMENTING",
+        "BRIGHTENING",
+        "ANTI_INFLAMMATORY"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "DULLNESS": {
+      "effects": [
+        "BRIGHTENING",
+        "DEPIGMENTING",
+        "KERATOLYTIC",
+        "ANTIOXIDANT"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "UNEVEN_SKIN_TONE": {
+      "effects": [
+        "BRIGHTENING",
+        "DEPIGMENTING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "BLEMISHES": {
+      "effects": [
+        "DEPIGMENTING",
+        "BRIGHTENING",
+        "WOUND_HEALING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "POST_ACNE_MARKS": {
+      "effects": [
+        "DEPIGMENTING",
+        "BRIGHTENING",
+        "WOUND_HEALING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "DARK_CIRCLES": {
+      "effects": [
+        "DEPIGMENTING",
+        "BRIGHTENING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "SUNBURN": {
+      "effects": [
+        "PHOTOPROTECTIVE",
+        "ANTIOXIDANT",
+        "SOOTHING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "AGING_SIGNS": {
+      "effects": [
+        "ANTI_AGING",
+        "ANTIOXIDANT"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "WRINKLES": {
+      "effects": [
+        "ANTI_AGING",
+        "HYDRATING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "LOSS_OF_ELASTICITY": {
+      "effects": [
+        "ANTI_AGING",
+        "MOISTURE_RETENTION"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    },
+    "SAGGING_SKIN": {
+      "effects": [
+        "ANTI_AGING"
+      ],
+      "categories": [
+        "크림",
+        "세럼",
+        "앰플",
+        "에센스",
+        "로션",
+        "토너",
+        "미스트",
+        "올인원"
+      ]
+    }
+  }
+}

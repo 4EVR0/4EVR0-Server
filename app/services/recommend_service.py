@@ -11,33 +11,19 @@ from app.core import metrics
 from app.core.config import settings
 from app.domain.enums import Concern
 from app.prompts import load_prompt
-from app.repositories import recommend_cache
+from app.repositories import recommend_cache, taxonomy_repository
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 
-# concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
-_LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
-_CONCERN_CATEGORY_MAP: dict[Concern, list[str]] = {
-    Concern.ACNE:            [c for c in _LEAVE_ON if c != "크림"] + ["필링스크럽"],
-    Concern.COMEDONES:       [c for c in _LEAVE_ON if c != "크림"],
-    Concern.PORE_CONGESTION: [c for c in _LEAVE_ON if c != "크림"],
-    Concern.ENLARGED_PORES:  [c for c in _LEAVE_ON if c != "크림"],
-    Concern.OILY_SKIN:       [c for c in _LEAVE_ON if c != "크림"],
-    Concern.FLAKY_SKIN:      _LEAVE_ON + ["페이스오일", "필링스크럽"],
-    Concern.ROUGH_TEXTURE:   _LEAVE_ON + ["필링스크럽"],
-    Concern.DRY_SKIN:        _LEAVE_ON + ["페이스오일"],
-    Concern.DEHYDRATED_SKIN: _LEAVE_ON + ["페이스오일"],
-    Concern.BARRIER_DAMAGE:  _LEAVE_ON + ["페이스오일"],
-}
-# 위에 없는 concern은 _LEAVE_ON을 기본값으로 사용
-
-
+# concern별 적합 제품 카테고리는 그래프(Concern.appropriate_categories)가 단일
+# 진실 원천 — taxonomy_repository 경유 조회. 수정은 taxonomy.yaml에서.
 def _appropriate_categories(concerns: list[Concern]) -> list[str]:
     """복수 concern의 교집합 카테고리를 반환한다 (가장 제한적인 조건 적용)."""
+    default = taxonomy_repository.get_default_categories()
     if not concerns:
-        return _LEAVE_ON
-    sets = [set(_CONCERN_CATEGORY_MAP.get(c, _LEAVE_ON)) for c in concerns]
+        return default
+    sets = [set(taxonomy_repository.get_categories_for(c)) for c in concerns]
     intersection = sets[0].intersection(*sets[1:])
-    return list(intersection) if intersection else _LEAVE_ON
+    return list(intersection) if intersection else default
 
 logger = logging.getLogger(__name__)
 

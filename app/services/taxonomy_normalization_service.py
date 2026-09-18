@@ -1,4 +1,5 @@
 from app.domain.enums import SkinType, Concern, Effect, Constraint
+from app.repositories import taxonomy_repository
 
 # 피부 타입 동의어
 _SKIN_TYPE_SYNONYMS: dict[str, SkinType] = {
@@ -175,137 +176,6 @@ _CONSTRAINT_SYNONYMS: dict[str, Constraint] = {
     "ewg그린": Constraint.EWG_GREEN,
 }
 
-# concern → 자동 추론 effect 매핑
-# DB Effect 코드 기준 (15개): ANTI_INFLAMMATORY, SOOTHING, BARRIER_REPAIR, HYDRATING,
-# MOISTURE_RETENTION, SEBUM_REGULATION, ANTIMICROBIAL, KERATOLYTIC, COMEDOLYTIC,
-# WOUND_HEALING, DEPIGMENTING, BRIGHTENING, ANTIOXIDANT, PHOTOPROTECTIVE, ANTI_AGING
-CONCERN_EFFECT_MAP: dict[Concern, list[Effect]] = {
-    Concern.ACNE: [
-        Effect.ANTI_INFLAMMATORY,
-        Effect.SEBUM_REGULATION,
-        Effect.KERATOLYTIC,
-        Effect.COMEDOLYTIC,
-        Effect.ANTIMICROBIAL,
-    ],
-    Concern.COMEDONES: [
-        Effect.KERATOLYTIC,
-        Effect.COMEDOLYTIC,
-        Effect.SEBUM_REGULATION,
-    ],
-    Concern.PORE_CONGESTION: [
-        Effect.KERATOLYTIC,
-        Effect.COMEDOLYTIC,
-        Effect.SEBUM_REGULATION,
-    ],
-    Concern.ENLARGED_PORES: [
-        Effect.SEBUM_REGULATION,
-        Effect.KERATOLYTIC,
-    ],
-    Concern.OILY_SKIN: [
-        Effect.SEBUM_REGULATION,
-        Effect.ANTI_INFLAMMATORY,
-    ],
-    Concern.SENSITIVE_SKIN: [
-        Effect.SOOTHING,
-        Effect.ANTI_INFLAMMATORY,
-        Effect.BARRIER_REPAIR,
-        Effect.HYDRATING,
-    ],
-    Concern.REDNESS: [
-        Effect.ANTI_INFLAMMATORY,
-        Effect.SOOTHING,
-    ],
-    Concern.IRRITATED_SKIN: [
-        Effect.ANTI_INFLAMMATORY,
-        Effect.SOOTHING,
-        Effect.BARRIER_REPAIR,
-    ],
-    Concern.ATOPIC_PRONE: [
-        Effect.ANTI_INFLAMMATORY,
-        Effect.SOOTHING,
-        Effect.BARRIER_REPAIR,
-        Effect.HYDRATING,
-    ],
-    Concern.ROSACEA_PRONE: [
-        Effect.ANTI_INFLAMMATORY,
-        Effect.SOOTHING,
-    ],
-    Concern.DRY_SKIN: [
-        Effect.HYDRATING,
-        Effect.MOISTURE_RETENTION,
-        Effect.BARRIER_REPAIR,
-    ],
-    Concern.DEHYDRATED_SKIN: [
-        Effect.HYDRATING,
-        Effect.MOISTURE_RETENTION,
-    ],
-    Concern.FLAKY_SKIN: [
-        Effect.HYDRATING,
-        Effect.KERATOLYTIC,
-        Effect.MOISTURE_RETENTION,
-    ],
-    Concern.ROUGH_TEXTURE: [
-        Effect.KERATOLYTIC,
-        Effect.MOISTURE_RETENTION,
-    ],
-    Concern.BARRIER_DAMAGE: [
-        Effect.BARRIER_REPAIR,
-        Effect.HYDRATING,
-        Effect.MOISTURE_RETENTION,
-        Effect.SOOTHING,
-    ],
-    Concern.HYPERPIGMENTATION: [
-        Effect.DEPIGMENTING,
-        Effect.BRIGHTENING,
-        Effect.ANTI_INFLAMMATORY,
-    ],
-    Concern.DULLNESS: [
-        Effect.BRIGHTENING,
-        Effect.DEPIGMENTING,
-        Effect.KERATOLYTIC,
-        Effect.ANTIOXIDANT,
-    ],
-    Concern.UNEVEN_SKIN_TONE: [
-        Effect.BRIGHTENING,
-        Effect.DEPIGMENTING,
-    ],
-    Concern.BLEMISHES: [
-        Effect.DEPIGMENTING,
-        Effect.BRIGHTENING,
-        Effect.WOUND_HEALING,
-    ],
-    Concern.POST_ACNE_MARKS: [
-        Effect.DEPIGMENTING,
-        Effect.BRIGHTENING,
-        Effect.WOUND_HEALING,
-    ],
-    Concern.DARK_CIRCLES: [
-        Effect.DEPIGMENTING,
-        Effect.BRIGHTENING,
-    ],
-    Concern.SUNBURN: [
-        Effect.PHOTOPROTECTIVE,
-        Effect.ANTIOXIDANT,
-        Effect.SOOTHING,
-    ],
-    Concern.AGING_SIGNS: [
-        Effect.ANTI_AGING,
-        Effect.ANTIOXIDANT,
-    ],
-    Concern.WRINKLES: [
-        Effect.ANTI_AGING,
-        Effect.HYDRATING,
-    ],
-    Concern.LOSS_OF_ELASTICITY: [
-        Effect.ANTI_AGING,
-        Effect.MOISTURE_RETENTION,
-    ],
-    Concern.SAGGING_SKIN: [
-        Effect.ANTI_AGING,
-    ],
-}
-
-
 def normalize_skin_types(text: str) -> list[SkinType]:
     results: list[SkinType] = []
     for keyword, skin_type in _SKIN_TYPE_SYNONYMS.items():
@@ -333,9 +203,15 @@ def normalize_constraints(text: str) -> list[Constraint]:
 
 
 def infer_effects(concerns: list[Concern]) -> list[Effect]:
+    """concern → effect 매핑은 그래프(RELATES_TO)가 단일 진실 원천.
+
+    하드코딩 dict 대신 taxonomy_repository(기동 시 Neo4j 로드, 실패 시
+    taxonomy_snapshot.json 폴백)를 조회한다. taxonomy 수정은
+    GraphRAG_Pipeline/db/seed/taxonomy.yaml 에서.
+    """
     results: list[Effect] = []
     for concern in concerns:
-        for effect in CONCERN_EFFECT_MAP.get(concern, []):
+        for effect in taxonomy_repository.get_effects_for(concern):
             if effect not in results:
                 results.append(effect)
     return results

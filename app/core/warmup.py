@@ -23,7 +23,7 @@ from app.clients import neo4j_client
 from app.clients.llm_factory import get_async_llm_client
 from app.core.config import settings
 from app.core.db import get_pool
-from app.repositories import recommend_cache
+from app.repositories import recommend_cache, taxonomy_repository
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,9 @@ async def run_warmup() -> None:
     for name, coro in (
         ("postgres", _warm_postgres()),
         ("neo4j", neo4j_client.ping()),
+        # taxonomy는 그래프에서 로드(실패 시 snapshot 폴백) — infer_effects 동기
+        # 경로가 폴백 경고 없이 그래프 값을 쓰도록 기동 시점에 채워 둔다.
+        ("taxonomy", taxonomy_repository.load_taxonomy()),
         ("redis", recommend_cache.ping()),
     ):
         try:
