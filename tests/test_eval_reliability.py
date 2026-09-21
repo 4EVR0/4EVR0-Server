@@ -115,7 +115,21 @@ def test_human_calibration_reports_agreement(tmp_path):
     calibration = calibrate_against_humans(judged, load_human_scores(human_path))
 
     assert calibration["n_cases"] == 2
-    assert calibration["overall"] == {"mae": 0.0, "pearson": 1.0, "spearman": 1.0}
+    assert calibration["primary"] == {
+        "dimensions": ["concern_fit", "grounding", "korean_quality"],
+        "judge_mean": 3.0,
+        "human_mean": 3.0,
+        "bias": 0.0,
+        "mae": 0.0,
+        "pearson": 1.0,
+        "spearman": 1.0,
+    }
+    assert calibration["overall"] == {
+        "scope": "all_dimensions_flattened",
+        "mae": 0.0,
+        "pearson": 1.0,
+        "spearman": 1.0,
+    }
 
 
 class _FakeConversationStore:

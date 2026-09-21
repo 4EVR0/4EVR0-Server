@@ -112,11 +112,15 @@ property is mechanically decidable.
 A judge score is not evidence until the judge itself has been checked. Two
 independent checks are supported.
 
-The 2026-09-22 blind calibration of `gpt-4o-mini` with rubric `2e1ea732` failed:
-40 cases produced overall MAE `0.8867`, Pearson `0.0862`, and Spearman `0.0468`.
-Those semantic scores are therefore observability-only and are not used as CI
-pass/fail thresholds. The response gate currently uses deterministic error, Hanja
-leakage, and session-contamination rates. See `P0_VALIDATION.md` for the current status.
+The primary dimensions are `concern_fit`, `grounding`, and `korean_quality`.
+`conciseness` and `format_adherence` are secondary diagnostics because their human
+rubrics were substantially more subjective. In the 2026-09-22 blind calibration of
+`gpt-4o-mini` with rubric `2e1ea732`, the 40-case primary composite had MAE `0.753`,
+Pearson `0.4835`, and Spearman `0.4615`; the judge over-scored it by `0.753` on average.
+This is useful directional signal, but not a calibrated absolute release score.
+Semantic scores are therefore observability-only. The response gate currently uses
+deterministic error, Hanja leakage, and session-contamination rates. See
+`P0_VALIDATION.md` for the current status.
 
 **Judge self-consistency** — `--judge-repeats 3` scores each response three times
 and reports `judge_repeat_stddev`. This is the noise floor: score differences

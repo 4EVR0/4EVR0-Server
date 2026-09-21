@@ -1,5 +1,5 @@
 {
-  "_comment": "품질 회귀 게이트 임계값 (이슈 #41). min=이상, max=이하여야 통과. 응답 의미 점수는 2026-09-22 사람 40건 교정에서 전체 Pearson 0.0862로 실패해 관측 전용이며, 교정된 judge가 나오기 전까지 결정론적 지표만 응답 게이트에 사용한다.",
+  "_comment": "품질 회귀 게이트 임계값 (이슈 #41). min=이상, max=이하여야 통과. 2026-09-22 사람 40건 교정에서 핵심 3축 케이스 평균 Pearson은 0.4835였지만 judge가 평균 0.753점 과대평가했다. 절대점수가 교정되기 전까지 의미 점수는 관측 전용이고 결정론적 지표만 응답 게이트에 사용한다.",
   "_baseline_ref": "AWQ 2026-07-07: overall 4.58, grounding 4.52, format 4.78, concern_f1 0.8409, skin 0.96. bf16 baseline: overall 4.46, grounding 4.55, concern_f1 0.8743.",
   "extraction": {
     "concern_f1":          { "min": 0.83, "label": "concern F1" },

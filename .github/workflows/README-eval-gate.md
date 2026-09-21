@@ -36,9 +36,10 @@ preflight가 vLLM 미도달/모델 불일치를 먼저 잡아준다.
 | 검색 | 제품 0-결과율 | ≤ 0.15 |
 | 검색 | 성분 precision | ≥ 0.40 |
 
-2026-09-22 사람 블라인드 40건에서 기존 Judge의 전체 Pearson은 `0.0862`였다.
-`judge OVERALL`·`grounding`·`format` 점수는 새 루브릭이 사람 holdout을 통과한 뒤에만
-게이트로 복귀시킨다.
+2026-09-22 사람 블라인드 40건에서 핵심 3축 케이스 평균 Pearson은 `0.4835`로
+방향성은 있었지만, Judge가 평균 `+0.753` 과대평가했다. `judge OVERALL`·`grounding` 등
+의미 점수는 새 루브릭의 절대점수 편향이 사람 holdout에서 허용 범위에 들어온 뒤에만
+게이트로 복귀시킨다. 간결성·형식 준수는 주 판정이 아닌 보조 진단값으로 유지한다.
 
 > 임계 조정은 `eval/gate_config.json`만 고치면 됨. 로컬 검증: `python eval/check_gate.py --extraction <j> --response <j>`.
 

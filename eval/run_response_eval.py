@@ -63,6 +63,9 @@ JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과�
 # 않는다). 과거 버전과 비교할 때만 --gen-prompt로 명시 지정한다.
 DEFAULT_GEN_PROMPT = settings.gen_prompt_name
 DIMS = ["concern_fit", "grounding", "conciseness", "korean_quality", "format_adherence"]
+# 제품 품질의 핵심 축. conciseness/format은 스타일 선호와 루브릭 해석 차이가 커서
+# 별도 진단값으로 유지하되, 사람 교정의 주 판정에는 포함하지 않는다.
+PRIMARY_DIMS = ["concern_fit", "grounding", "korean_quality"]
 DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
 
 # 세션 격리 모드.
@@ -257,16 +260,47 @@ def calibrate_against_humans(results: list[dict], human_scores: dict) -> dict:
         all_judge.extend(judge_values)
         all_human.extend(human_values)
         dimensions[dim] = {
+            "judge_mean": round(statistics.mean(judge_values), 4),
+            "human_mean": round(statistics.mean(human_values), 4),
+            "bias": round(statistics.mean(a - b for a, b in zip(judge_values, human_values)), 4),
             "mae": round(statistics.mean(abs(a - b) for a, b in zip(judge_values, human_values)), 4)
             if judge_values else None,
             "pearson": pearson_correlation(judge_values, human_values),
             "spearman": spearman_correlation(judge_values, human_values),
+            "exact_rate": round(
+                sum(a == b for a, b in zip(judge_values, human_values)) / len(judge_values), 4
+            ),
+            "within_one_rate": round(
+                sum(abs(a - b) <= 1 for a, b in zip(judge_values, human_values)) / len(judge_values),
+                4,
+            ),
         }
+
+    # 한 케이스의 핵심 3축 평균끼리 비교한다. 서로 다른 차원의 관측치를 한 배열에
+    # 평탄화하면 차원별 분포 차이가 상관계수를 왜곡하므로 주 판정에는 쓰지 않는다.
+    primary_judge = [
+        statistics.mean(judged[case_id][dim] for dim in PRIMARY_DIMS)
+        for case_id in shared_ids
+    ]
+    primary_human = [
+        statistics.mean(human_scores[case_id][dim] for dim in PRIMARY_DIMS)
+        for case_id in shared_ids
+    ]
     return {
         "n_cases": len(shared_ids),
         "case_ids": shared_ids,
         "dimensions": dimensions,
+        "primary": {
+            "dimensions": PRIMARY_DIMS,
+            "judge_mean": round(statistics.mean(primary_judge), 4),
+            "human_mean": round(statistics.mean(primary_human), 4),
+            "bias": round(statistics.mean(a - b for a, b in zip(primary_judge, primary_human)), 4),
+            "mae": round(statistics.mean(abs(a - b) for a, b in zip(primary_judge, primary_human)), 4),
+            "pearson": pearson_correlation(primary_judge, primary_human),
+            "spearman": spearman_correlation(primary_judge, primary_human),
+        },
         "overall": {
+            "scope": "all_dimensions_flattened",
             "mae": round(statistics.mean(abs(a - b) for a, b in zip(all_judge, all_human)), 4)
             if all_judge else None,
             "pearson": pearson_correlation(all_judge, all_human),

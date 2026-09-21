@@ -33,6 +33,7 @@ from eval.eval_utils import pearson_correlation, spearman_correlation  # noqa: E
 from eval.run_response_eval import (  # noqa: E402
     DIMS,
     JUDGE_PROMPT_NAME,
+    PRIMARY_DIMS,
     calibrate_against_humans,
     load_human_scores,
 )
@@ -278,9 +279,19 @@ def run_calibration(paths: list[str], out: str | None = None) -> int:
             f"{str(values['spearman']):>9}"
         )
     print("─" * 72)
+    primary = calibration["primary"]
+    print(
+        f"  {'핵심 3축 평균':<20} {primary['mae']:>7.3f} {str(primary['pearson']):>9} "
+        f"{str(primary['spearman']):>9}"
+    )
+    print(
+        f"  핵심 축: {', '.join(PRIMARY_DIMS)} / "
+        f"judge 평균 {primary['judge_mean']:.3f}, 사람 평균 {primary['human_mean']:.3f}, "
+        f"편향 {primary['bias']:+.3f}"
+    )
     overall = calibration["overall"]
     print(
-        f"  {'전체':<20} {overall['mae']:>7.3f} {str(overall['pearson']):>9} "
+        f"  참고(5축 평탄화)     {overall['mae']:>7.3f} {str(overall['pearson']):>9} "
         f"{str(overall['spearman']):>9}"
     )
     print("=" * 72)
