@@ -316,6 +316,10 @@
   .typing span:nth-child(2) { animation-delay: 0.2s; }
   .typing span:nth-child(3) { animation-delay: 0.4s; }
   @keyframes pulse { 0%,80%,100%{opacity:0.24;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }
+  /* 생성 중 커서 — 스트리밍이 진행 중임을 시각적으로 알린다. */
+  .stream-caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px;
+                  vertical-align: -0.14em; background: var(--brand); animation: caret 1s steps(2) infinite; }
+  @keyframes caret { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
   .bubble.error { background: rgba(69, 10, 10, 0.82); border-color: rgba(248, 113, 113, 0.38); color: #fecaca; }
 
   #input-area {
@@ -640,7 +644,8 @@
     return buildFallbackDesc(product, ingredients);
   }
 
-  function appendAIBubble(responseText, ingredients, products, modelUsed) {
+  // replaceEl 을 주면 그 자리에 갈아끼운다(스트리밍 중 버블 → 최종 버블).
+  function appendAIBubble(responseText, ingredients, products, modelUsed, replaceEl) {
     if (modelUsed) { badge.textContent = modelUsed; badge.style.display = 'inline-flex'; }
     const hasProducts = !!(products && products.length);
     const { intro, productSection } = splitResponse(responseText);
@@ -714,8 +719,9 @@
         <div class="answer-body">${renderAnswerBody(bodyText, ingredients)}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
-    chat.appendChild(row);
+    if (replaceEl) replaceEl.replaceWith(row); else chat.appendChild(row);
     scrollBottom();
+    return row;
   }
 
   function appendError(msg) {
@@ -726,6 +732,145 @@
       <div class="bubble error">${escHtml(msg)}</div>`;
     chat.appendChild(row);
     scrollBottom();
+  }
+
+  // 사용자가 위로 스크롤해 읽는 중이면 자동 스크롤로 방해하지 않는다.
+  function nearBottom() {
+    return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+  }
+
+  // SSE 한 프레임("event: x\ndata: {...}")을 파싱. 형식이 아니면 null.
+  function parseSSEFrame(frame) {
+    let evt = 'message', data = '';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:'))      evt   = line.slice(6).trim();
+      else if (line.startsWith('data:'))  data += line.slice(5).trim();
+    }
+    if (!data) return null;
+    try { return { evt, payload: JSON.parse(data) }; } catch (e) { return null; }
+  }
+
+  // ── SSE 스트리밍 수신 ─────────────────────────────────────────────────
+  // 백엔드 /api/v1/recommend/stream 이 meta → delta(생성 토큰) → done 순으로 흘려보낸다.
+  //   meta : 검색이 끝나는 즉시(≈2.7s) 성분·제품 카드를 먼저 그린다 → 빈 화면 제거
+  //   delta: 토큰을 이어붙이며 본문을 점진 렌더 (타이핑되듯 보인다)
+  //   done : 최종 텍스트로 한 번 더 그려 제품별 설명(응답 원문 기반)까지 채운다
+  // 스트리밍이 불가능한 환경이면 { fallback: true } 를 던져 일괄 경로로 넘긴다.
+  async function streamRecommend(text) {
+    const res = await fetch('/api/v1/recommend/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ session_id: sessionId, message: text }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      // 404/405 = 스트림 라우트가 없는 배포일 수 있어 일괄 경로로 재시도(같은 오류면 거기서 표시).
+      // 그 외 상태코드는 그대로 사용자에게 알린다(불필요한 중복 요청 방지).
+      if (res.status === 404 || res.status === 405) throw { fallback: true };
+      throw { status: res.status, detail: err.detail };
+    }
+    // 구형 브라우저·중간 프록시가 스트림을 못 주면 기존 경로로.
+    if (!res.body || !(res.headers.get('content-type') || '').includes('text/event-stream')) {
+      throw { fallback: true };
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', acc = '', row = null, bodyEl = null, painting = false, stick = true;
+    let meta = { ingredients: [], products: [], model_used: null };
+
+    const onScroll = () => { stick = nearBottom(); };
+    chat.addEventListener('scroll', onScroll, { passive: true });
+
+    // 토큰마다 innerHTML 을 새로 그리면 낭비 → 프레임당 1회로 묶는다.
+    const paint = () => {
+      if (painting || !bodyEl) return;
+      painting = true;
+      requestAnimationFrame(() => {
+        painting = false;
+        if (!bodyEl) return;
+        // 제품이 있으면 "추천 제품" 이후는 카드가 담당하므로 본문에선 제외.
+        const shown = meta.products.length ? splitResponse(acc).intro : acc;
+        bodyEl.innerHTML = renderAnswerBody(shown, meta.ingredients) + '<span class="stream-caret"></span>';
+        if (stick) scrollBottom();
+      });
+    };
+
+    const finalize = () => {
+      removeTyping();
+      if (row) appendAIBubble(acc, meta.ingredients, meta.products, meta.model_used, row);
+    };
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        // SSE 프레임 구분자는 빈 줄. 마지막 조각은 미완성일 수 있어 버퍼에 남긴다.
+        const frames = buf.split('\n\n');
+        buf = frames.pop();
+
+        for (const frame of frames) {
+          const parsed = parseSSEFrame(frame);
+          if (!parsed) continue;
+          const { evt, payload } = parsed;
+
+          if (evt === 'meta') {
+            meta = {
+              ingredients: payload.ingredients || [],
+              products:    payload.products || [],
+              model_used:  payload.model_used,
+            };
+            removeTyping();
+            // 생성이 시작되기도 전에 카드가 뜬다 — 체감 지연을 줄이는 실체.
+            row    = appendAIBubble('', meta.ingredients, meta.products, meta.model_used);
+            bodyEl = row.querySelector('.answer-body');
+            paint();
+          } else if (evt === 'delta') {
+            acc += payload.text || '';
+            paint();
+          } else if (evt === 'error') {
+            removeTyping();
+            if (row) row.remove();
+            appendError(payload.message || '일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요.');
+            return;
+          } else if (evt === 'done') {
+            finalize();
+            return;
+          }
+        }
+      }
+      // done 없이 스트림이 끊긴 경우: 받은 만큼은 확정 렌더, 아무것도 못 받았으면 폴백.
+      if (row) finalize();
+      else throw { fallback: true };
+    } catch (e) {
+      // 이미 렌더가 시작됐다면 재요청하지 않는다(GPU 중복 호출·버블 중복 방지).
+      if (row) { finalize(); return; }
+      throw (e && (e.fallback || e.status)) ? e : { fallback: true };
+    } finally {
+      chat.removeEventListener('scroll', onScroll);
+    }
+  }
+
+  // 기존 일괄 응답 경로 — 스트리밍이 불가능할 때의 폴백(동작 보장).
+  async function batchRecommend(text) {
+    const res = await fetch('/api/v1/recommend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message: text }),
+    });
+
+    removeTyping();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      appendError(`오류 (${res.status}): ${err.detail || '알 수 없는 오류'}`);
+      return;
+    }
+    const data = await res.json();
+    appendAIBubble(data.response_text, data.ingredients, data.products, data.model_used);
   }
 
   async function send() {
@@ -743,24 +888,19 @@
     appendTyping();
 
     try {
-      const res  = await fetch('/api/v1/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
-      });
-
-      removeTyping();
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        appendError(`오류 (${res.status}): ${err.detail || '알 수 없는 오류'}`);
-      } else {
-        const data = await res.json();
-        appendAIBubble(data.response_text, data.ingredients, data.products, data.model_used);
-      }
+      await streamRecommend(text);
     } catch (e) {
-      removeTyping();
-      appendError('서버와 통신 중 오류가 발생했습니다.');
+      if (e && e.status) {
+        removeTyping();
+        appendError(`오류 (${e.status}): ${e.detail || '알 수 없는 오류'}`);
+      } else {
+        try {
+          await batchRecommend(text);
+        } catch (e2) {
+          removeTyping();
+          appendError('서버와 통신 중 오류가 발생했습니다.');
+        }
+      }
     } finally {
       sending = false;
       msgEl.disabled  = false;
