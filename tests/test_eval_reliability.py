@@ -8,6 +8,7 @@ import pytest
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 import eval.run_response_eval as response_eval
+from eval.check_gate import _check_report_code_sha
 from eval.eval_utils import (
     bootstrap_mean_ci,
     load_dataset,
@@ -455,3 +456,15 @@ def test_response_run_records_reproducibility_metadata(tmp_path, monkeypatch):
     assert report["run"]["judge_model"] == "external/judge"
     assert report["run"]["generator_temperature"] == 0
     assert report["run"]["dataset_sha256"]
+    assert report["run"]["code_sha"]
+
+
+def test_gate_rejects_report_from_another_commit(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"run": {"code_sha": "old-sha"}, "metrics": {}}))
+
+    mismatch = _check_report_code_sha(str(report), "current-sha")
+    match = _check_report_code_sha(str(report), "old-sha")
+
+    assert mismatch["pass"] is False
+    assert match["pass"] is True

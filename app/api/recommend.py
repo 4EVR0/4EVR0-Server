@@ -18,7 +18,7 @@ async def recommend_endpoint(body: RecommendRequest):
 
 @router.post("/stream")
 async def recommend_stream_endpoint(body: RecommendRequest):
-    """SSE 스트리밍 추천 — meta(구조 데이터 즉시) → delta(생성 토큰) → done. 체감 latency(TTFT) 단축."""
+    """SSE 추천 — meta(구조 데이터 즉시) → delta(검증된 본문) → done."""
     if not await conversation_repository.session_exists(body.session_id):
         raise HTTPException(status_code=404, detail="session not found")
     return StreamingResponse(

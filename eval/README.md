@@ -131,10 +131,11 @@ python eval/label_responses.py \
 python eval/label_responses.py \
   --agreement eval/labels/<name>.jsonl eval/labels/<other>.jsonl
 
-# 4. Judge vs. human.
-python eval/run_response_eval.py \
-  --human-labels eval/labels/<name>.jsonl \
-  --out eval/results/calibrated.json
+# 4. Judge vs. human. Compare against the exact stored responses that were labeled;
+#    do not generate a new run whose wording may differ.
+python eval/label_responses.py \
+  --calibrate eval/results/<report>.json eval/labels/<name>.jsonl \
+  --calibration-out eval/results/<report>-human-calibration.json
 ```
 
 The calibrated output includes judge-vs-human MAE, Pearson correlation, and
@@ -151,3 +152,20 @@ Reports store each case's `evidence` — the rendered ingredient and product con
 handed to the judge. Labelers need it to score `grounding` at all; reports produced
 before this field existed can still be labeled, but grounding is not assessable
 from them.
+
+## Multi-turn and transport parity
+
+`multiturn_dataset.jsonl` contains 15 scenarios covering new requests, follow-ups,
+deictic selection, topic changes, and missing history. Run each scenario through
+both the batch and SSE paths:
+
+```bash
+GEN_TEMPERATURE=0 RECOMMEND_CACHE_ENABLED=false PYTHONPATH=. \
+python eval/run_multiturn_eval.py --transport both \
+  --out eval/results/multiturn-v7.json
+```
+
+The report records the code SHA, dataset hash, model, and production prompt version.
+It fails when a follow-up changes the previous product set, the missing-history
+contract breaks, Hanja leaks, a request errors, or batch/SSE return different product
+sets. See `P0_VALIDATION.md` for the fixed human sample and P0 exit criteria.

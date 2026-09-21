@@ -41,7 +41,7 @@ from app.clients.neo4j_client import (  # noqa: E402
     query_ingredients_by_effects,
     query_products_by_ingredients,
 )
-from eval.eval_utils import bootstrap_mean_ci, file_sha256, load_dataset  # noqa: E402
+from eval.eval_utils import bootstrap_mean_ci, file_sha256, git_code_sha, load_dataset  # noqa: E402
 from eval.run_response_eval import build_judge_config, build_judge_client  # noqa: E402
 
 _TOP_INGREDIENTS = 8   # judge에 보낼 성분 상위 수
@@ -178,6 +178,7 @@ async def main_async(args) -> None:
     report = {
         "run": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "code_sha": git_code_sha(),
             "judge_model": jc.model, "dataset": str(dataset_path),
             "dataset_sha256": file_sha256(dataset_path), "n_cases": len(cases), "n_scored": n,
             "product_min_relevance_ratio": settings.product_min_relevance_ratio,

@@ -31,7 +31,7 @@ from app.clients.llm_factory import get_async_llm_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint, SkinType  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
-from eval.eval_utils import load_dataset  # noqa: E402
+from eval.eval_utils import file_sha256, git_code_sha, load_dataset  # noqa: E402
 
 _VALID = {
     "skin_types": {e.value for e in SkinType},
@@ -160,11 +160,13 @@ async def run(dataset_path: Path, limit: int | None, prompt_name: str = DEFAULT_
     }
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_sha": git_code_sha(),
         "model": settings.gpu_model,
         "prompt_name": prompt_name,
         "prompt_version": prompt_version(prompt_name),
         "temperature": 0,
         "dataset": str(dataset_path),
+        "dataset_sha256": file_sha256(dataset_path),
         "n_cases": n,
         "n_scored": scored,
     }

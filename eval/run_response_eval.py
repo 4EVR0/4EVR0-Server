@@ -50,6 +50,7 @@ from app.services.recommend_service import (  # noqa: E402
 from eval.eval_utils import (  # noqa: E402
     bootstrap_mean_ci,
     file_sha256,
+    git_code_sha,
     load_dataset,
     pearson_correlation,
     spearman_correlation,
@@ -413,6 +414,7 @@ async def run(
 
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_sha": git_code_sha(),
         "generator_model": settings.gpu_model,
         "generator_base_url": _normalize_base_url(settings.gpu_server_url),
         "generator_temperature": gen_temperature,
@@ -508,7 +510,7 @@ def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
     run, metrics = report["run"], report["metrics"]
     with mlflow.start_run(run_name=run["timestamp"]):
         parameter_names = (
-            "generator_model", "generator_base_url", "generator_temperature",
+            "code_sha", "generator_model", "generator_base_url", "generator_temperature",
             "gen_prompt", "gen_prompt_version", "judge_model", "judge_base_url",
             "judge_temperature", "judge_repeats", "judge_prompt_version",
             "dataset_sha256", "n_cases", "n_scored", "bootstrap_samples", "bootstrap_seed",

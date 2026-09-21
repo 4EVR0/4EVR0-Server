@@ -1,8 +1,12 @@
 """대화 이력(P1) 순수 로직 유닛 테스트 — Redis 불필요."""
 
+import json
 import unittest
+from unittest import mock
 
 from app.repositories.conversation_store import _key
+from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
+from app.services import recommend_service
 from app.services.recommend_service import (
     _extract_ranking,
     _followup_context,
@@ -92,6 +96,66 @@ class DeicticContextTest(unittest.TestCase):
         context = _followup_context(self._HISTORY, {}, deictic=False)
         self.assertIn("건조한 피부", context)
         self.assertIn("지성 피부", context)
+
+
+class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _conversation_response() -> RecommendResponse:
+        return RecommendResponse(
+            session_id="session-1",
+            turn_id="turn-1",
+            ingredients=[IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드")],
+            products=[ProductResult(
+                product_id="p1",
+                product_name="로션 B",
+                brand="브랜드 B",
+                category="로션",
+                matched_count=1,
+                matched_ingredients=["NIACINAMIDE"],
+            )],
+            response_text="**로션 B**가 더 산뜻해요.",
+            model_used="test-model",
+        )
+
+    @staticmethod
+    def _parse_frame(frame: str) -> tuple[str, dict]:
+        lines = frame.strip().splitlines()
+        event = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
+        data = next(line.removeprefix("data: ") for line in lines if line.startswith("data: "))
+        return event, json.loads(data)
+
+    async def test_batch_and_sse_share_conversation_resolution(self):
+        resolved = self._conversation_response()
+        resolver = mock.AsyncMock(return_value=resolved)
+        with mock.patch.object(recommend_service, "_resolve_conversation_response", resolver):
+            batch = await recommend_service.recommend("session-1", "이 중에서 산뜻한 거")
+            frames = [frame async for frame in recommend_service.recommend_stream(
+                "session-1", "이 중에서 산뜻한 거"
+            )]
+
+        parsed = [self._parse_frame(frame) for frame in frames]
+        self.assertEqual(["meta", "delta", "done"], [event for event, _ in parsed])
+        self.assertEqual(batch.response_text, parsed[1][1]["text"])
+        self.assertEqual(
+            [product.product_name for product in batch.products],
+            [product["product_name"] for product in parsed[0][1]["products"]],
+        )
+        self.assertEqual("conversation", parsed[2][1]["finish_reason"])
+        self.assertEqual(2, resolver.await_count)
+
+    async def test_missing_history_followup_is_same_graceful_response(self):
+        with mock.patch.object(
+            recommend_service.conversation_store,
+            "load_recent",
+            mock.AsyncMock(return_value=[]),
+        ):
+            response = await recommend_service._resolve_conversation_response(
+                "expired-session", "turn-1", "이 중에서 비교해줘"
+            )
+
+        self.assertIsNotNone(response)
+        self.assertEqual([], response.products)
+        self.assertIn("이전 추천 내역을 찾지 못했어요", response.response_text)
 
 
 class _Prod:

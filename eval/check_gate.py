@@ -28,6 +28,17 @@ def _load_metrics(path: str) -> dict:
     return d.get("metrics", d)
 
 
+def _check_report_code_sha(path: str, expected: str) -> dict:
+    report = json.loads(Path(path).read_text())
+    actual = report.get("run", {}).get("code_sha")
+    return {
+        "path": path,
+        "expected": expected,
+        "actual": actual,
+        "pass": actual == expected,
+    }
+
+
 def _check_section(metrics: dict, rules: dict) -> list[dict]:
     """각 지표를 규칙과 비교. rows: [{label, key, value, op, bound, pass}]."""
     rows = []
@@ -70,6 +81,7 @@ def main() -> None:
     ap.add_argument("--retrieval", help="run_retrieval_eval.py 결과 JSON")
     ap.add_argument("--config", default=str(_DEFAULT_CONFIG))
     ap.add_argument("--md-out", help="PR 코멘트용 마크다운 저장 경로")
+    ap.add_argument("--expected-code-sha", help="모든 결과가 이 커밋에서 생성됐는지 검증")
     args = ap.parse_args()
 
     if not (args.extraction or args.response or args.retrieval):
@@ -78,6 +90,25 @@ def main() -> None:
     config = json.loads(Path(args.config).read_text())
     all_rows: list[dict] = []
     sections: list[str] = []
+    metadata_rows: list[dict] = []
+
+    if args.expected_code_sha:
+        for path in (args.extraction, args.response, args.retrieval):
+            if path:
+                metadata_rows.append(_check_report_code_sha(path, args.expected_code_sha))
+        lines = [
+            "**실행 메타데이터**",
+            "",
+            "| 결과 | code SHA | 기대 SHA | 판정 |",
+            "|---|---|---|---|",
+        ]
+        for row in metadata_rows:
+            actual = row["actual"] or "―"
+            mark = "✅" if row["pass"] else "❌"
+            lines.append(
+                f"| {Path(row['path']).name} | `{actual}` | `{row['expected']}` | {mark} |"
+            )
+        sections.append("\n".join(lines))
 
     if args.extraction:
         rows = _check_section(_load_metrics(args.extraction), config["extraction"])
@@ -93,22 +124,29 @@ def main() -> None:
         sections.append(_md_table("검색 품질 (RAG precision)", rows))
 
     failed = [r for r in all_rows if not r["pass"]]
+    metadata_failed = [r for r in metadata_rows if not r["pass"]]
     passed = len(all_rows) - len(failed)
-    verdict = "✅ **PASS** — 품질 게이트 통과" if not failed else \
-              f"❌ **FAIL** — {len(failed)}개 지표 미달 → 머지 차단"
+    total_failures = len(failed) + len(metadata_failed)
+    verdict = "✅ **PASS** — 품질 게이트 통과" if not total_failures else \
+              f"❌ **FAIL** — {total_failures}개 항목 미달 → 머지 차단"
 
     md = f"## 품질 회귀 게이트\n\n{verdict}\n\n" + "\n\n".join(s for s in sections if s)
     if failed:
         md += "\n\n**미달 지표:** " + ", ".join(
             f"{r['label']}({'―' if r['value'] is None else f'{r['value']:.4g}'} vs {r['op']} {r['bound']})"
             for r in failed)
+    if metadata_failed:
+        md += "\n\n**실행 SHA 불일치:** " + ", ".join(
+            f"{Path(r['path']).name}({r['actual'] or '―'} != {r['expected']})"
+            for r in metadata_failed
+        )
 
     print(md)
     print(f"\n[gate] {passed}/{len(all_rows)} 통과", file=sys.stderr)
     if args.md_out:
         Path(args.md_out).write_text(md)
 
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if total_failures else 0)
 
 
 if __name__ == "__main__":

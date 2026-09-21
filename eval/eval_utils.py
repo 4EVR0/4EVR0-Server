@@ -7,6 +7,7 @@ import json
 import math
 import random
 import statistics
+import subprocess
 from pathlib import Path
 
 from app.domain.enums import Concern, Constraint, SkinType
@@ -59,6 +60,19 @@ def load_dataset(path: Path) -> list[dict]:
 
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git_code_sha(repo_root: Path | None = None) -> str | None:
+    """Return the exact checked-out commit for report/release traceability."""
+    root = repo_root or Path(__file__).resolve().parent.parent
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def bootstrap_mean_ci(

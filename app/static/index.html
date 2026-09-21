@@ -751,9 +751,9 @@
   }
 
   // ── SSE 스트리밍 수신 ─────────────────────────────────────────────────
-  // 백엔드 /api/v1/recommend/stream 이 meta → delta(생성 토큰) → done 순으로 흘려보낸다.
+  // 백엔드 /api/v1/recommend/stream 이 meta → delta(검증된 본문) → done 순으로 흘려보낸다.
   //   meta : 검색이 끝나는 즉시(≈2.7s) 성분·제품 카드를 먼저 그린다 → 빈 화면 제거
-  //   delta: 토큰을 이어붙이며 본문을 점진 렌더 (타이핑되듯 보인다)
+  //   delta: 한 번 이상의 검증된 본문 조각(현재 서버는 근거 검사 후 한 번에 전송)
   //   done : 최종 텍스트로 한 번 더 그려 제품별 설명(응답 원문 기반)까지 채운다
   // 스트리밍이 불가능한 환경이면 { fallback: true } 를 던져 일괄 경로로 넘긴다.
   async function streamRecommend(text) {

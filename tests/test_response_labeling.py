@@ -194,3 +194,36 @@ def test_agreement_requires_overlapping_cases(tmp_path, capsys):
 
     assert labeling.run_agreement([str(a), str(b)]) == 1
     assert "겹치는 케이스가 없습니다" in capsys.readouterr().out
+
+
+# --- judge-vs-human 동일 리포트 보정 -----------------------------------
+
+def test_calibration_reuses_the_labeled_source_report(tmp_path, capsys):
+    report = _write_report(tmp_path / "report.json", 3)
+    labels = tmp_path / "labels.jsonl"
+    rows = [{
+        "id": i,
+        "scores": {dim: 5 for dim in DIMS},
+        "source_report": "report.json",
+    } for i in (1, 2, 3)]
+    labels.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    out = tmp_path / "calibration.json"
+
+    assert labeling.run_calibration([str(report), str(labels)], str(out)) == 0
+    calibration = json.loads(out.read_text(encoding="utf-8"))
+    assert calibration["n_cases"] == 3
+    assert calibration["overall"]["mae"] == 0
+    assert "공통 케이스: 3건" in capsys.readouterr().out
+
+
+def test_calibration_rejects_labels_from_another_report(tmp_path, capsys):
+    report = _write_report(tmp_path / "report.json", 1)
+    labels = tmp_path / "labels.jsonl"
+    labels.write_text(json.dumps({
+        "id": 1,
+        "scores": {dim: 5 for dim in DIMS},
+        "source_report": "other.json",
+    }), encoding="utf-8")
+
+    assert labeling.run_calibration([str(report), str(labels)]) == 1
+    assert "source_report" in capsys.readouterr().out
