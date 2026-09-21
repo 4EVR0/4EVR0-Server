@@ -1,6 +1,6 @@
 import unittest
 
-from app.domain.enums import Constraint
+from app.domain.enums import Concern, Constraint
 from app.schemas.recommend import IngredientResult, ProductResult
 from app.services.recommend_service import (
     _apply_constraint_evidence_guard,
@@ -8,7 +8,12 @@ from app.services.recommend_service import (
     _build_no_product_response,
     _evidence_label,
     _has_product_grounding_violation,
+    _normalize_consumer_language,
+    _normalize_product_names,
+    _product_display_name,
     _remove_hanja,
+    filter_by_target_concerns,
+    filter_purpose_mismatch,
 )
 
 
@@ -54,6 +59,24 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         self.assertEqual("피 진정에 도움이 돼요", clean)
         self.assertTrue(removed)
         self.assertEqual(("피부 진정", False), _remove_hanja("피부 진정"))
+
+    def test_difficult_or_broken_language_is_normalized(self):
+        self.assertEqual(
+            "피부 속의 피지 분비와 피부 장벽을 살펴보세요.",
+            _normalize_consumer_language("피부 심부의 지분 분비와 피장벽을 살펴보세요."),
+        )
+
+    def test_brand_is_rendered_only_once(self):
+        self.assertEqual("미샤 비타씨 앰플", _product_display_name("미샤", "미샤 비타씨 앰플"))
+        self.assertEqual("미샤 비타씨 앰플", _product_display_name("미샤", "비타씨 앰플"))
+        product = ProductResult(
+            product_id="p1", product_name="미샤 비타씨 앰플", brand="미샤",
+            category="앰플", matched_count=1, matched_ingredients=["NIACINAMIDE"],
+        )
+        self.assertEqual(
+            "미샤 비타씨 앰플을 추천합니다.",
+            _normalize_product_names("미샤 미샤 비타씨 앰플을 추천합니다.", [product]),
+        )
 
     def test_unverified_product_constraints_clear_candidates(self):
         products = [{"product_id": "p1"}]
@@ -103,6 +126,36 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         response = _build_grounded_product_response(ingredients, products)
         self.assertIn("세라마이드엔피", response)
         self.assertNotIn("비즈왉스", response)
+
+    def test_grounded_fallback_does_not_repeat_brand(self):
+        ingredients = [IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드")]
+        products = [ProductResult(
+            product_id="p1", product_name="미샤 비타씨 앰플", brand="미샤",
+            category="앰플", matched_count=1, matched_ingredients=["NIACINAMIDE"],
+        )]
+        response = _build_grounded_product_response(ingredients, products)
+        self.assertIn("미샤 비타씨 앰플", response)
+        self.assertNotIn("미샤 미샤", response)
+
+
+class ProductPurposeFilterTest(unittest.TestCase):
+    def test_name_mismatch_is_not_restored_when_all_products_fail(self):
+        products = [{"product_name": "기미 잡티 앰플"}]
+        self.assertEqual([], filter_purpose_mismatch(products, [Concern.ACNE]))
+
+    def test_labeled_target_mismatch_is_not_restored(self):
+        products = [{"product_id": "known", "product_name": "모공 탄력 앰플"}]
+        from app.services import recommend_service
+
+        original = recommend_service._PRODUCT_CONCERNS
+        recommend_service._PRODUCT_CONCERNS = {"known": ["ENLARGED_PORES"]}
+        try:
+            self.assertEqual(
+                [],
+                filter_by_target_concerns(products, [Concern.SENSITIVE_SKIN]),
+            )
+        finally:
+            recommend_service._PRODUCT_CONCERNS = original
 
 
 if __name__ == "__main__":

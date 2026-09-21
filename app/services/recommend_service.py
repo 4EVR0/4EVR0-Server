@@ -153,9 +153,12 @@ def _purpose_mismatch(product_name: str, concerns: list[Concern]) -> bool:
 
 
 def filter_purpose_mismatch(products: list[dict], concerns: list[Concern]) -> list[dict]:
-    """목적-불일치 제품을 걸러낸다. 전부 걸러지면(과필터) 원본 유지(제품 0개 방지)."""
-    kept = [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
-    return kept if kept else products
+    """목적-불일치 제품을 걸러낸다.
+
+    전부 탈락해도 원본을 되살리지 않는다. 제품이 없는 것이 피부 고민과 맞지 않는
+    제품을 내보내는 것보다 안전하다.
+    """
+    return [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
 
 
 # ── 제품 목적 필터 (데이터 기반, 이슈 #56) ────────────────────────────────
@@ -188,7 +191,7 @@ def _concern_groups(concern_codes) -> set[str]:
 
 def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> list[dict]:
     """제품의 타겟 고민 그룹이 요청 고민 그룹과 겹치는 제품만 남긴다.
-    라벨 없는 제품은 이름 휴리스틱 폴백. 전부 걸러지면 원본 유지(제품 0개 방지)."""
+    라벨 없는 제품은 이름 휴리스틱 폴백. 전부 걸러지면 빈 결과를 유지한다."""
     q_groups = _concern_groups(c.value for c in concerns)
     if not q_groups or not _PRODUCT_CONCERNS:
         return filter_purpose_mismatch(products, concerns)
@@ -200,7 +203,7 @@ def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> 
                 kept.append(p)
         elif _concern_groups(labels) & q_groups:  # 그룹 겹침
             kept.append(p)
-    return kept if kept else products
+    return kept
 
 
 async def select_products(message: str, concerns: list[Concern],
@@ -276,6 +279,58 @@ def _remove_hanja(text: str) -> tuple[str, bool]:
     """
     cleaned = _HANJA_OUTPUT_PATTERN.sub("", text)
     return cleaned, cleaned != text
+
+
+_PLAIN_LANGUAGE_REPLACEMENTS = {
+    "피부 심부": "피부 속",
+    "심부 피부": "피부 속",
+    "심부": "피부 속",
+    "피장벽": "피부 장벽",
+    "피분비": "피지 분비",
+    "지분 분비": "피지 분비",
+    "지분 조절": "피지 조절",
+}
+
+
+def _normalize_consumer_language(text: str) -> str:
+    """모델이 만든 어려운 용어와 반복적으로 관측된 오타를 소비자 표현으로 바꾼다."""
+    for source, target in _PLAIN_LANGUAGE_REPLACEMENTS.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _product_display_name(brand: str | None, product_name: str | None) -> str:
+    """상품명에 브랜드가 이미 포함되어 있으면 한 번만 표시한다."""
+    brand = (brand or "").strip()
+    product_name = (product_name or "").strip()
+    if not brand:
+        return product_name
+    if not product_name:
+        return brand
+    if product_name.casefold().startswith(brand.casefold()):
+        return product_name
+    return f"{brand} {product_name}"
+
+
+def _normalize_product_names(text: str, products: list[ProductResult]) -> str:
+    """`미샤 미샤 ...`처럼 브랜드를 필드와 상품명에서 중복 조립한 출력을 정리한다."""
+    for product in products:
+        raw = f"{(product.brand or '').strip()} {(product.product_name or '').strip()}".strip()
+        display = _product_display_name(product.brand, product.product_name)
+        if raw and raw != display:
+            text = text.replace(raw, display)
+    return text
+
+
+def _normalize_response_text(
+    text: str,
+    products: list[ProductResult],
+) -> tuple[str, bool]:
+    """클라이언트에 보내기 전 한자·어려운 표현·브랜드 중복을 한곳에서 정리한다."""
+    text, hanja_removed = _remove_hanja(text)
+    text = _normalize_consumer_language(text)
+    text = _normalize_product_names(text, products)
+    return text, hanja_removed
 
 
 def _apply_constraint_evidence_guard(
@@ -389,7 +444,7 @@ def _build_grounded_product_response(
             matched_names.append(_ingredient_display_name(item) if item else name)
         matched_text = ", ".join(matched_names) or "제공된 매칭 성분"
         lines.append(
-            f"- [{product.category}] {product.brand} {product.product_name}: "
+            f"- [{product.category}] {_product_display_name(product.brand, product.product_name)}: "
             f"{matched_text}이 제품 데이터에서 확인됩니다."
         )
     return "\n".join(lines)
@@ -686,16 +741,16 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     except Exception:
         metrics.recommend_requests_total.labels(status="error").inc()
         raise
-    response_text, hanja_removed = _remove_hanja(response_text)
-    if hanja_removed:
-        metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
-    metrics.recommend_requests_total.labels(status="ok").inc()
     # LLM이 최종 추천 순위 마커를 냈으면 그 순서로 카드 재정렬(없으면 원래 순서 폴백).
     response_text, ranking = _extract_ranking(response_text)
     # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
     last = next((t for t in reversed(history) if t.get("products")), None)
     products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])),
                                    ranking, response_text)
+    response_text, hanja_removed = _normalize_response_text(response_text, products)
+    if hanja_removed:
+        metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+    metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
     ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     await _store_turn(session_id, message, products, response_text, None)
@@ -839,7 +894,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 response_text = await _build_llm_response(message, ingredients, products, system_prompt)
             else:
                 response_text = _build_no_product_response(ingredients, constraints)
-            response_text, hanja_removed = _remove_hanja(response_text)
+            response_text, hanja_removed = _normalize_response_text(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             if products and _has_product_grounding_violation(response_text, ingredients, products):
@@ -978,7 +1033,7 @@ def _compose_user_content(
             return ", ".join(annotated)
 
         def _product_line(p: ProductResult) -> str:
-            base = (f"- [{p.category}] {p.brand} {p.product_name} "
+            base = (f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
                     f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
             note = _review_note(p)
             return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
@@ -1022,7 +1077,9 @@ async def _build_llm_response(
     except Exception as exc:
         logger.warning("LLM response generation failed: %s", exc)
         if products:
-            prod_names = ", ".join(f"{p.brand} {p.product_name}" for p in products[:3])
+            prod_names = ", ".join(
+                _product_display_name(p.brand, p.product_name) for p in products[:3]
+            )
             return f"피부 고민 분석 결과, 다음 제품들을 추천드립니다: {prod_names}"
         if ingredients:
             names = ", ".join(_ingredient_display_name(i) for i in ingredients[:5])
@@ -1195,6 +1252,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 response_text = "".join(chunks)
                 spans["generate_ttft"] = ttft if ttft is not None else gen_total
                 spans["generate_decode"] = gen_total - spans["generate_ttft"]
+                response_text = _normalize_consumer_language(response_text)
+                response_text = _normalize_product_names(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             if products and _has_product_grounding_violation(response_text, ingredients, products):

@@ -63,9 +63,11 @@
 | 동시 처리량(8스트림) | 254 tok/s | **572 tok/s** | **2.25×** |
 | 가중치 VRAM | 17.7GB | 5.3GB | −70% |
 | 최대 동시성 @32K ctx | ~2.3× | **10.3×** | KV 캐시 4.4× |
-| **품질 게이트(judge OVERALL)** | 4.46 | **4.58** (grounding 유지) | ✅ 통과 |
+| 당시 자동 Judge OVERALL(참고) | 4.46 | **4.58** (grounding 유지) | 사람 교정 전 측정 |
 
-→ **채택.** 트레이드오프는 TTFT +19%(전체에 묻힘)와 추출 precision 소폭 하락(recall은 상승)뿐.
+→ **서빙 효율 기준으로 채택.** 다만 이후 사람 블라인드 40건에서 기존 Judge의 전체
+Pearson이 `0.0862`로 확인돼, 위 자동 점수는 절대 품질 근거로 사용하지 않는다.
+트레이드오프는 TTFT +19%(전체에 묻힘)와 추출 precision 소폭 하락(recall은 상승)이다.
 
 ### 3. 콜드스타트 — 진단하고 앱·인프라 양면에서 해결 (실측 검증) ⭐
 신규 GPU 대여 시 서버 준비까지의 비용을 실측 분해하고, 두 축으로 해결·검증:
@@ -134,11 +136,11 @@ app/
   schemas/ domain/     # Pydantic 스키마, 도메인 enum
   core/                # 설정, 로깅, 메트릭, 예외 처리, 미들웨어
   static/index.html    # 웹 UI
-eval/                  # 프로필 추출 / 응답 품질(LLM-judge) 평가
+eval/                  # 프로필 추출 / 응답·검색 평가 / 사람 Judge 교정
 tests/                 # pytest 단위 테스트
 ```
 
-프롬프트는 코드에 하드코딩하지 않고 `app/prompts/*.txt`로 분리·버전 관리한다. 추천 응답 프롬프트는 현재 `recommend_response.v4`가 프로덕션 기본이다.
+프롬프트는 코드에 하드코딩하지 않고 `app/prompts/*.txt`로 분리·버전 관리한다. 추천 응답 프롬프트는 현재 `recommend_response.v7`이 프로덕션 기본이다.
 
 ---
 
@@ -216,7 +218,9 @@ JUDGE_MODEL=<external-model> JUDGE_API_KEY=<key> \
 python eval/check_gate.py --extraction <run_eval.json> --response <run_response_eval.json>
 ```
 
-응답 평가는 자기 채점을 거부하며(외부 judge 강제), grounding·conciseness 등 5개 축을 1~5점으로 채점한다.
+응답 평가는 자기 채점을 거부하며(외부 judge 강제), grounding·conciseness 등 5개 축을
+1~5점으로 기록한다. 현재 Judge는 사람 교정을 통과하지 못했으므로 이 의미 점수는 관측용이다.
+CI의 응답 게이트는 에러·한자 누출·세션 오염처럼 결정론적으로 측정되는 지표만 사용한다.
 품질 게이트는 PR에 `run-eval` 라벨을 붙이면 self-hosted 러너에서 자동 실행된다
 (`.github/workflows/eval-gate.yml` — 프롬프트·모델·검색 변경의 품질 회귀를 머지 전 차단).
 자세한 내용은 `eval/README.md`, `.github/workflows/README-eval-gate.md` 참고.

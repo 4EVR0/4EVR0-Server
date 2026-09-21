@@ -112,6 +112,12 @@ property is mechanically decidable.
 A judge score is not evidence until the judge itself has been checked. Two
 independent checks are supported.
 
+The 2026-09-22 blind calibration of `gpt-4o-mini` with rubric `2e1ea732` failed:
+40 cases produced overall MAE `0.8867`, Pearson `0.0862`, and Spearman `0.0468`.
+Those semantic scores are therefore observability-only and are not used as CI
+pass/fail thresholds. The response gate currently uses deterministic error, Hanja
+leakage, and session-contamination rates. See `P0_VALIDATION.md` for the current status.
+
 **Judge self-consistency** — `--judge-repeats 3` scores each response three times
 and reports `judge_repeat_stddev`. This is the noise floor: score differences
 smaller than it must not be read as regressions.

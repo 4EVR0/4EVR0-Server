@@ -45,6 +45,7 @@ from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import (  # noqa: E402
     _evidence_label,
     _ingredient_display_name,
+    _product_display_name,
     recommend,
 )
 from eval.eval_utils import (  # noqa: E402
@@ -168,7 +169,8 @@ def render_evidence_context(ingredients, products) -> dict[str, str]:
         return ", ".join(annotated)
 
     prod_lines = "\n".join(
-        f"- [{p.category}] {p.brand} {p.product_name} (핵심성분: {_annotate(p.matched_ingredients)})"
+        f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
+        f"(핵심성분: {_annotate(p.matched_ingredients)})"
         for p in products
     ) or "(없음)"
     return {"ingredients": ing_lines, "products": prod_lines}

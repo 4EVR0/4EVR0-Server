@@ -3,7 +3,17 @@
 이 문서는 `v7-baseline-rubric2.json`의 judge 타당성과 멀티턴 서비스 경로를
 검증하는 재현 절차다.
 
-## 1. 사람 블라인드 채점 40건
+## 현재 판정 (2026-09-22)
+
+- 사람 블라인드 채점: **40/40 완료**
+- 기존 judge 교정: **불합격** — 전체 MAE `0.8867`, Pearson `0.0862`,
+  Spearman `0.0468`; judge 평균 `4.720`, 사람 평균 `4.120`
+- 라이브 멀티턴/신규 단일턴: 원격 vLLM·Neo4j 중단으로 대기
+
+기존 judge 점수는 사람 판단과의 상관이 사실상 없어 릴리스 품질 게이트로 사용하지 않는다.
+상세 결과와 수동 검수 피드백은 `review/2026-09-22-p0-validation-closeout.md`에 기록한다.
+
+## 1. 사람 블라인드 채점 40건 (완료)
 
 - 대상 리포트: `eval/results/v7-baseline-rubric2.json`
 - SHA-256: `4142b2a288b2b140b2cec6ace953660bf2b6e7a1cdbc4fca8fccc7063a191d2a`

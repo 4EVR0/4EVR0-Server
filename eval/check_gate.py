@@ -117,7 +117,7 @@ def main() -> None:
     if args.response:
         rows = _check_section(_load_metrics(args.response), config["response"])
         all_rows += rows
-        sections.append(_md_table("생성 품질 (LLM-judge)", rows))
+        sections.append(_md_table("생성 품질 (결정론적 검사)", rows))
     if args.retrieval:
         rows = _check_section(_load_metrics(args.retrieval), config["retrieval"])
         all_rows += rows
