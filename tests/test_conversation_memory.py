@@ -5,7 +5,9 @@ import unittest
 from app.repositories.conversation_store import _key
 from app.services.recommend_service import (
     _extract_ranking,
+    _followup_context,
     _heuristic_kind,
+    _is_deictic,
     _reorder_by_ranking,
     _slim_products,
 )
@@ -58,6 +60,38 @@ class HeuristicClassifyTest(unittest.TestCase):
     def test_ambiguous_returns_none(self):
         # 후속 큐도 고민 큐도 없으면 None(→ LLM 위임)
         self.assertIsNone(_heuristic_kind("이 제품들 사용 순서 알려줘", self._HIST))
+
+
+class DeicticContextTest(unittest.TestCase):
+    _HISTORY = [
+        {
+            "user": "건조한 피부에 맞는 크림 추천해줘",
+            "assistant": "건조 피부용 추천입니다.",
+            "products": [{"name": "크림 A", "brand": "브랜드 A", "category": "크림"}],
+        },
+        {
+            "user": "지성 피부에 맞는 로션 추천해줘",
+            "assistant": "지성 피부용 추천입니다.",
+            "products": [{"name": "로션 B", "brand": "브랜드 B", "category": "로션"}],
+        },
+    ]
+
+    def test_deictic_cue_detection(self):
+        self.assertTrue(_is_deictic("이 중에서 가장 산뜻한 거"))
+        self.assertTrue(_is_deictic("그것들 차이를 알려줘"))
+        self.assertFalse(_is_deictic("세 제품을 전반적으로 비교해줘"))
+
+    def test_deictic_context_keeps_only_latest_recommendation_turn(self):
+        context = _followup_context(self._HISTORY, {}, deictic=True)
+        self.assertIn("지성 피부", context)
+        self.assertIn("로션 B", context)
+        self.assertNotIn("건조한 피부", context)
+        self.assertNotIn("크림 A", context)
+
+    def test_general_followup_context_keeps_recent_turns(self):
+        context = _followup_context(self._HISTORY, {}, deictic=False)
+        self.assertIn("건조한 피부", context)
+        self.assertIn("지성 피부", context)
 
 
 class _Prod:

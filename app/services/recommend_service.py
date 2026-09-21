@@ -355,6 +355,18 @@ def _has_followup_cue(message: str) -> bool:
     return any(c in message for c in _FOLLOWUP_CUES)
 
 
+# 지시적(deictic) 후속 — "이 중에서/그 중에서/이것들 중"처럼 **직전 추천 세트**를 콕 집어
+# 좁히는 요청. 이런 요청에 옛 턴의 대화 맥락(다른 고민)이 섞이면 필터가 오염된다
+# ("건조" 추천 뒤 "이 중에서 지성용" → 옛 '건조' 맥락이 새면 안 됨). 제품 후보는 이미
+# 직전 턴만 보므로, 생성 컨텍스트의 '이전 대화'도 직전 턴 하나로 한정한다.
+_DEICTIC_CUES = ("그 중", "그중", "이 중", "이중", "저 중", "저중", "중에서",
+                 "이것들", "그것들")
+
+
+def _is_deictic(message: str) -> bool:
+    return any(c in message for c in _DEICTIC_CUES)
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
@@ -433,8 +445,12 @@ def _fmt_ingredient(inci: str, ing_kor: dict[str, str]) -> str:
     return f"{kor} ({inci})" if kor else inci
 
 
-def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
-    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'."""
+def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: bool = False) -> str:
+    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'.
+
+    deictic=True("이 중에서" 류)면 '이전 대화'를 직전 추천 턴 하나로 한정해, 옛 고민이
+    필터에 새는 것을 막는다(제품 후보는 항상 직전 턴만 본다). 아니면 최근 3턴을 맥락으로 준다.
+    """
     lines: list[str] = []
     last = next((t for t in reversed(history) if t.get("products")), None)
     if last and last.get("products"):
@@ -449,7 +465,9 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
             display = name if (brand and brand in name) else f"{brand} {name}".strip()
             lines.append(f"- [{p.get('category', '')}] {display}{rate}{ing_str}")
     lines.append("\n이전 대화:")
-    for turn in history[-3:]:
+    # 지시적 요청은 직전 추천 턴 하나만(옛 고민 차단), 아니면 최근 3턴.
+    recent = [last] if (deictic and last) else history[-3:]
+    for turn in recent:
         if turn.get("user"):
             lines.append(f"사용자: {turn['user']}")
         if turn.get("assistant"):
@@ -515,7 +533,7 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     last = next((t for t in reversed(history) if t.get("products")), None)
     inci_all = {i for p in (last or {}).get("products", []) for i in (p.get("matched_ingredients") or [])}
     ing_kor = await query_ingredient_kor_names(sorted(inci_all))
-    user_content = f"{_followup_context(history, ing_kor)}\n\n현재 질문: {message}"
+    user_content = f"{_followup_context(history, ing_kor, deictic=_is_deictic(message))}\n\n현재 질문: {message}"
     try:
         async with llm_slot():
             client = get_async_llm_client()
