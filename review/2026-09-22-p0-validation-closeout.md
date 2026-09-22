@@ -78,7 +78,7 @@ SSE 본문은 제품-성분 연결 검사 후 전송하기 위해 응답 생성�
 
 ## 5. 현재 검증
 
-- 현재 전체 유닛/계약 테스트: `131 passed`
+- 현재 전체 유닛/계약 테스트: `133 passed`
 - 정적 검사: `py_compile`, `git diff --check` 통과
 - 남은 외부 검증:
   1. vLLM·Neo4j·Redis 연결 후 멀티턴 15개 batch/SSE 실행

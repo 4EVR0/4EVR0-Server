@@ -35,6 +35,32 @@ _REDNESS_SIGNAL = re.compile(
     r"|(?:얼굴|피부).{0,12}(?:빨갛|붉)",
     re.IGNORECASE,
 )
+_EXPLICIT_SENSITIVE_SKIN = re.compile(r"민감|예민|sensitive", re.IGNORECASE)
+_COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
+_OILY_SURFACE_SIGNAL = re.compile(r"T존|티존|겉.{0,8}번들|번들거리|기름지|피지", re.IGNORECASE)
+_INNER_DRY_SIGNAL = re.compile(r"속건조|속.{0,8}당|볼.{0,8}(?:건조|당)", re.IGNORECASE)
+
+
+def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[SkinType]:
+    """Enforce the dataset policy for sensitive and combination skin labels."""
+    normalized = list(skin_types)
+
+    # Disease/symptom or a low-irritation request alone does not establish a
+    # sensitive *skin type*. Keep it only when the user explicitly says so.
+    if SkinType.SENSITIVE in normalized and not _EXPLICIT_SENSITIVE_SKIN.search(message):
+        normalized.remove(SkinType.SENSITIVE)
+
+    # Oily surface/T-zone plus inner or cheek dryness is the direct definition
+    # of combination skin, even when the model emits only OILY or DRY.
+    is_combination = bool(
+        _COMBINATION_SKIN.search(message)
+        or (_OILY_SURFACE_SIGNAL.search(message) and _INNER_DRY_SIGNAL.search(message))
+    )
+    if is_combination:
+        normalized = [item for item in normalized if item not in {SkinType.OILY, SkinType.DRY}]
+        if SkinType.COMBINATION not in normalized:
+            normalized.append(SkinType.COMBINATION)
+    return normalized
 
 
 def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
@@ -82,7 +108,10 @@ async def call_llm(message: str) -> UserProfile:
     raw = response.choices[0].message.content or "{}"
     data = json.loads(raw)
 
-    skin_types = [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_]
+    skin_types = _normalize_skin_types(
+        message,
+        [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_],
+    )
     concerns = _normalize_concerns(
         message,
         [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_],

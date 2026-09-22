@@ -1,5 +1,20 @@
-from app.clients.llm_client import _normalize_concerns
-from app.domain.enums import Concern
+from app.clients.llm_client import _normalize_concerns, _normalize_skin_types
+from app.domain.enums import Concern, SkinType
+
+
+def test_oily_surface_and_inner_dryness_normalize_to_combination():
+    assert _normalize_skin_types(
+        "속건조가 심해서 겉은 번들거리는데 속은 당겨요.", [SkinType.OILY]
+    ) == [SkinType.COMBINATION]
+
+
+def test_sensitive_skin_requires_explicit_skin_type_language():
+    assert _normalize_skin_types(
+        "아토피가 잘 올라오고 가려워서 저자극 제품을 원해요.", [SkinType.SENSITIVE]
+    ) == []
+    assert _normalize_skin_types(
+        "예민한 피부라 새 제품을 쓰기 어려워요.", [SkinType.SENSITIVE]
+    ) == [SkinType.SENSITIVE]
 
 
 def test_oily_t_zone_does_not_imply_enlarged_pores():
