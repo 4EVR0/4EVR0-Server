@@ -137,7 +137,7 @@ class DeterministicOutputGuardTest(unittest.TestCase):
 
     def test_grounded_fallback_mentions_only_matched_ingredients(self):
         ingredients, products = self._ingredient_and_product()
-        response = _build_grounded_product_response(ingredients, products)
+        response = _build_grounded_product_response("피부 장벽이 약하고 건조해요.", ingredients, products)
         self.assertIn("세라마이드엔피", response)
         self.assertNotIn("비즈왉스", response)
 
@@ -147,9 +147,63 @@ class DeterministicOutputGuardTest(unittest.TestCase):
             product_id="p1", product_name="미샤 비타씨 앰플", brand="미샤",
             category="앰플", matched_count=1, matched_ingredients=["NIACINAMIDE"],
         )]
-        response = _build_grounded_product_response(ingredients, products)
+        response = _build_grounded_product_response("피지가 많아요.", ingredients, products)
         self.assertIn("미샤 비타씨 앰플", response)
         self.assertNotIn("미샤 미샤", response)
+
+    def test_grounded_fallback_connects_claims_to_analysis_and_products(self):
+        ingredients = [
+            IngredientResult(
+                name="MANDELIC ACID", kor_name="만델릭애씨드", claim="Keratolytic",
+                eligibility_tier="pubmed_evidence", paper_ref="2",
+            ),
+            IngredientResult(
+                name="NIACINAMIDE", kor_name="나이아신아마이드", claim="Hydrating",
+                eligibility_tier="pubmed_evidence", paper_ref="3",
+            ),
+        ]
+        products = [ProductResult(
+            product_id="p1", product_name="결 케어 세럼", brand="테스트",
+            category="세럼", matched_count=2,
+            matched_ingredients=["MANDELIC ACID", "NIACINAMIDE"],
+        )]
+
+        response = _build_grounded_product_response(
+            "각질이 일어나고 피부결이 거칠어요.", ingredients, products,
+        )
+
+        self.assertIn("각질 관리 및 보습 근거를 함께 살폈습니다", response)
+        self.assertIn("만델릭애씨드 (MANDELIC ACID): 확인된 효능은 각질 관리", response)
+        self.assertIn("근거 수준은 논문 근거 2건입니다", response)
+        self.assertIn("나이아신아마이드의 보습", response)
+        product_line = next(line for line in response.splitlines() if "결 케어 세럼:" in line)
+        self.assertIn("추천 이유는", product_line)
+        self.assertNotIn("논문 근거", product_line)
+        self.assertFalse(_has_product_grounding_violation(response, ingredients, products))
+
+    def test_grounded_fallback_does_not_invent_a_claim_for_unknown_labels(self):
+        ingredients = [IngredientResult(name="UNKNOWN", kor_name="알수없는성분")]
+        products = [ProductResult(
+            product_id="p1", product_name="테스트 크림", brand="테스트",
+            category="크림", matched_count=1, matched_ingredients=["UNKNOWN"],
+        )]
+
+        response = _build_grounded_product_response("피부가 고민이에요.", ingredients, products)
+
+        self.assertIn("제품별 매칭 성분에 따라", response)
+        self.assertIn("제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다", response)
+        self.assertNotIn("논문 근거", response)
+
+    def test_grounded_fallback_sanitizes_the_quoted_user_concern(self):
+        ingredients, products = self._ingredient_and_product()
+
+        response = _build_grounded_product_response(
+            "피肤가\n심부까지 건조해요.", ingredients, products,
+        )
+
+        self.assertNotIn("肤", response)
+        self.assertNotIn("심부", response)
+        self.assertIn("피가 피부 속까지 건조해요", response)
 
 
 class ProductPurposeFilterTest(unittest.TestCase):
