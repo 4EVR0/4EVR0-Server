@@ -424,39 +424,125 @@ def _has_product_grounding_violation(
     return bool(products) and (not in_product_section or not saw_product_bullet)
 
 
+_CLAIM_BENEFIT_PHRASES = {
+    "anti-aging": "탄력·주름 관리",
+    "anti-inflammatory": "피부 진정",
+    "antimicrobial": "항균 관리",
+    "antioxidant": "항산화 관리",
+    "barrier repair": "피부 장벽 회복",
+    "brightening": "피부 톤 개선",
+    "comedolytic": "모공 막힘 관리",
+    "depigmenting": "색소 침착 완화",
+    "hydrating": "보습",
+    "keratolytic": "각질 관리",
+    "moisture retention": "수분 유지",
+    "photoprotective": "자외선 손상 보호",
+    "sebum regulation": "피지 조절",
+    "soothing": "피부 진정",
+    "wound healing": "피부 회복",
+}
+
+
+def _claim_benefit_phrase(ingredient: IngredientResult | None) -> str | None:
+    """그래프의 제한된 효능 라벨을 소비자용 표현으로만 바꾼다."""
+    if not ingredient or not ingredient.claim:
+        return None
+    return _CLAIM_BENEFIT_PHRASES.get(ingredient.claim.strip().casefold())
+
+
+def _join_korean(items: list[str]) -> str:
+    """짧은 한국어 나열을 쉼표와 '및'으로 연결한다."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} 및 {items[-1]}"
+
+
 def _build_grounded_product_response(
+    message: str,
     ingredients: list[IngredientResult],
     products: list[ProductResult],
 ) -> str:
-    """제품-성분 연결 검증에 실패했을 때 사용하는 근거 부분집합 응답."""
+    """제품-성분 연결 검증 실패 시 근거 부분집합으로 유용한 응답을 재구성한다.
+
+    생성 모델의 문장을 수선하지 않고 검색 결과의 구조화 필드만 사용한다. 따라서
+    제품-성분 연결을 새로 추측하지 않으면서도 고민→효능→제품 이유를 보존한다.
+    """
     ingredient_map = {item.name: item for item in ingredients}
-    highlighted: list[str] = []
+    highlighted: list[IngredientResult] = []
+    seen_ingredients: set[str] = set()
+    seen_benefits: set[str] = set()
     for product in products[:3]:
-        for name in product.matched_ingredients[:2]:
+        for name in product.matched_ingredients[:3]:
             item = ingredient_map.get(name)
-            display = _ingredient_display_name(item) if item else name
-            if display not in highlighted:
-                highlighted.append(display)
-    ingredient_text = ", ".join(highlighted[:3]) or "제공된 핵심 성분"
+            benefit = _claim_benefit_phrase(item)
+            benefit_key = benefit or f"unknown:{name}"
+            if item and item.name not in seen_ingredients and benefit_key not in seen_benefits:
+                highlighted.append(item)
+                seen_ingredients.add(item.name)
+                seen_benefits.add(benefit_key)
+    highlighted = highlighted[:4]
+
+    benefits = []
+    for item in highlighted:
+        benefit = _claim_benefit_phrase(item)
+        if benefit and benefit not in benefits:
+            benefits.append(benefit)
+    concern_text, _ = _remove_hanja(message)
+    concern_text = _normalize_consumer_language(" ".join(concern_text.split()))
+    concern_text = concern_text[:80].rstrip(".!?。！？")
+    concern_prefix = f"말씀하신 “{concern_text}”를 기준으로" if concern_text else "말씀하신 피부 고민을 기준으로"
+    if benefits:
+        analysis = f"{concern_prefix} {_join_korean(benefits)} 근거를 함께 살폈습니다."
+    else:
+        analysis = f"{concern_prefix} 제품별 매칭 성분에 따라 추천 후보를 정리했습니다."
+
     lines = [
         "고민 분석",
-        "제공된 근거 데이터 안에서 피부 고민에 관련된 제품을 정리했습니다.",
+        analysis,
         "",
         "성분 설명",
-        f"{ingredient_text}은 각 제품의 제공된 매칭 성분에서 확인됩니다.",
-        "",
-        "추천 제품",
     ]
+    if highlighted:
+        for item in highlighted:
+            display = _ingredient_display_name(item)
+            benefit = _claim_benefit_phrase(item)
+            evidence = _evidence_label(item.eligibility_tier, item.paper_ref)
+            if benefit and evidence != "근거 미상":
+                lines.append(f"- {display}: 확인된 효능은 {benefit}이며, 근거 수준은 {evidence}입니다.")
+            elif benefit:
+                lines.append(f"- {display}: 확인된 효능은 {benefit}이지만, 근거 수준은 확인되지 않습니다.")
+            else:
+                lines.append(f"- {display}: 제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다.")
+    else:
+        lines.append("- 제공된 제품의 매칭 성분만 사용했습니다.")
+
+    lines.extend(["", "추천 제품"])
     for product in products[:3]:
-        matched_names = []
-        for name in product.matched_ingredients[:2]:
+        reasons: list[str] = []
+        matched_names: list[str] = []
+        product_benefits: set[str] = set()
+        for name in product.matched_ingredients[:3]:
             item = ingredient_map.get(name)
-            matched_names.append(_ingredient_display_name(item) if item else name)
-        matched_text = ", ".join(matched_names) or "제공된 매칭 성분"
-        lines.append(
-            f"- [{product.category}] {_product_display_name(product.brand, product.product_name)}: "
-            f"{matched_text}이 제품 데이터에서 확인됩니다."
-        )
+            short_name = (item.kor_name or item.name) if item else name
+            matched_names.append(short_name)
+            benefit = _claim_benefit_phrase(item)
+            if benefit and benefit not in product_benefits:
+                reasons.append(f"{short_name}의 {benefit}")
+                product_benefits.add(benefit)
+        product_name = _product_display_name(product.brand, product.product_name)
+        if reasons:
+            lines.append(
+                f"- [{product.category}] {product_name}: 추천 이유는 "
+                f"{_join_korean(reasons)} 근거입니다."
+            )
+        else:
+            matched_text = _join_korean(matched_names) or "제공된 매칭 성분"
+            lines.append(
+                f"- [{product.category}] {product_name}: 제품 데이터에서 {matched_text}만 "
+                "확인되며, 구체적인 효능 근거는 확인되지 않습니다."
+            )
     return "\n".join(lines)
 
 
@@ -927,7 +1013,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             if products and _has_product_grounding_violation(response_text, ingredients, products):
                 metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
-                response_text = _build_grounded_product_response(ingredients, products)
+                response_text = _build_grounded_product_response(message, ingredients, products)
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -1286,7 +1372,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             if products and _has_product_grounding_violation(response_text, ingredients, products):
                 metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
-                response_text = _build_grounded_product_response(ingredients, products)
+                response_text = _build_grounded_product_response(message, ingredients, products)
             # 제품-성분 연결을 검사한 뒤에만 클라이언트에 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
