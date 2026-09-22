@@ -100,7 +100,13 @@ def _check_product_grounding(
             for product in matched
             for name in (product.get("matched_ingredients") or [])
         }
-        folded = bullet.casefold()
+        # Product names may legitimately contain an ingredient-like token
+        # (e.g. "나이아신아마이드 10 앰플"). It is a name, not an attributed
+        # ingredient claim, so inspect only the explanatory remainder.
+        claim_text = bullet
+        for product in matched:
+            claim_text = claim_text.replace(str(product.get("product_name") or ""), "")
+        folded = claim_text.casefold()
         invalid = sorted({
             canonical
             for canonical, aliases in ingredient_aliases

@@ -194,3 +194,8 @@ The report records the code SHA, dataset hash, model, and production prompt vers
 It fails when a follow-up changes the previous product set, the missing-history
 contract breaks, Hanja leaks, a request errors, or batch/SSE return different product
 sets. See `P0_VALIDATION.md` for the fixed human sample and P0 exit criteria.
+
+Retrieval reports keep the overall `product_zero_rate` for observability, but the
+release gate uses `unexpected_product_zero_rate`. Cases with no product concern, or
+with product-level constraints that the current data cannot verify, are intentional
+refusals and are excluded from that denominator.

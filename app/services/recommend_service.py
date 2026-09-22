@@ -407,7 +407,12 @@ def _has_product_grounding_violation(
             for product in matched
             for name in product.matched_ingredients
         }
-        folded_line = line.casefold()
+        # An ingredient-looking token inside the official product name is not a
+        # generated ingredient claim. Validate only the explanatory remainder.
+        claim_text = line
+        for product in matched:
+            claim_text = claim_text.replace(product.product_name, "")
+        folded_line = claim_text.casefold()
         for inci_name, aliases in ingredient_aliases:
             if any(alias in folded_line for alias in aliases) and inci_name.casefold() not in allowed:
                 return True

@@ -70,13 +70,15 @@ SSE 본문은 제품-성분 연결 검사 후 전송하기 위해 응답 생성�
 - `check_gate.py --expected-code-sha` 가 세 리포트의 SHA와 현재 CI SHA를 비교한다.
 - `run-eval` 라벨이 유지된 PR에 새 커밋이 올라오면 `synchronize` 이벤트로 재실행한다.
 - 절대점수 과대평가가 확인된 `resp_overall`·`grounding`·`format_adherence`는 통과 기준에서 제외하고,
-  응답 게이트는 에러율·한자 누출률·세션 오염률 0만 결정론적으로 검사한다.
+  응답 게이트는 에러율·중앙 Hard gate 실패율·세션 오염률 0만 결정론적으로 검사한다.
   LLM Judge 점수는 새 루브릭이 사람 holdout을 통과할 때까지 관측용으로만 남긴다.
+- 검색 0-결과 게이트는 고민 없음 또는 미검증 제품 제약으로 인한 의도된 거절을 제외한
+  `unexpected_product_zero_rate`를 사용한다. 전체 `product_zero_rate`는 관측용으로 유지한다.
 - GitHub `main` 브랜치 보호 규칙 적용은 외부 설정 변경이므로 별도로 남아 있다.
 
 ## 5. 현재 검증
 
-- 현재 전체 유닛/계약 테스트: `124 passed`
+- 현재 전체 유닛/계약 테스트: `131 passed`
 - 정적 검사: `py_compile`, `git diff --check` 통과
 - 남은 외부 검증:
   1. vLLM·Neo4j·Redis 연결 후 멀티턴 15개 batch/SSE 실행

@@ -67,6 +67,19 @@ def test_unknown_product_and_ingredient_mismatch_fail():
     assert "PRODUCT_INGREDIENT_MISMATCH" in _codes({}, mismatch)
 
 
+def test_ingredient_token_in_official_product_name_is_not_a_claim():
+    response = _response(
+        text="추천 제품\n- 구달 나이아신아마이드 앰플: 글리세린이 확인됩니다.",
+        products=[_product(product_name="나이아신아마이드 앰플")],
+        ingredients=[
+            {"name": "GLYCERIN", "kor_name": "글리세린"},
+            {"name": "NIACINAMIDE", "kor_name": "나이아신아마이드"},
+        ],
+    )
+
+    assert check_response({}, response) == []
+
+
 def test_unverified_constraint_brand_duplication_and_target_mismatch_fail():
     product = _product(product_name="브랜드 모공 탄력 앰플", brand="브랜드")
     response = _response(

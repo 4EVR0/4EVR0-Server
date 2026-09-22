@@ -112,6 +112,16 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         self.assertTrue(_has_product_grounding_violation(invalid, ingredients, products))
         self.assertFalse(_has_product_grounding_violation(valid, ingredients, products))
 
+    def test_ingredient_token_in_official_product_name_is_not_a_claim(self):
+        ingredients = [IngredientResult(name="RETINAL", kor_name="레틴알")]
+        products = [ProductResult(
+            product_id="p1", product_name="아렌시아 레틴알 부스터 샷", brand="아렌시아",
+            category="세럼", matched_count=1, matched_ingredients=["BAKUCHIOL"],
+        )]
+        response = "추천 제품\n- [세럼] 아렌시아 레틴알 부스터 샷: 바쿠치올이 확인됩니다."
+
+        self.assertFalse(_has_product_grounding_violation(response, ingredients, products))
+
     def test_unknown_product_bullet_is_detected(self):
         ingredients, products = self._ingredient_and_product()
         response = "추천 제품\n- [크림] 없는 브랜드 유명 크림을 추천해요."

@@ -28,7 +28,13 @@ Extraction guidelines (read carefully — extract precisely):
      just because flaking/roughness is mentioned (those are FLAKY_SKIN / ROUGH_TEXTURE).
 4. For pigmentation, output only the specific terms mentioned; do not add
    DULLNESS or HYPERPIGMENTATION unless the message indicates dullness/darkening or spots.
-5. skin_types — extract when the message states OR directly describes the skin's nature:
+5. REDNESS means an independent facial redness symptom such as persistent flushing,
+   skin that repeatedly becomes red, rosacea, or 홍조. Do NOT add REDNESS when red only
+   modifies another concern: "붉은 여드름 / 빨갛고 아픈 여드름" → ACNE only;
+   "여드름 뒤 붉은 자국" → POST_ACNE_MARKS only.
+6. ENLARGED_PORES requires an explicit wide/large/visible pore statement. Oily T-zone,
+   oily skin, or combination skin alone never implies ENLARGED_PORES.
+7. skin_types — extract when the message states OR directly describes the skin's nature:
    - "건조하다 / 당긴다 / 건성" → DRY
    - "피지가 많다 / 번들거린다 / 지성" → OILY
    - "복합성 / 수부지 (oily T-zone with dry or tight cheeks)" → COMBINATION
