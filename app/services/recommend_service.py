@@ -289,6 +289,11 @@ _PLAIN_LANGUAGE_REPLACEMENTS = {
     "피분비": "피지 분비",
     "지분 분비": "피지 분비",
     "지분 조절": "피지 조절",
+    "지분을": "피지를",
+    "지분이": "피지가",
+    "지분은": "피지는",
+    "지분과": "피지와",
+    "지분": "피지",
 }
 
 
@@ -726,6 +731,24 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
     # 이전 제품들의 핵심 성분 INCI → 한글명 조회('한글 (INCI)' 표기용).
     last = next((t for t in reversed(history) if t.get("products")), None)
+    if last is None:
+        # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
+        # 넘기지 않는다. 빈 컨텍스트 비교는 제품/성분을 새로 만들기 쉽다.
+        response_text = (
+            "이전 추천에서 조건에 맞는 제품을 찾지 못해 비교할 제품이 없습니다. "
+            "원하시면 제품 조건을 조정하거나 피부 고민을 다시 알려주세요."
+        )
+        metrics.recommend_output_guard_total.labels(kind="followup_without_products").inc()
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, [], response_text, None)
+        return RecommendResponse(
+            session_id=session_id,
+            turn_id=turn_id,
+            ingredients=[],
+            products=[],
+            response_text=response_text,
+            model_used=settings.gpu_model,
+        )
     inci_all = {i for p in (last or {}).get("products", []) for i in (p.get("matched_ingredients") or [])}
     ing_kor = await query_ingredient_kor_names(sorted(inci_all))
     user_content = f"{_followup_context(history, ing_kor, deictic=_is_deictic(message))}\n\n현재 질문: {message}"

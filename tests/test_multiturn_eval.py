@@ -29,6 +29,22 @@ def test_followup_flags_product_set_change():
     assert "FOLLOWUP_PRODUCT_SET_CHANGED" in failures
 
 
+def test_followup_after_safe_zero_product_response_is_allowed():
+    previous = _result([], "조건에 맞는 제품이 없습니다.")
+    current = _result([], "이전 추천에서 조건에 맞는 제품을 찾지 못해 비교할 제품이 없습니다.")
+
+    assert evaluate_turn({"kind": "followup"}, current, previous) == []
+
+
+def test_followup_after_zero_products_must_not_invent_an_answer():
+    previous = _result([], "조건에 맞는 제품이 없습니다.")
+    current = _result([], "아르토닌 성분을 추천합니다.")
+
+    assert "NO_PRODUCT_FOLLOWUP_MESSAGE_ABSENT" in evaluate_turn(
+        {"kind": "followup"}, current, previous
+    )
+
+
 def test_missing_history_contract():
     ok = _result([], "이전 추천 내역을 찾지 못했어요. 다시 알려주세요.")
     assert evaluate_turn({"kind": "missing_history"}, ok, None) == []

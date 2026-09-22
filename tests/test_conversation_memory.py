@@ -157,6 +157,29 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], response.products)
         self.assertIn("이전 추천 내역을 찾지 못했어요", response.response_text)
 
+    async def test_followup_after_zero_product_result_is_deterministic(self):
+        history = [{
+            "user": "민감 피부 제품 추천해줘",
+            "assistant": "조건에 맞는 제품이 없습니다.",
+            "products": [],
+        }]
+        with mock.patch.object(
+            recommend_service,
+            "get_async_llm_client",
+        ) as llm_client, mock.patch.object(
+            recommend_service,
+            "_store_turn",
+            mock.AsyncMock(),
+        ):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "추천 제품을 비교해줘", history
+            )
+
+        llm_client.assert_not_called()
+        self.assertEqual([], response.products)
+        self.assertEqual([], response.ingredients)
+        self.assertIn("비교할 제품이 없습니다", response.response_text)
+
 
 class _Prod:
     def __init__(self, name):

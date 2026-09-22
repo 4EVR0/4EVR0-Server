@@ -16,7 +16,7 @@ from app.domain.enums import Concern
 
 
 HANJA_PATTERN = re.compile(r"[\u4e00-\u9fff]")
-BANNED_CONSUMER_TERMS = ("심부", "피장벽", "피분비", "지분 분비", "지분 조절")
+BANNED_CONSUMER_TERMS = ("심부", "피장벽", "피분비", "지분")
 
 
 @dataclass(frozen=True)

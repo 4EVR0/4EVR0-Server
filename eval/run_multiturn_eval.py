@@ -122,7 +122,10 @@ def evaluate_turn(turn: dict, result: dict, previous: dict | None) -> list[str]:
     if kind == "followup":
         previous_ids = set(product_ids(previous or {}))
         if not previous_ids:
-            failures.append("FOLLOWUP_WITHOUT_PREVIOUS_PRODUCTS")
+            if current_ids:
+                failures.append("FOLLOWUP_WITHOUT_PREVIOUS_PRODUCTS")
+            if "비교할 제품이 없습니다" not in response_text:
+                failures.append("NO_PRODUCT_FOLLOWUP_MESSAGE_ABSENT")
         elif current_ids != previous_ids:
             failures.append("FOLLOWUP_PRODUCT_SET_CHANGED")
     elif kind == "missing_history":

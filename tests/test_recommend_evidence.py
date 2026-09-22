@@ -65,6 +65,10 @@ class DeterministicOutputGuardTest(unittest.TestCase):
             "피부 속의 피지 분비와 피부 장벽을 살펴보세요.",
             _normalize_consumer_language("피부 심부의 지분 분비와 피장벽을 살펴보세요."),
         )
+        self.assertEqual(
+            "수분과 피지를 조절합니다.",
+            _normalize_consumer_language("수분과 지분을 조절합니다."),
+        )
 
     def test_brand_is_rendered_only_once(self):
         self.assertEqual("미샤 비타씨 앰플", _product_display_name("미샤", "미샤 비타씨 앰플"))
