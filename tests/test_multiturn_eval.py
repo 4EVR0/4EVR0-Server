@@ -26,7 +26,7 @@ def test_followup_requires_same_product_set_but_allows_reordering():
 
 def test_followup_flags_product_set_change():
     failures = evaluate_turn({"kind": "followup"}, _result(["b"]), _result(["a", "b"]))
-    assert "followup_product_set_changed" in failures
+    assert "FOLLOWUP_PRODUCT_SET_CHANGED" in failures
 
 
 def test_missing_history_contract():
@@ -36,7 +36,7 @@ def test_missing_history_contract():
 
 def test_hanja_leak_is_deterministic_failure():
     failures = evaluate_turn({"kind": "new"}, _result([], "피肤 응답"), None)
-    assert "hanja_leak" in failures
+    assert "HANJA_LEAK" in failures
 
 
 def test_parse_sse_frame():

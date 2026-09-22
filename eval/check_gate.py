@@ -28,6 +28,31 @@ def _load_metrics(path: str) -> dict:
     return d.get("metrics", d)
 
 
+def _hard_failure_section(path: str) -> str:
+    """Render case-level deterministic failures so a failed PR is actionable."""
+    report = json.loads(Path(path).read_text())
+    rows = []
+    for case in report.get("cases", []):
+        for failure in case.get("hard_failures") or []:
+            code = failure.get("code", "UNKNOWN") if isinstance(failure, dict) else str(failure)
+            detail = failure.get("detail", "") if isinstance(failure, dict) else ""
+            rows.append((case.get("id", "―"), code, detail))
+    if not rows:
+        return ""
+    lines = [
+        "**Hard gate 실패 상세**",
+        "",
+        "| 케이스 | 코드 | 상세 |",
+        "|---|---|---|",
+    ]
+    for case_id, code, detail in rows[:20]:
+        safe_detail = str(detail).replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {case_id} | `{code}` | {safe_detail} |")
+    if len(rows) > 20:
+        lines.append(f"\n상세 {len(rows) - 20}건은 결과 JSON에서 확인하세요.")
+    return "\n".join(lines)
+
+
 def _check_report_code_sha(path: str, expected: str) -> dict:
     report = json.loads(Path(path).read_text())
     actual = report.get("run", {}).get("code_sha")
@@ -118,6 +143,9 @@ def main() -> None:
         rows = _check_section(_load_metrics(args.response), config["response"])
         all_rows += rows
         sections.append(_md_table("생성 품질 (결정론적 검사)", rows))
+        hard_failure_section = _hard_failure_section(args.response)
+        if hard_failure_section:
+            sections.append(hard_failure_section)
     if args.retrieval:
         rows = _check_section(_load_metrics(args.retrieval), config["retrieval"])
         all_rows += rows

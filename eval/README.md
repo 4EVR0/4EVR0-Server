@@ -39,7 +39,8 @@ Each report records:
 - dataset SHA-256, sample count, bootstrap seed, and 95% confidence intervals;
 - repeated-judge standard deviation;
 - run ID, session mode, and the number of contaminated cases;
-- case-level responses, scores, session IDs, and pre-run history lengths.
+- case-level responses, scores, session IDs, pre-run history lengths, and deterministic
+  `hard_failures`.
 
 ### Session isolation
 
@@ -98,8 +99,22 @@ per-dimension delta and every case whose score moved.
 
 ### Deterministic checks
 
-Not everything belongs in the rubric. Hanja (漢字) leakage is checked with a regex
-and reported as `hanja_leak_cases` / `hanja_leak_rate`, independent of judge scores.
+Not everything belongs in the rubric. `eval/hard_checks.py` checks the final
+user-visible result without an LLM. The response gate requires
+`hard_failure_rate == 0`; each failed case stores a machine-readable code and detail.
+
+Current hard failures are:
+
+- empty response or Hanja leakage;
+- a product returned for an unverified product-level constraint;
+- an unknown product or an ingredient attributed to a product without matching evidence;
+- a product whose target concern conflicts with the request;
+- duplicated brand names and known non-consumer terms such as `심부`.
+
+Runtime guard activation is telemetry, not a hard failure. The checker runs after
+those guards and fails only when an invalid result still reaches the user. Hanja
+compatibility metrics (`hanja_leak_cases` / `hanja_leak_rate`) remain in the report,
+but the CI rule is centralized on `hard_failure_rate`.
 
 This was a measured decision, not a preference. Adding a "penalize Chinese characters"
 clause to `korean_quality` moved scores the wrong way: the three cases that actually

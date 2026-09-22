@@ -24,7 +24,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import statistics
 import sys
 import time
@@ -56,6 +55,7 @@ from eval.eval_utils import (  # noqa: E402
     pearson_correlation,
     spearman_correlation,
 )
+from eval.hard_checks import HANJA_PATTERN, check_response, summarize_hard_failures  # noqa: E402
 
 JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과거 버전 지정 가능)
 # 평가 대상 응답 생성 프롬프트. 기준선은 **운영이 실제로 쓰는 프롬프트**를 측정해야 하므로
@@ -78,9 +78,6 @@ LEGACY_SHARED_SESSION_ID = "eval-response"  # shared 모드가 재현하는 기�
 # LLM judge에 맡기지 않는 이유: 루브릭에 한자 감점 조항을 넣어 측정해 봤더니 정작 누출된
 # 케이스의 korean_quality는 오르고(+0.33) 멀쩡한 케이스가 내려갔다(-0.16). judge는 이걸
 # 신뢰성 있게 못 잡는다. 정규식은 100% 정확하므로 결정적 검사로 분리한다.
-HANJA_PATTERN = re.compile(r"[一-鿿]")
-
-
 def find_hanja(text: str | None) -> list[str]:
     """응답에 섞인 한자 목록(중복 제거·정렬). 없으면 빈 리스트."""
     return sorted(set(HANJA_PATTERN.findall(text or "")))
@@ -384,6 +381,7 @@ async def run(
                 for dim in DIMS
             }
             scores["comment"] = score_runs[0]["comment"]
+            hard_failures = [failure.as_dict() for failure in check_response(case, rec)]
             if judge_repeats > 1:
                 repeat_stddevs.extend(
                     statistics.pstdev([run[dim] for run in score_runs if run[dim] is not None])
@@ -415,6 +413,8 @@ async def run(
             "evidence": render_evidence_context(rec.ingredients, rec.products),
             # 결정적 검사 — judge 점수와 독립적으로 집계한다.
             "hanja": find_hanja(rec.response_text),
+            "hard_pass": not hard_failures,
+            "hard_failures": hard_failures,
         })
         results.append(row)
         _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
@@ -447,6 +447,7 @@ async def run(
     metrics["hanja_leak_rate"] = round(len(hanja_cases) / scored, 4) if scored else 0.0
     metrics["contaminated_cases"] = contaminated
     metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
+    metrics.update(summarize_hard_failures(results, scored))
 
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -521,6 +522,9 @@ def print_summary(report: dict) -> None:
     leaks = m.get("hanja_leak_cases", 0)
     leak_flag = "" if not leaks else f"  ⚠️ 순한글 위반({m.get('hanja_leak_rate')})"
     print(f"  {'한자 누출':<20} {leaks}{leak_flag}")
+    hard_failures = m.get("hard_failure_count", 0)
+    hard_flag = "" if not hard_failures else f"  ⚠️ {m.get('hard_failure_counts', {})}"
+    print(f"  {'Hard gate 실패':<20} {hard_failures}{hard_flag}")
     contaminated = m.get("contaminated_cases", 0)
     flag = "" if not contaminated else f"  ⚠️ 이전 이력 노출({m.get('contamination_rate')})"
     print(f"  {'오염 케이스':<20} {contaminated}{flag}")

@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import hashlib
 import json
-import re
 import subprocess
 import sys
 import uuid
@@ -25,10 +24,10 @@ from app.core.config import settings  # noqa: E402
 from app.prompts import prompt_version  # noqa: E402
 from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import recommend, recommend_stream  # noqa: E402
+from eval.hard_checks import check_response  # noqa: E402
 
 DEFAULT_DATASET = _REPO_ROOT / "eval" / "multiturn_dataset.jsonl"
 DEFAULT_OUT = _REPO_ROOT / "eval" / "results" / "multiturn-latest.json"
-HANJA_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 
 
 def load_scenarios(path: Path) -> list[dict]:
@@ -115,26 +114,22 @@ def product_ids(result: dict) -> list[str]:
 
 
 def evaluate_turn(turn: dict, result: dict, previous: dict | None) -> list[str]:
-    failures: list[str] = []
+    failures = [failure.code for failure in check_response(turn, result)]
     response_text = str(result.get("response_text") or "")
-    if not response_text.strip():
-        failures.append("empty_response")
-    if HANJA_PATTERN.search(response_text):
-        failures.append("hanja_leak")
 
     kind = turn["kind"]
     current_ids = set(product_ids(result))
     if kind == "followup":
         previous_ids = set(product_ids(previous or {}))
         if not previous_ids:
-            failures.append("followup_without_previous_products")
+            failures.append("FOLLOWUP_WITHOUT_PREVIOUS_PRODUCTS")
         elif current_ids != previous_ids:
-            failures.append("followup_product_set_changed")
+            failures.append("FOLLOWUP_PRODUCT_SET_CHANGED")
     elif kind == "missing_history":
         if current_ids:
-            failures.append("missing_history_returned_products")
+            failures.append("MISSING_HISTORY_RETURNED_PRODUCTS")
         if "이전 추천 내역을 찾지 못했어요" not in response_text:
-            failures.append("missing_history_message_absent")
+            failures.append("MISSING_HISTORY_MESSAGE_ABSENT")
     return failures
 
 
@@ -170,7 +165,7 @@ async def run_scenario(scenario: dict, transport: str, run_id: str) -> dict:
                     "n_ingredients": 0,
                     "response": "",
                     "finish_reason": None,
-                    "failures": ["request_error"],
+                    "failures": ["REQUEST_ERROR"],
                     "error": f"{type(exc).__name__}: {exc}",
                 }
                 previous = None
@@ -230,6 +225,12 @@ async def run(args) -> dict:
         for turn in result["turns"]
     )
     transport_differences = sum(len(scenario["transport_differences"]) for scenario in results)
+    hard_failure_count = functional_failures + transport_differences
+    hard_failure_scenarios = sum(
+        any(turn["failures"] for result in scenario["results"].values() for turn in result["turns"])
+        or bool(scenario["transport_differences"])
+        for scenario in results
+    )
     return {
         "run": {
             "run_id": run_id,
@@ -247,6 +248,9 @@ async def run(args) -> dict:
         "metrics": {
             "functional_failures": functional_failures,
             "transport_differences": transport_differences,
+            "hard_failure_count": hard_failure_count,
+            "hard_failure_scenarios": hard_failure_scenarios,
+            "hard_failure_rate": round(hard_failure_scenarios / len(results), 4) if results else 0.0,
             "passed": functional_failures == 0 and transport_differences == 0,
         },
         "scenarios": results,

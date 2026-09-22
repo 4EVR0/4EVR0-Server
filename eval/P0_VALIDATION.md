@@ -65,7 +65,11 @@ python eval/run_multiturn_eval.py \
 - 후속 질문의 제품 집합이 직전 추천 집합과 동일한지
 - 이력이 없는 후속 질문이 명시적 안내로 종료되는지
 - batch와 SSE의 케이스별 제품 집합이 동일한지
-- 빈 응답, 요청 오류, 한자 누출이 있는지
+- 중앙 `hard_checks.py`의 빈 응답·한자·미검증 제약·제품/성분 근거·제품 목적·
+  브랜드 중복·금칙 표현 검사
+
+단일 응답 리포트도 같은 검사기를 사용하며 케이스별 `hard_failures`와 집계
+`hard_failure_rate`를 기록한다. CI 통과 기준은 `hard_failure_rate == 0`이다.
 
 ## 3. P0 종료 조건
 
@@ -73,4 +77,5 @@ python eval/run_multiturn_eval.py \
 - 멀티턴 15개 시나리오의 batch/SSE 기능 차이 0건
 - 후속 질문의 이전 제품 이탈 0건
 - 검색 공백 제품 날조 0건과 한자 누출 0건
+- 결정론적 Hard gate 실패율 0
 - 리포트에 code SHA, dataset SHA, 모델, 생성 프롬프트 버전 기록

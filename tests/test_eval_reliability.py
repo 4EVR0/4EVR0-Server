@@ -8,7 +8,7 @@ import pytest
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 import eval.run_response_eval as response_eval
-from eval.check_gate import _check_report_code_sha
+from eval.check_gate import _check_report_code_sha, _hard_failure_section
 from eval.eval_utils import (
     bootstrap_mean_ci,
     load_dataset,
@@ -217,6 +217,7 @@ def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
     assert all(row["history_len_before"] == 0 for row in report["cases"])
     assert report["metrics"]["contaminated_cases"] == 0
     assert report["metrics"]["contamination_rate"] == 0.0
+    assert report["metrics"]["hard_failure_rate"] == 0.0
     # 케이스가 남긴 이력을 다음으로 넘기지 않는다(실행 전/후 정리).
     assert store.turns == {}
     for session_id in sessions:
@@ -482,3 +483,23 @@ def test_gate_rejects_report_from_another_commit(tmp_path):
 
     assert mismatch["pass"] is False
     assert match["pass"] is True
+
+
+def test_gate_renders_actionable_hard_failure_details(tmp_path):
+    report = tmp_path / "response.json"
+    report.write_text(json.dumps({
+        "metrics": {"hard_failure_rate": 1.0},
+        "cases": [{
+            "id": 14,
+            "hard_failures": [{
+                "code": "PRODUCT_INGREDIENT_MISMATCH",
+                "detail": "제품 근거에 없는 MANDELIC ACID",
+            }],
+        }],
+    }))
+
+    section = _hard_failure_section(str(report))
+
+    assert "14" in section
+    assert "PRODUCT_INGREDIENT_MISMATCH" in section
+    assert "MANDELIC ACID" in section
