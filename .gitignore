@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.DS_Store
+*.bak
 .env
 .env.judge
 .venv/
@@ -21,4 +23,9 @@ mlartifacts/
 
 # 앱 런타임 로그 (Alloy가 tail하는 파일)
 logs/
+load/*.log
 scripts/out/
+
+# 로컬 실험/수동 검증 산출물
+llm_query_eval/results/
+test_results.json

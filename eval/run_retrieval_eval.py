@@ -10,7 +10,8 @@ reference-free LLM-judge로 "검색된 성분/제품이 이 고민에 관련 있
 측정 지표:
     - product_precision  : 검색된 제품 중 고민에 관련 있는 비율 (★ 핵심 — 성분 겹침으로 무관 제품 딸려오는 문제)
     - ingredient_precision: 검색된 성분 중 관련 있는 비율
-    - product_zero_rate / ingredient_zero_rate : 빈손 검색 비율
+    - product_zero_rate / ingredient_zero_rate : 전체 빈손 검색 비율(관측용)
+    - unexpected_product_zero_rate: 고민이 있고 미검증 제품 제약이 없는 케이스의 빈손 비율
     - evidence_top_ratio : 상위 성분 중 pubmed_evidence 비율 (랭킹 품질)
 
 사용:
@@ -41,7 +42,7 @@ from app.clients.neo4j_client import (  # noqa: E402
     query_ingredients_by_effects,
     query_products_by_ingredients,
 )
-from eval.eval_utils import bootstrap_mean_ci, file_sha256, load_dataset  # noqa: E402
+from eval.eval_utils import bootstrap_mean_ci, file_sha256, git_code_sha, load_dataset  # noqa: E402
 from eval.run_response_eval import build_judge_config, build_judge_client  # noqa: E402
 
 _TOP_INGREDIENTS = 8   # judge에 보낼 성분 상위 수
@@ -108,6 +109,9 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
     result = {
         "id": case.get("id"), "concerns": [c.value for c in concerns],
         "n_ingredients": len(raw_ings), "n_products": len(products),
+        # 고민 없음 또는 현재 제품 속성 데이터로 검증할 수 없는 제약 요청은
+        # 제품 0건이 안전한 정상 결과다. 회귀 게이트의 검색 공백에서 제외한다.
+        "expects_products": bool(concerns) and not bool(case.get("constraints")),
         "evidence_top_ratio": ev_ratio,
         "ingredient_precision": None, "product_precision": None,
     }
@@ -134,6 +138,13 @@ def _agg(cases, key):
     ci = bootstrap_mean_ci(vals)  # (lo, hi) 또는 None
     return {"mean": round(statistics.mean(vals), 4),
             "ci95": [ci[0], ci[1]] if ci else None, "n": len(vals)}
+
+
+def _unexpected_product_zero_rate(cases: list[dict]) -> float:
+    expected = [case for case in cases if case.get("expects_products")]
+    if not expected:
+        return 0.0
+    return round(sum(case.get("n_products") == 0 for case in expected) / len(expected), 4)
 
 
 async def main_async(args) -> None:
@@ -171,6 +182,7 @@ async def main_async(args) -> None:
         "ingredient_precision": _agg(ok, "ingredient_precision"),
         "evidence_top_ratio": _agg(ok, "evidence_top_ratio"),
         "product_zero_rate": round(sum(1 for r in ok if r["n_products"] == 0) / n, 4) if n else None,
+        "unexpected_product_zero_rate": _unexpected_product_zero_rate(ok),
         "ingredient_zero_rate": round(sum(1 for r in ok if r["n_ingredients"] == 0) / n, 4) if n else None,
         "mean_products_found": round(statistics.mean([r["n_products"] for r in ok]), 2) if n else None,
         "error_rate": round((len(results) - n) / len(results), 4) if results else 0,
@@ -178,6 +190,7 @@ async def main_async(args) -> None:
     report = {
         "run": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "code_sha": git_code_sha(),
             "judge_model": jc.model, "dataset": str(dataset_path),
             "dataset_sha256": file_sha256(dataset_path), "n_cases": len(cases), "n_scored": n,
             "product_min_relevance_ratio": settings.product_min_relevance_ratio,
@@ -195,6 +208,7 @@ async def main_async(args) -> None:
         print(f"  {k:<22} {m['mean'] if m else '—'}"
               + (f" (95% CI {m['ci95'][0]}–{m['ci95'][1]}, n={m['n']})" if m and m['ci95'] else ""))
     print(f"  {'product_zero_rate':<22} {metrics['product_zero_rate']}")
+    print(f"  {'unexpected_zero_rate':<22} {metrics['unexpected_product_zero_rate']}")
     print(f"  {'ingredient_zero_rate':<22} {metrics['ingredient_zero_rate']}")
     print("═" * 60)
 

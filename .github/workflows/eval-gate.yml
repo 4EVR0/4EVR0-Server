@@ -8,7 +8,8 @@ name: eval-gate
 
 on:
   pull_request:
-    types: [labeled]
+    # run-eval 라벨을 붙인 뒤 새 커밋이 올라오면 최신 SHA를 다시 검증한다.
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr:
@@ -30,10 +31,11 @@ concurrency:
 
 jobs:
   eval-gate:
-    # 라벨이 정확히 run-eval 일 때만 (다른 라벨엔 안 돎), 또는 수동 실행
+    # 수동 실행, run-eval 라벨 추가, 또는 그 라벨이 유지된 PR의 새 커밋.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.label.name == 'run-eval'
+      github.event.label.name == 'run-eval' ||
+      contains(github.event.pull_request.labels.*.name, 'run-eval')
     runs-on: [self-hosted]
     timeout-minutes: 45
     env:
@@ -93,6 +95,7 @@ jobs:
             --extraction eval/results/_ci_extraction.json \
             --response   eval/results/_ci_response.json \
             --retrieval  eval/results/_ci_retrieval.json \
+            --expected-code-sha "$GITHUB_SHA" \
             --md-out gate.md
           echo "gate_exit=$?" >> "$GITHUB_OUTPUT"
           set -e

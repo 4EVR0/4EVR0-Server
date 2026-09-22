@@ -24,7 +24,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import statistics
 import sys
 import time
@@ -45,15 +44,18 @@ from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import (  # noqa: E402
     _evidence_label,
     _ingredient_display_name,
+    _product_display_name,
     recommend,
 )
 from eval.eval_utils import (  # noqa: E402
     bootstrap_mean_ci,
     file_sha256,
+    git_code_sha,
     load_dataset,
     pearson_correlation,
     spearman_correlation,
 )
+from eval.hard_checks import HANJA_PATTERN, check_response, summarize_hard_failures  # noqa: E402
 
 JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과거 버전 지정 가능)
 # 평가 대상 응답 생성 프롬프트. 기준선은 **운영이 실제로 쓰는 프롬프트**를 측정해야 하므로
@@ -61,6 +63,9 @@ JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과�
 # 않는다). 과거 버전과 비교할 때만 --gen-prompt로 명시 지정한다.
 DEFAULT_GEN_PROMPT = settings.gen_prompt_name
 DIMS = ["concern_fit", "grounding", "conciseness", "korean_quality", "format_adherence"]
+# 제품 품질의 핵심 축. conciseness/format은 스타일 선호와 루브릭 해석 차이가 커서
+# 별도 진단값으로 유지하되, 사람 교정의 주 판정에는 포함하지 않는다.
+PRIMARY_DIMS = ["concern_fit", "grounding", "korean_quality"]
 DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
 
 # 세션 격리 모드.
@@ -73,9 +78,6 @@ LEGACY_SHARED_SESSION_ID = "eval-response"  # shared 모드가 재현하는 기�
 # LLM judge에 맡기지 않는 이유: 루브릭에 한자 감점 조항을 넣어 측정해 봤더니 정작 누출된
 # 케이스의 korean_quality는 오르고(+0.33) 멀쩡한 케이스가 내려갔다(-0.16). judge는 이걸
 # 신뢰성 있게 못 잡는다. 정규식은 100% 정확하므로 결정적 검사로 분리한다.
-HANJA_PATTERN = re.compile(r"[一-鿿]")
-
-
 def find_hanja(text: str | None) -> list[str]:
     """응답에 섞인 한자 목록(중복 제거·정렬). 없으면 빈 리스트."""
     return sorted(set(HANJA_PATTERN.findall(text or "")))
@@ -167,7 +169,8 @@ def render_evidence_context(ingredients, products) -> dict[str, str]:
         return ", ".join(annotated)
 
     prod_lines = "\n".join(
-        f"- [{p.category}] {p.brand} {p.product_name} (핵심성분: {_annotate(p.matched_ingredients)})"
+        f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
+        f"(핵심성분: {_annotate(p.matched_ingredients)})"
         for p in products
     ) or "(없음)"
     return {"ingredients": ing_lines, "products": prod_lines}
@@ -254,16 +257,47 @@ def calibrate_against_humans(results: list[dict], human_scores: dict) -> dict:
         all_judge.extend(judge_values)
         all_human.extend(human_values)
         dimensions[dim] = {
+            "judge_mean": round(statistics.mean(judge_values), 4),
+            "human_mean": round(statistics.mean(human_values), 4),
+            "bias": round(statistics.mean(a - b for a, b in zip(judge_values, human_values)), 4),
             "mae": round(statistics.mean(abs(a - b) for a, b in zip(judge_values, human_values)), 4)
             if judge_values else None,
             "pearson": pearson_correlation(judge_values, human_values),
             "spearman": spearman_correlation(judge_values, human_values),
+            "exact_rate": round(
+                sum(a == b for a, b in zip(judge_values, human_values)) / len(judge_values), 4
+            ),
+            "within_one_rate": round(
+                sum(abs(a - b) <= 1 for a, b in zip(judge_values, human_values)) / len(judge_values),
+                4,
+            ),
         }
+
+    # 한 케이스의 핵심 3축 평균끼리 비교한다. 서로 다른 차원의 관측치를 한 배열에
+    # 평탄화하면 차원별 분포 차이가 상관계수를 왜곡하므로 주 판정에는 쓰지 않는다.
+    primary_judge = [
+        statistics.mean(judged[case_id][dim] for dim in PRIMARY_DIMS)
+        for case_id in shared_ids
+    ]
+    primary_human = [
+        statistics.mean(human_scores[case_id][dim] for dim in PRIMARY_DIMS)
+        for case_id in shared_ids
+    ]
     return {
         "n_cases": len(shared_ids),
         "case_ids": shared_ids,
         "dimensions": dimensions,
+        "primary": {
+            "dimensions": PRIMARY_DIMS,
+            "judge_mean": round(statistics.mean(primary_judge), 4),
+            "human_mean": round(statistics.mean(primary_human), 4),
+            "bias": round(statistics.mean(a - b for a, b in zip(primary_judge, primary_human)), 4),
+            "mae": round(statistics.mean(abs(a - b) for a, b in zip(primary_judge, primary_human)), 4),
+            "pearson": pearson_correlation(primary_judge, primary_human),
+            "spearman": spearman_correlation(primary_judge, primary_human),
+        },
         "overall": {
+            "scope": "all_dimensions_flattened",
             "mae": round(statistics.mean(abs(a - b) for a, b in zip(all_judge, all_human)), 4)
             if all_judge else None,
             "pearson": pearson_correlation(all_judge, all_human),
@@ -347,6 +381,7 @@ async def run(
                 for dim in DIMS
             }
             scores["comment"] = score_runs[0]["comment"]
+            hard_failures = [failure.as_dict() for failure in check_response(case, rec)]
             if judge_repeats > 1:
                 repeat_stddevs.extend(
                     statistics.pstdev([run[dim] for run in score_runs if run[dim] is not None])
@@ -378,6 +413,8 @@ async def run(
             "evidence": render_evidence_context(rec.ingredients, rec.products),
             # 결정적 검사 — judge 점수와 독립적으로 집계한다.
             "hanja": find_hanja(rec.response_text),
+            "hard_pass": not hard_failures,
+            "hard_failures": hard_failures,
         })
         results.append(row)
         _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
@@ -410,9 +447,11 @@ async def run(
     metrics["hanja_leak_rate"] = round(len(hanja_cases) / scored, 4) if scored else 0.0
     metrics["contaminated_cases"] = contaminated
     metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
+    metrics.update(summarize_hard_failures(results, scored))
 
     run_info = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_sha": git_code_sha(),
         "generator_model": settings.gpu_model,
         "generator_base_url": _normalize_base_url(settings.gpu_server_url),
         "generator_temperature": gen_temperature,
@@ -483,6 +522,9 @@ def print_summary(report: dict) -> None:
     leaks = m.get("hanja_leak_cases", 0)
     leak_flag = "" if not leaks else f"  ⚠️ 순한글 위반({m.get('hanja_leak_rate')})"
     print(f"  {'한자 누출':<20} {leaks}{leak_flag}")
+    hard_failures = m.get("hard_failure_count", 0)
+    hard_flag = "" if not hard_failures else f"  ⚠️ {m.get('hard_failure_counts', {})}"
+    print(f"  {'Hard gate 실패':<20} {hard_failures}{hard_flag}")
     contaminated = m.get("contaminated_cases", 0)
     flag = "" if not contaminated else f"  ⚠️ 이전 이력 노출({m.get('contamination_rate')})"
     print(f"  {'오염 케이스':<20} {contaminated}{flag}")
@@ -508,7 +550,7 @@ def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
     run, metrics = report["run"], report["metrics"]
     with mlflow.start_run(run_name=run["timestamp"]):
         parameter_names = (
-            "generator_model", "generator_base_url", "generator_temperature",
+            "code_sha", "generator_model", "generator_base_url", "generator_temperature",
             "gen_prompt", "gen_prompt_version", "judge_model", "judge_base_url",
             "judge_temperature", "judge_repeats", "judge_prompt_version",
             "dataset_sha256", "n_cases", "n_scored", "bootstrap_samples", "bootstrap_seed",

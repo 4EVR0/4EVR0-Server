@@ -8,6 +8,7 @@ import pytest
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
 import eval.run_response_eval as response_eval
+from eval.check_gate import _check_report_code_sha, _hard_failure_section
 from eval.eval_utils import (
     bootstrap_mean_ci,
     load_dataset,
@@ -67,6 +68,38 @@ def test_correlations_support_ties_and_perfect_order():
     assert pearson_correlation([1, 1], [2, 3]) is None
 
 
+def test_extraction_eval_uses_serving_normalization(monkeypatch, tmp_path):
+    from eval import run_eval
+
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(json.dumps({
+        "id": 1,
+        "message": "속건조가 심해서 겉은 번들거리는데 속은 당겨요.",
+        "skin_types": ["COMBINATION"],
+        "concerns": ["ACNE"],
+        "constraints": [],
+    }))
+
+    async def fake_extract(*_args):
+        return {
+            "skin_types": ["OILY", "SENSITIVE"],
+            "concerns": ["ACNE", "REDNESS"],
+            "constraints": [],
+        }, {"prompt": 1, "completion": 1}, 0.01
+
+    monkeypatch.setattr(run_eval, "extract", fake_extract)
+    monkeypatch.setattr(run_eval, "get_async_llm_client", lambda: object())
+
+    report = asyncio.run(run_eval.run(dataset, None))
+
+    assert report["cases"][0]["pred"] == {
+        "skin_types": ["COMBINATION"],
+        "concerns": ["ACNE"],
+        "constraints": [],
+    }
+    assert report["metrics"]["skin_type_accuracy"] == 1.0
+
+
 def test_judge_config_rejects_same_model_and_endpoint(monkeypatch):
     monkeypatch.setenv("TEST_JUDGE_KEY", "EMPTY")
 
@@ -114,7 +147,21 @@ def test_human_calibration_reports_agreement(tmp_path):
     calibration = calibrate_against_humans(judged, load_human_scores(human_path))
 
     assert calibration["n_cases"] == 2
-    assert calibration["overall"] == {"mae": 0.0, "pearson": 1.0, "spearman": 1.0}
+    assert calibration["primary"] == {
+        "dimensions": ["concern_fit", "grounding", "korean_quality"],
+        "judge_mean": 3.0,
+        "human_mean": 3.0,
+        "bias": 0.0,
+        "mae": 0.0,
+        "pearson": 1.0,
+        "spearman": 1.0,
+    }
+    assert calibration["overall"] == {
+        "scope": "all_dimensions_flattened",
+        "mae": 0.0,
+        "pearson": 1.0,
+        "spearman": 1.0,
+    }
 
 
 class _FakeConversationStore:
@@ -202,6 +249,7 @@ def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
     assert all(row["history_len_before"] == 0 for row in report["cases"])
     assert report["metrics"]["contaminated_cases"] == 0
     assert report["metrics"]["contamination_rate"] == 0.0
+    assert report["metrics"]["hard_failure_rate"] == 0.0
     # 케이스가 남긴 이력을 다음으로 넘기지 않는다(실행 전/후 정리).
     assert store.turns == {}
     for session_id in sessions:
@@ -455,3 +503,35 @@ def test_response_run_records_reproducibility_metadata(tmp_path, monkeypatch):
     assert report["run"]["judge_model"] == "external/judge"
     assert report["run"]["generator_temperature"] == 0
     assert report["run"]["dataset_sha256"]
+    assert report["run"]["code_sha"]
+
+
+def test_gate_rejects_report_from_another_commit(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"run": {"code_sha": "old-sha"}, "metrics": {}}))
+
+    mismatch = _check_report_code_sha(str(report), "current-sha")
+    match = _check_report_code_sha(str(report), "old-sha")
+
+    assert mismatch["pass"] is False
+    assert match["pass"] is True
+
+
+def test_gate_renders_actionable_hard_failure_details(tmp_path):
+    report = tmp_path / "response.json"
+    report.write_text(json.dumps({
+        "metrics": {"hard_failure_rate": 1.0},
+        "cases": [{
+            "id": 14,
+            "hard_failures": [{
+                "code": "PRODUCT_INGREDIENT_MISMATCH",
+                "detail": "제품 근거에 없는 MANDELIC ACID",
+            }],
+        }],
+    }))
+
+    section = _hard_failure_section(str(report))
+
+    assert "14" in section
+    assert "PRODUCT_INGREDIENT_MISMATCH" in section
+    assert "MANDELIC ACID" in section

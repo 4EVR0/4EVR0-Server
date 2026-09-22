@@ -15,7 +15,7 @@ LLM judge 점수를 신뢰하려면 judge가 사람과 얼마나 일치하는지
     python eval/label_responses.py --agreement eval/labels/hyeokjun.jsonl eval/labels/friend.jsonl
 
     # 라벨을 judge와 비교
-    python eval/run_response_eval.py --human-labels eval/labels/hyeokjun.jsonl ...
+    python eval/label_responses.py --calibrate eval/results/<report>.json eval/labels/hyeokjun.jsonl
 """
 
 import argparse
@@ -30,7 +30,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from eval.eval_utils import pearson_correlation, spearman_correlation  # noqa: E402
-from eval.run_response_eval import DIMS, JUDGE_PROMPT_NAME  # noqa: E402
+from eval.run_response_eval import (  # noqa: E402
+    DIMS,
+    JUDGE_PROMPT_NAME,
+    PRIMARY_DIMS,
+    calibrate_against_humans,
+    load_human_scores,
+)
 from app.prompts import load_prompt, prompt_version  # noqa: E402
 
 DEFAULT_LABEL_DIR = _REPO_ROOT / "eval" / "labels"
@@ -190,7 +196,7 @@ def run_labeling(args) -> int:
 
     print(f"\n완료 — {done}건 저장 → {out_path}")
     print("\n다음 단계:")
-    print(f"  python eval/run_response_eval.py --human-labels {out_path} ...")
+    print(f"  python eval/label_responses.py --calibrate {report_path} {out_path}")
     return 0
 
 
@@ -234,6 +240,69 @@ def run_agreement(paths: list[str]) -> int:
     return 0
 
 
+def run_calibration(paths: list[str], out: str | None = None) -> int:
+    """채점한 바로 그 응답의 judge 점수와 사람 라벨을 비교한다.
+
+    새 응답을 생성하면 temperature=0에서도 문구가 달라질 수 있으므로,
+    라벨을 만든 source report 자체를 재사용해야 한다.
+    """
+    report_path, labels_path = Path(paths[0]), Path(paths[1])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    label_rows = load_existing_labels(labels_path)
+    mismatched_sources = sorted({
+        row.get("source_report")
+        for row in label_rows.values()
+        if row.get("source_report") and row.get("source_report") != report_path.name
+    })
+    if mismatched_sources:
+        print(
+            f"라벨의 source_report({', '.join(mismatched_sources)})와 "
+            f"비교 리포트({report_path.name})가 다릅니다."
+        )
+        return 1
+
+    calibration = calibrate_against_humans(
+        report.get("cases", []),
+        load_human_scores(labels_path),
+    )
+    print("=" * 72)
+    print(f"  JUDGE VS HUMAN  ({report_path.name} vs {labels_path.name})")
+    print("=" * 72)
+    print(f"  공통 케이스: {calibration['n_cases']}건")
+    print("─" * 72)
+    print(f"  {'차원':<20} {'MAE':>7} {'Pearson':>9} {'Spearman':>9}")
+    print("─" * 72)
+    for dim in DIMS:
+        values = calibration["dimensions"][dim]
+        print(
+            f"  {dim:<20} {values['mae']:>7.3f} {str(values['pearson']):>9} "
+            f"{str(values['spearman']):>9}"
+        )
+    print("─" * 72)
+    primary = calibration["primary"]
+    print(
+        f"  {'핵심 3축 평균':<20} {primary['mae']:>7.3f} {str(primary['pearson']):>9} "
+        f"{str(primary['spearman']):>9}"
+    )
+    print(
+        f"  핵심 축: {', '.join(PRIMARY_DIMS)} / "
+        f"judge 평균 {primary['judge_mean']:.3f}, 사람 평균 {primary['human_mean']:.3f}, "
+        f"편향 {primary['bias']:+.3f}"
+    )
+    overall = calibration["overall"]
+    print(
+        f"  참고(5축 평탄화)     {overall['mae']:>7.3f} {str(overall['pearson']):>9} "
+        f"{str(overall['spearman']):>9}"
+    )
+    print("=" * 72)
+    if out:
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(calibration, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  저장: {out_path}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="응답 품질 블라인드 사람 채점")
     ap.add_argument("--report", help="채점할 응답 평가 리포트 JSON")
@@ -245,12 +314,17 @@ def main():
     ap.add_argument("--out", default=None, help="라벨 저장 경로 (기본 eval/labels/<labeler>.jsonl)")
     ap.add_argument("--agreement", nargs=2, metavar=("A.jsonl", "B.jsonl"),
                     help="두 라벨 파일의 일치도만 계산하고 종료")
+    ap.add_argument("--calibrate", nargs=2, metavar=("REPORT.json", "LABELS.jsonl"),
+                    help="라벨의 source report에 저장된 judge 점수와 사람 점수 비교")
+    ap.add_argument("--calibration-out", default=None, help="judge-vs-human 결과 JSON 저장 경로")
     args = ap.parse_args()
 
     if args.agreement:
         return run_agreement(args.agreement)
+    if args.calibrate:
+        return run_calibration(args.calibrate, args.calibration_out)
     if not args.report or not args.labeler:
-        ap.error("--report 와 --labeler 가 필요합니다 (또는 --agreement 사용)")
+        ap.error("--report 와 --labeler 가 필요합니다 (또는 --agreement/--calibrate 사용)")
     if args.sample == 0:
         args.sample = None
     try:

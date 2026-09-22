@@ -10,7 +10,9 @@ python eval/run_eval.py --no-mlflow
 ```
 
 Dataset labels are validated before any model request. See `LABELING.md` for the
-labeling policy.
+labeling policy. The runner applies the same deterministic skin-type and concern
+normalization as the serving path before scoring, so the gate measures production
+behavior rather than the model's intermediate JSON.
 
 ## Recommendation response quality
 
@@ -39,7 +41,8 @@ Each report records:
 - dataset SHA-256, sample count, bootstrap seed, and 95% confidence intervals;
 - repeated-judge standard deviation;
 - run ID, session mode, and the number of contaminated cases;
-- case-level responses, scores, session IDs, and pre-run history lengths.
+- case-level responses, scores, session IDs, pre-run history lengths, and deterministic
+  `hard_failures`.
 
 ### Session isolation
 
@@ -98,8 +101,22 @@ per-dimension delta and every case whose score moved.
 
 ### Deterministic checks
 
-Not everything belongs in the rubric. Hanja (漢字) leakage is checked with a regex
-and reported as `hanja_leak_cases` / `hanja_leak_rate`, independent of judge scores.
+Not everything belongs in the rubric. `eval/hard_checks.py` checks the final
+user-visible result without an LLM. The response gate requires
+`hard_failure_rate == 0`; each failed case stores a machine-readable code and detail.
+
+Current hard failures are:
+
+- empty response or Hanja leakage;
+- a product returned for an unverified product-level constraint;
+- an unknown product or an ingredient attributed to a product without matching evidence;
+- a product whose target concern conflicts with the request;
+- duplicated brand names and known non-consumer terms such as `심부`.
+
+Runtime guard activation is telemetry, not a hard failure. The checker runs after
+those guards and fails only when an invalid result still reaches the user. Hanja
+compatibility metrics (`hanja_leak_cases` / `hanja_leak_rate`) remain in the report,
+but the CI rule is centralized on `hard_failure_rate`.
 
 This was a measured decision, not a preference. Adding a "penalize Chinese characters"
 clause to `korean_quality` moved scores the wrong way: the three cases that actually
@@ -111,6 +128,16 @@ property is mechanically decidable.
 
 A judge score is not evidence until the judge itself has been checked. Two
 independent checks are supported.
+
+The primary dimensions are `concern_fit`, `grounding`, and `korean_quality`.
+`conciseness` and `format_adherence` are secondary diagnostics because their human
+rubrics were substantially more subjective. In the 2026-09-22 blind calibration of
+`gpt-4o-mini` with rubric `2e1ea732`, the 40-case primary composite had MAE `0.753`,
+Pearson `0.4835`, and Spearman `0.4615`; the judge over-scored it by `0.753` on average.
+This is useful directional signal, but not a calibrated absolute release score.
+Semantic scores are therefore observability-only. The response gate currently uses
+deterministic error, Hanja leakage, and session-contamination rates. See
+`P0_VALIDATION.md` for the current status.
 
 **Judge self-consistency** — `--judge-repeats 3` scores each response three times
 and reports `judge_repeat_stddev`. This is the noise floor: score differences
@@ -131,10 +158,11 @@ python eval/label_responses.py \
 python eval/label_responses.py \
   --agreement eval/labels/<name>.jsonl eval/labels/<other>.jsonl
 
-# 4. Judge vs. human.
-python eval/run_response_eval.py \
-  --human-labels eval/labels/<name>.jsonl \
-  --out eval/results/calibrated.json
+# 4. Judge vs. human. Compare against the exact stored responses that were labeled;
+#    do not generate a new run whose wording may differ.
+python eval/label_responses.py \
+  --calibrate eval/results/<report>.json eval/labels/<name>.jsonl \
+  --calibration-out eval/results/<report>-human-calibration.json
 ```
 
 The calibrated output includes judge-vs-human MAE, Pearson correlation, and
@@ -151,3 +179,25 @@ Reports store each case's `evidence` — the rendered ingredient and product con
 handed to the judge. Labelers need it to score `grounding` at all; reports produced
 before this field existed can still be labeled, but grounding is not assessable
 from them.
+
+## Multi-turn and transport parity
+
+`multiturn_dataset.jsonl` contains 15 scenarios covering new requests, follow-ups,
+deictic selection, topic changes, and missing history. Run each scenario through
+both the batch and SSE paths:
+
+```bash
+GEN_TEMPERATURE=0 RECOMMEND_CACHE_ENABLED=false PYTHONPATH=. \
+python eval/run_multiturn_eval.py --transport both \
+  --out eval/results/multiturn-v7.json
+```
+
+The report records the code SHA, dataset hash, model, and production prompt version.
+It fails when a follow-up changes the previous product set, the missing-history
+contract breaks, Hanja leaks, a request errors, or batch/SSE return different product
+sets. See `P0_VALIDATION.md` for the fixed human sample and P0 exit criteria.
+
+Retrieval reports keep the overall `product_zero_rate` for observability, but the
+release gate uses `unexpected_product_zero_rate`. Cases with no product concern, or
+with product-level constraints that the current data cannot verify, are intentional
+refusals and are excluded from that denominator.

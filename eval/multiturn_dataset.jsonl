@@ -1,0 +1,15 @@
+{"id":"compare_two","label":"제품 비교","turns":[{"message":"건조하고 당기는 피부에 맞는 제품 추천해줘","kind":"new"},{"message":"추천한 제품들 차이를 비교해줘","kind":"followup"}]}
+{"id":"deictic_light","label":"지시적 선택","turns":[{"message":"피지와 번들거림이 고민이야","kind":"new"},{"message":"이 중에서 가장 산뜻한 거 하나만 골라줘","kind":"followup"}]}
+{"id":"pros_cons","label":"장단점","turns":[{"message":"민감하고 붉은 피부에 쓸 제품을 추천해줘","kind":"new"},{"message":"위에 추천한 제품들의 장단점을 알려줘","kind":"followup"}]}
+{"id":"usage_order","label":"사용 순서","turns":[{"message":"잡티와 칙칙함에 맞는 제품을 추천해줘","kind":"new"},{"message":"추천한 제품들을 어떤 순서로 써야 해?","kind":"followup"}]}
+{"id":"sensitive_pick","label":"조건 추가","turns":[{"message":"모공과 블랙헤드가 고민이야","kind":"new"},{"message":"이 중에서 민감한 피부에 더 무난한 거 골라줘","kind":"followup"}]}
+{"id":"acne_pick","label":"여드름 후속","turns":[{"message":"여드름과 트러블이 계속 생겨","kind":"new"},{"message":"그 중 자극이 적을 것 같은 제품을 골라줘","kind":"followup"}]}
+{"id":"missing_history","label":"이력 만료","turns":[{"message":"방금 추천한 것 중에서 뭐가 더 나아?","kind":"missing_history"}]}
+{"id":"new_then_compare","label":"신규 고민 전환","turns":[{"message":"건조한 피부용 크림을 추천해줘","kind":"new"},{"message":"이번에는 여드름과 피지가 고민이야","kind":"new"},{"message":"이 중에서 하나만 골라줘","kind":"followup"}]}
+{"id":"dry_to_oily","label":"오래된 맥락 차단","turns":[{"message":"속건조에 맞는 제품을 추천해줘","kind":"new"},{"message":"피지가 많고 번들거리는 지성 피부용으로 다시 추천해줘","kind":"new"},{"message":"이 중에서 가장 가벼운 거","kind":"followup"}]}
+{"id":"category_change","label":"카테고리 변경","turns":[{"message":"탄력과 주름이 고민이야","kind":"new"},{"message":"이번에는 수분 부족에 쓸 토너로 추천해줘","kind":"new"},{"message":"그 중에서 사용감이 가벼운 걸 골라줘","kind":"followup"}]}
+{"id":"reasoning","label":"추천 이유","turns":[{"message":"각질과 거친 피부결이 고민이야","kind":"new"},{"message":"추천한 것 중 첫 번째 제품을 골라준 이유가 뭐야?","kind":"followup"}]}
+{"id":"single_best","label":"하나 선택","turns":[{"message":"홍조와 자극이 심한 편이야","kind":"new"},{"message":"여러 개 말고 이 중에서 하나만 골라줘","kind":"followup"}]}
+{"id":"day_night","label":"사용 시점","turns":[{"message":"기미와 색소침착이 고민이야","kind":"new"},{"message":"추천한 것들을 아침과 저녁 중 언제 쓰면 돼?","kind":"followup"}]}
+{"id":"ingredient_compare","label":"성분 비교","turns":[{"message":"피부 장벽이 무너진 것 같고 따가워","kind":"new"},{"message":"그 중 핵심 성분 차이를 비교해줘","kind":"followup"}]}
+{"id":"review_compare","label":"리뷰 부연","turns":[{"message":"수부지인데 모공도 신경 쓰여","kind":"new"},{"message":"추천한 제품들을 리뷰는 보조로만 쓰서 비교해줘","kind":"followup"}]}

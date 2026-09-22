@@ -1,5 +1,5 @@
 {
-  "_comment": "품질 회귀 게이트 임계값 (이슈 #41). 채택 모델(AWQ int4, 2026-07-07) 실측 아래로 마진을 두고, P3 v5 붕괴(grounding 3.80/overall 4.04)는 확실히 차단하도록 보정. min=이상이어야 통과, max=이하여야 통과.",
+  "_comment": "품질 회귀 게이트 임계값 (이슈 #41). min=이상, max=이하여야 통과. 2026-09-22 사람 40건 교정에서 핵심 3축 케이스 평균 Pearson은 0.4835였지만 judge가 평균 0.753점 과대평가했다. 절대점수가 교정되기 전까지 의미 점수는 관측 전용이고 중앙 hard_checks.py의 결정론적 실패율만 응답 품질 게이트에 사용한다.",
   "_baseline_ref": "AWQ 2026-07-07: overall 4.58, grounding 4.52, format 4.78, concern_f1 0.8409, skin 0.96. bf16 baseline: overall 4.46, grounding 4.55, concern_f1 0.8743.",
   "extraction": {
     "concern_f1":          { "min": 0.83, "label": "concern F1" },
@@ -8,15 +8,14 @@
     "error_rate":          { "max": 0.00, "label": "추출 에러율" }
   },
   "response": {
-    "resp_overall":          { "min": 4.40, "label": "judge OVERALL" },
-    "resp_grounding":        { "min": 4.30, "label": "grounding" },
-    "resp_format_adherence": { "min": 4.30, "label": "format 준수" },
-    "error_rate":            { "max": 0.00, "label": "생성 에러율" }
+    "error_rate":            { "max": 0.00, "label": "생성 에러율" },
+    "hard_failure_rate":     { "max": 0.00, "label": "Hard gate 실패율" },
+    "contamination_rate":    { "max": 0.00, "label": "세션 오염률" }
   },
   "_retrieval_ref": "검색 precision baseline(2026-07-20, 목적필터): product_precision 0.85, product_zero_rate 0.08. 아래 임계는 그 아래로 마진(judge 노이즈·회귀 탐지). ingredient_precision(0.50)은 성분→효능 엣지 노이즈라 관대하게.",
   "retrieval": {
     "product_precision":  { "min": 0.75, "label": "제품 검색 precision" },
-    "product_zero_rate":  { "max": 0.15, "label": "제품 0-결과율" },
+    "unexpected_product_zero_rate": { "max": 0.15, "label": "예상 밖 제품 0-결과율" },
     "ingredient_precision": { "min": 0.40, "label": "성분 검색 precision" }
   }
 }

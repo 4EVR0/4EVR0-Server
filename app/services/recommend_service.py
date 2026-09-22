@@ -16,7 +16,7 @@ from app.clients.neo4j_client import (
 )
 from app.core import metrics
 from app.core.config import settings
-from app.domain.enums import Concern
+from app.domain.enums import Concern, Constraint
 from app.prompts import load_prompt
 from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
@@ -153,9 +153,12 @@ def _purpose_mismatch(product_name: str, concerns: list[Concern]) -> bool:
 
 
 def filter_purpose_mismatch(products: list[dict], concerns: list[Concern]) -> list[dict]:
-    """목적-불일치 제품을 걸러낸다. 전부 걸러지면(과필터) 원본 유지(제품 0개 방지)."""
-    kept = [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
-    return kept if kept else products
+    """목적-불일치 제품을 걸러낸다.
+
+    전부 탈락해도 원본을 되살리지 않는다. 제품이 없는 것이 피부 고민과 맞지 않는
+    제품을 내보내는 것보다 안전하다.
+    """
+    return [p for p in products if not _purpose_mismatch(p.get("product_name", ""), concerns)]
 
 
 # ── 제품 목적 필터 (데이터 기반, 이슈 #56) ────────────────────────────────
@@ -188,7 +191,7 @@ def _concern_groups(concern_codes) -> set[str]:
 
 def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> list[dict]:
     """제품의 타겟 고민 그룹이 요청 고민 그룹과 겹치는 제품만 남긴다.
-    라벨 없는 제품은 이름 휴리스틱 폴백. 전부 걸러지면 원본 유지(제품 0개 방지)."""
+    라벨 없는 제품은 이름 휴리스틱 폴백. 전부 걸러지면 빈 결과를 유지한다."""
     q_groups = _concern_groups(c.value for c in concerns)
     if not q_groups or not _PRODUCT_CONCERNS:
         return filter_purpose_mismatch(products, concerns)
@@ -200,7 +203,7 @@ def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> 
                 kept.append(p)
         elif _concern_groups(labels) & q_groups:  # 그룹 겹침
             kept.append(p)
-    return kept if kept else products
+    return kept
 
 
 async def select_products(message: str, concerns: list[Concern],
@@ -258,6 +261,203 @@ logger = logging.getLogger(__name__)
 #     응답 구조도 "성분 설명 → 제품 추천" 순서로 정렬(성분별 효능을 먼저 설명).
 # v5: 출력 길이를 더 줄여(제품 2개·~400자) decode latency를 낮추는 실험용(P3). GEN_PROMPT_NAME로 선택.
 _SYSTEM_PROMPT = load_prompt(settings.gen_prompt_name)
+_HANJA_OUTPUT_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+_CONSTRAINT_LABELS = {
+    Constraint.FRAGRANCE_FREE: "향료 미포함",
+    Constraint.ALCOHOL_FREE: "알코올 미포함",
+    Constraint.VEGAN: "비건",
+    Constraint.HYPOALLERGENIC: "저자극",
+    Constraint.EWG_GREEN: "EWG 그린 등급",
+}
+
+
+def _remove_hanja(text: str) -> tuple[str, bool]:
+    """응답에 섞인 CJK 통합 한자를 결정론적으로 제거한다.
+
+    스트리밍에서는 이 함수를 청크별로 적용해 문자가 클라이언트에 전송되기 전에
+    차단한다. 반환 bool은 가드 메트릭을 응답당 한 번만 올리기 위한 표시다.
+    """
+    cleaned = _HANJA_OUTPUT_PATTERN.sub("", text)
+    return cleaned, cleaned != text
+
+
+_PLAIN_LANGUAGE_REPLACEMENTS = {
+    "피부 심부": "피부 속",
+    "심부 피부": "피부 속",
+    "심부": "피부 속",
+    "피장벽": "피부 장벽",
+    "피분비": "피지 분비",
+    "지분 분비": "피지 분비",
+    "지분 조절": "피지 조절",
+    "지분을": "피지를",
+    "지분이": "피지가",
+    "지분은": "피지는",
+    "지분과": "피지와",
+    "지분": "피지",
+}
+
+
+def _normalize_consumer_language(text: str) -> str:
+    """모델이 만든 어려운 용어와 반복적으로 관측된 오타를 소비자 표현으로 바꾼다."""
+    for source, target in _PLAIN_LANGUAGE_REPLACEMENTS.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _product_display_name(brand: str | None, product_name: str | None) -> str:
+    """상품명에 브랜드가 이미 포함되어 있으면 한 번만 표시한다."""
+    brand = (brand or "").strip()
+    product_name = (product_name or "").strip()
+    if not brand:
+        return product_name
+    if not product_name:
+        return brand
+    if product_name.casefold().startswith(brand.casefold()):
+        return product_name
+    return f"{brand} {product_name}"
+
+
+def _normalize_product_names(text: str, products: list[ProductResult]) -> str:
+    """`미샤 미샤 ...`처럼 브랜드를 필드와 상품명에서 중복 조립한 출력을 정리한다."""
+    for product in products:
+        raw = f"{(product.brand or '').strip()} {(product.product_name or '').strip()}".strip()
+        display = _product_display_name(product.brand, product.product_name)
+        if raw and raw != display:
+            text = text.replace(raw, display)
+    return text
+
+
+def _normalize_response_text(
+    text: str,
+    products: list[ProductResult],
+) -> tuple[str, bool]:
+    """클라이언트에 보내기 전 한자·어려운 표현·브랜드 중복을 한곳에서 정리한다."""
+    text, hanja_removed = _remove_hanja(text)
+    text = _normalize_consumer_language(text)
+    text = _normalize_product_names(text, products)
+    return text, hanja_removed
+
+
+def _apply_constraint_evidence_guard(
+    products: list[dict],
+    constraints: list[Constraint],
+) -> list[dict]:
+    """제품 속성 근거가 없으면 제약 충족을 추측하지 않는다.
+
+    현재 검색 데이터는 성분 근거와 제품 매칭만 제공하고, 무향·알코올 프리·
+    비건·저자극·EWG 인증/전성분 근거는 제공하지 않는다. 제약이 있는데도
+    제품을 제시하면 '조건을 만족한다'는 근거 없는 암시가 되므로 보수적으로 빈다.
+    """
+    if products and constraints:
+        metrics.recommend_output_guard_total.labels(kind="unverified_constraints").inc()
+        return []
+    return products
+
+
+def _build_no_product_response(
+    ingredients: list[IngredientResult],
+    constraints: list[Constraint],
+) -> str:
+    """검색 공백에서 제품명을 만들지 않는 결정론적 응답."""
+    metrics.recommend_output_guard_total.labels(kind="no_products").inc()
+    if constraints:
+        labels = ", ".join(_CONSTRAINT_LABELS[item] for item in constraints)
+        return (
+            f"요청하신 조건({labels})을 확인할 수 있는 제품 속성 데이터가 없어 "
+            "구체적인 제품명을 추천하지 않겠습니다. 구매 전에 전성분 표시와 인증 정보를 "
+            "직접 확인해 주세요."
+        )
+    if ingredients:
+        names = ", ".join(_ingredient_display_name(item) for item in ingredients[:3])
+        return (
+            "현재 제공된 제품 데이터에서 조건에 맞는 제품을 찾지 못해 구체적인 "
+            f"제품명을 추천하지 않겠습니다. 성분 표시에서 {names}의 포함 여부를 확인해 보세요."
+        )
+    return (
+        "현재 제공된 성분과 제품 데이터에서 조건에 맞는 결과를 찾지 못해 "
+        "구체적인 제품명을 추천하지 않겠습니다."
+    )
+
+
+def _has_product_grounding_violation(
+    response_text: str,
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+) -> bool:
+    """제품 추천 bullet의 제품/성분 연결이 제공 데이터의 부분집합인지 검사."""
+    ingredient_aliases: list[tuple[str, tuple[str, ...]]] = []
+    for ingredient in ingredients:
+        aliases = tuple(
+            alias.casefold()
+            for alias in (ingredient.name, ingredient.kor_name)
+            if alias and len(alias.strip()) >= 2
+        )
+        ingredient_aliases.append((ingredient.name, aliases))
+
+    in_product_section = False
+    saw_product_bullet = False
+    for raw_line in response_text.splitlines():
+        line = raw_line.strip()
+        if line.replace("*", "") == "추천 제품":
+            in_product_section = True
+            continue
+        if not in_product_section or not line.startswith("-"):
+            continue
+        saw_product_bullet = True
+        matched = [product for product in products if product.product_name and product.product_name in line]
+        if not matched:
+            return True
+        allowed = {
+            name.casefold()
+            for product in matched
+            for name in product.matched_ingredients
+        }
+        # An ingredient-looking token inside the official product name is not a
+        # generated ingredient claim. Validate only the explanatory remainder.
+        claim_text = line
+        for product in matched:
+            claim_text = claim_text.replace(product.product_name, "")
+        folded_line = claim_text.casefold()
+        for inci_name, aliases in ingredient_aliases:
+            if any(alias in folded_line for alias in aliases) and inci_name.casefold() not in allowed:
+                return True
+    return bool(products) and (not in_product_section or not saw_product_bullet)
+
+
+def _build_grounded_product_response(
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+) -> str:
+    """제품-성분 연결 검증에 실패했을 때 사용하는 근거 부분집합 응답."""
+    ingredient_map = {item.name: item for item in ingredients}
+    highlighted: list[str] = []
+    for product in products[:3]:
+        for name in product.matched_ingredients[:2]:
+            item = ingredient_map.get(name)
+            display = _ingredient_display_name(item) if item else name
+            if display not in highlighted:
+                highlighted.append(display)
+    ingredient_text = ", ".join(highlighted[:3]) or "제공된 핵심 성분"
+    lines = [
+        "고민 분석",
+        "제공된 근거 데이터 안에서 피부 고민에 관련된 제품을 정리했습니다.",
+        "",
+        "성분 설명",
+        f"{ingredient_text}은 각 제품의 제공된 매칭 성분에서 확인됩니다.",
+        "",
+        "추천 제품",
+    ]
+    for product in products[:3]:
+        matched_names = []
+        for name in product.matched_ingredients[:2]:
+            item = ingredient_map.get(name)
+            matched_names.append(_ingredient_display_name(item) if item else name)
+        matched_text = ", ".join(matched_names) or "제공된 매칭 성분"
+        lines.append(
+            f"- [{product.category}] {_product_display_name(product.brand, product.product_name)}: "
+            f"{matched_text}이 제품 데이터에서 확인됩니다."
+        )
+    return "\n".join(lines)
 
 
 def _record_latency(spans: dict[str, float], cache: str) -> None:
@@ -355,6 +555,18 @@ def _has_followup_cue(message: str) -> bool:
     return any(c in message for c in _FOLLOWUP_CUES)
 
 
+# 지시적(deictic) 후속 — "이 중에서/그 중에서/이것들 중"처럼 **직전 추천 세트**를 콕 집어
+# 좁히는 요청. 이런 요청에 옛 턴의 대화 맥락(다른 고민)이 섞이면 필터가 오염된다
+# ("건조" 추천 뒤 "이 중에서 지성용" → 옛 '건조' 맥락이 새면 안 됨). 제품 후보는 이미
+# 직전 턴만 보므로, 생성 컨텍스트의 '이전 대화'도 직전 턴 하나로 한정한다.
+_DEICTIC_CUES = ("그 중", "그중", "이 중", "이중", "저 중", "저중", "중에서",
+                 "이것들", "그것들")
+
+
+def _is_deictic(message: str) -> bool:
+    return any(c in message for c in _DEICTIC_CUES)
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
@@ -433,8 +645,12 @@ def _fmt_ingredient(inci: str, ing_kor: dict[str, str]) -> str:
     return f"{kor} ({inci})" if kor else inci
 
 
-def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
-    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'."""
+def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: bool = False) -> str:
+    """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'.
+
+    deictic=True("이 중에서" 류)면 '이전 대화'를 직전 추천 턴 하나로 한정해, 옛 고민이
+    필터에 새는 것을 막는다(제품 후보는 항상 직전 턴만 본다). 아니면 최근 3턴을 맥락으로 준다.
+    """
     lines: list[str] = []
     last = next((t for t in reversed(history) if t.get("products")), None)
     if last and last.get("products"):
@@ -449,7 +665,9 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str]) -> str:
             display = name if (brand and brand in name) else f"{brand} {name}".strip()
             lines.append(f"- [{p.get('category', '')}] {display}{rate}{ing_str}")
     lines.append("\n이전 대화:")
-    for turn in history[-3:]:
+    # 지시적 요청은 직전 추천 턴 하나만(옛 고민 차단), 아니면 최근 3턴.
+    recent = [last] if (deictic and last) else history[-3:]
+    for turn in recent:
         if turn.get("user"):
             lines.append(f"사용자: {turn['user']}")
         if turn.get("assistant"):
@@ -513,9 +731,27 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
     # 이전 제품들의 핵심 성분 INCI → 한글명 조회('한글 (INCI)' 표기용).
     last = next((t for t in reversed(history) if t.get("products")), None)
+    if last is None:
+        # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
+        # 넘기지 않는다. 빈 컨텍스트 비교는 제품/성분을 새로 만들기 쉽다.
+        response_text = (
+            "이전 추천에서 조건에 맞는 제품을 찾지 못해 비교할 제품이 없습니다. "
+            "원하시면 제품 조건을 조정하거나 피부 고민을 다시 알려주세요."
+        )
+        metrics.recommend_output_guard_total.labels(kind="followup_without_products").inc()
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, [], response_text, None)
+        return RecommendResponse(
+            session_id=session_id,
+            turn_id=turn_id,
+            ingredients=[],
+            products=[],
+            response_text=response_text,
+            model_used=settings.gpu_model,
+        )
     inci_all = {i for p in (last or {}).get("products", []) for i in (p.get("matched_ingredients") or [])}
     ing_kor = await query_ingredient_kor_names(sorted(inci_all))
-    user_content = f"{_followup_context(history, ing_kor)}\n\n현재 질문: {message}"
+    user_content = f"{_followup_context(history, ing_kor, deictic=_is_deictic(message))}\n\n현재 질문: {message}"
     try:
         async with llm_slot():
             client = get_async_llm_client()
@@ -533,13 +769,16 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     except Exception:
         metrics.recommend_requests_total.labels(status="error").inc()
         raise
-    metrics.recommend_requests_total.labels(status="ok").inc()
     # LLM이 최종 추천 순위 마커를 냈으면 그 순서로 카드 재정렬(없으면 원래 순서 폴백).
     response_text, ranking = _extract_ranking(response_text)
     # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
     last = next((t for t in reversed(history) if t.get("products")), None)
     products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])),
                                    ranking, response_text)
+    response_text, hanja_removed = _normalize_response_text(response_text, products)
+    if hanja_removed:
+        metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+    metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
     ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     await _store_turn(session_id, message, products, response_text, None)
@@ -548,26 +787,45 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
                              model_used=settings.gpu_model)
 
 
+async def _resolve_conversation_response(
+    session_id: str,
+    turn_id: str,
+    message: str,
+) -> RecommendResponse | None:
+    """Batch/SSE가 공통으로 사용하는 대화 분기.
+
+    후속 질문이면 이전 추천을 사용하고, 이력이 만료된 후속 표현이면
+    두 전송 경로 모두 같은 안내 응답을 반환한다. 신규 요청은 None이다.
+    """
+    history = await conversation_store.load_recent(session_id)
+    if history and await _is_followup(message, history):
+        return await _handle_followup(session_id, turn_id, message, history)
+    if not history and _has_followup_cue(message):
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
+                "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
+                "(예: \"여드름이랑 모공이 고민이에요\")")
+        return RecommendResponse(
+            session_id=session_id,
+            turn_id=turn_id,
+            ingredients=[],
+            products=[],
+            response_text=text,
+            model_used=settings.gpu_model,
+        )
+    return None
+
+
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
     reset_gate_wait()
     t_req = time.perf_counter()
     spans: dict[str, float] = {}
 
-    # 멀티턴(P2): 이력이 있고 이번 턴이 후속(이전 추천에 대한 질문)이면 검색을 스킵하고
-    # 대화 맥락으로 답한다. 세션 의존이라 콘텐츠 캐시는 우회.
-    history = await conversation_store.load_recent(session_id)
-    if history and await _is_followup(message, history):
-        return await _handle_followup(session_id, turn_id, message, history)
-    # 명백한 후속 표현("방금/이 중에서")인데 이력이 없으면(세션 만료·재시작) 새 추천 파이프라인이
-    # "제품 없음" 류 혼란스러운 답을 내므로, 안내 메시지로 graceful 처리.
-    if not history and _has_followup_cue(message):
-        metrics.recommend_requests_total.labels(status="ok").inc()
-        text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
-                "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
-                "(예: \"여드름이랑 모공이 고민이에요\")")
-        return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[],
-                                 products=[], response_text=text, model_used=settings.gpu_model)
+    # 멀티턴: 후속/이력 만료 분기를 SSE와 공유해 기능 차이를 막는다.
+    conversation_response = await _resolve_conversation_response(session_id, turn_id, message)
+    if conversation_response is not None:
+        return conversation_response
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
@@ -607,6 +865,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
             _t = time.perf_counter()
             profile, extraction_method = await extract_with_fallback(message)
+            constraints = list(getattr(profile, "constraints", []))
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -635,6 +894,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 for r in raw_ingredients[:10]
             ]
             raw_products = await select_products(message, profile.concerns, ingredient_scores)
+            raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
 
@@ -656,9 +916,18 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 for row in raw_products
             ]
 
-            # 3) LLM 응답 생성
+            # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
-            response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+            if products:
+                response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+            else:
+                response_text = _build_no_product_response(ingredients, constraints)
+            response_text, hanja_removed = _normalize_response_text(response_text, products)
+            if hanja_removed:
+                metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+            if products and _has_product_grounding_violation(response_text, ingredients, products):
+                metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
+                response_text = _build_grounded_product_response(ingredients, products)
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -792,7 +1061,7 @@ def _compose_user_content(
             return ", ".join(annotated)
 
         def _product_line(p: ProductResult) -> str:
-            base = (f"- [{p.category}] {p.brand} {p.product_name} "
+            base = (f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
                     f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
             note = _review_note(p)
             return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
@@ -836,7 +1105,9 @@ async def _build_llm_response(
     except Exception as exc:
         logger.warning("LLM response generation failed: %s", exc)
         if products:
-            prod_names = ", ".join(f"{p.brand} {p.product_name}" for p in products[:3])
+            prod_names = ", ".join(
+                _product_display_name(p.brand, p.product_name) for p in products[:3]
+            )
             return f"피부 고민 분석 결과, 다음 제품들을 추천드립니다: {prod_names}"
         if ingredients:
             names = ", ".join(_ingredient_display_name(i) for i in ingredients[:5])
@@ -850,15 +1121,40 @@ def _sse(event: str, data: dict) -> str:
 
 
 async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
-    """SSE 스트리밍 추천: meta(구조 데이터 즉시) → delta(생성 토큰) → done.
+    """SSE 추천: meta(구조 데이터 즉시) → delta(검증된 본문) → done.
 
-    체감 latency(TTFT)를 낮춘다. 생성 단계를 generate_ttft/generate_decode 로 분리 계측해
-    "prefill vs decode" 비중을 단건으로 드러낸다.
+    성분·제품 카드를 생성 전에 보내 빈 화면을 줄인다. 본문은 한자와
+    제품-성분 연결을 검증한 뒤 전송한다. 모델 내부 생성 단계는
+    generate_ttft/generate_decode로 계속 분리 계측한다.
     """
     turn_id = str(uuid.uuid4())
     reset_gate_wait()
     t_req = time.perf_counter()
     spans: dict[str, float] = {}
+
+    # 일반 응답과 같은 대화 분기를 탄다. 후속 응답은 아직 토큰 단위로
+    # 생성하지 않지만, meta → delta → done 규약으로 전달해 기능을 동일하게 유지한다.
+    try:
+        conversation_response = await _resolve_conversation_response(session_id, turn_id, message)
+    except LLMOverCapacityError:
+        yield _sse("error", {"error_code": "LLM_OVER_CAPACITY", "message": "요청이 많아 잠시 후 다시 시도해 주세요."})
+        return
+    except Exception as exc:
+        logger.warning("streaming conversation handling failed: %s", exc)
+        yield _sse("error", {"error_code": "INTERNAL_ERROR",
+                             "message": "일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요."})
+        return
+    if conversation_response is not None:
+        yield _sse("meta", {
+            "session_id": conversation_response.session_id,
+            "turn_id": conversation_response.turn_id,
+            "ingredients": [i.model_dump() for i in conversation_response.ingredients],
+            "products": [p.model_dump() for p in conversation_response.products],
+            "model_used": conversation_response.model_used,
+        })
+        yield _sse("delta", {"text": conversation_response.response_text})
+        yield _sse("done", {"finish_reason": "conversation"})
+        return
 
     _t = time.perf_counter()
     cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
@@ -903,6 +1199,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
 
             _t = time.perf_counter()
             profile, extraction_method = await extract_with_fallback(message)
+            constraints = list(getattr(profile, "constraints", []))
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -922,6 +1219,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 for r in raw_ingredients[:10]
             ]
             raw_products = await select_products(message, profile.concerns, ingredient_scores)
+            raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
             products = [
@@ -944,33 +1242,55 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                                 "products": [p.model_dump() for p in products],
                                 "model_used": settings.gpu_model})
 
-            # 생성 스트리밍 (TTFT 측정)
-            user_content = _compose_user_content(message, ingredients, products)
+            # 생성 스트리밍 (TTFT 측정). 제품 0건은 모델을 거치지 않는다.
             chunks: list[str] = []
-            ttft: float | None = None
-            gen_start = time.perf_counter()
-            async with llm_slot():
-                client = get_async_llm_client()
-                stream = await client.chat.completions.create(
-                    model=settings.gpu_model,
-                    messages=[{"role": "system", "content": system_prompt},
-                              {"role": "user", "content": user_content}],
-                    temperature=settings.gen_temperature,
-                    max_tokens=settings.gen_max_tokens,
-                    stream=True,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                )
-                async for chunk in stream:
-                    delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
-                    if delta:
-                        if ttft is None:
-                            ttft = time.perf_counter() - gen_start
-                        chunks.append(delta)
-                        yield _sse("delta", {"text": delta})
-            gen_total = time.perf_counter() - gen_start
-            response_text = "".join(chunks)
-            spans["generate_ttft"] = ttft if ttft is not None else gen_total
-            spans["generate_decode"] = gen_total - spans["generate_ttft"]
+            hanja_removed = False
+            if not products:
+                response_text = _build_no_product_response(ingredients, constraints)
+                chunks.append(response_text)
+                yield _sse("delta", {"text": response_text})
+                gen_total = 0.0
+                spans["generate_ttft"] = 0.0
+                spans["generate_decode"] = 0.0
+            else:
+                user_content = _compose_user_content(message, ingredients, products)
+                ttft: float | None = None
+                gen_start = time.perf_counter()
+                async with llm_slot():
+                    client = get_async_llm_client()
+                    stream = await client.chat.completions.create(
+                        model=settings.gpu_model,
+                        messages=[{"role": "system", "content": system_prompt},
+                                  {"role": "user", "content": user_content}],
+                        temperature=settings.gen_temperature,
+                        max_tokens=settings.gen_max_tokens,
+                        stream=True,
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                    )
+                    async for chunk in stream:
+                        delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+                        if delta:
+                            if ttft is None:
+                                ttft = time.perf_counter() - gen_start
+                            safe_delta, removed = _remove_hanja(delta)
+                            hanja_removed = hanja_removed or removed
+                            if safe_delta:
+                                chunks.append(safe_delta)
+                gen_total = time.perf_counter() - gen_start
+                response_text = "".join(chunks)
+                spans["generate_ttft"] = ttft if ttft is not None else gen_total
+                spans["generate_decode"] = gen_total - spans["generate_ttft"]
+                response_text = _normalize_consumer_language(response_text)
+                response_text = _normalize_product_names(response_text, products)
+            if hanja_removed:
+                metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+            if products and _has_product_grounding_violation(response_text, ingredients, products):
+                metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
+                response_text = _build_grounded_product_response(ingredients, products)
+            # 제품-성분 연결을 검사한 뒤에만 클라이언트에 본문을 전송한다.
+            # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
+            if products:
+                yield _sse("delta", {"text": response_text})
 
             await recommend_cache.set(message, gen_prompt_name, {
                 "ingredients": [i.model_dump() for i in ingredients],

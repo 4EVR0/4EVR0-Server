@@ -1,4 +1,5 @@
 import json
+import re
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_gate import llm_slot
@@ -23,6 +24,61 @@ PROFILE_JSON_SCHEMA = {
     "required": ["skin_types", "concerns", "constraints"],
     "additionalProperties": False,
 }
+
+_ENLARGED_PORE_SIGNAL = re.compile(
+    r"(?:모공|pores?).{0,12}(?:넓|커|크기|large|visible)"
+    r"|(?:넓|커|큰|large|visible).{0,12}(?:모공|pores?)",
+    re.IGNORECASE,
+)
+_REDNESS_SIGNAL = re.compile(
+    r"홍조|로사케아|rosacea|redness|빨개지|붉어지|붉은\s*기"
+    r"|(?:얼굴|피부).{0,12}(?:빨갛|붉)",
+    re.IGNORECASE,
+)
+_EXPLICIT_SENSITIVE_SKIN = re.compile(r"민감|예민|sensitive", re.IGNORECASE)
+_COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
+_OILY_SURFACE_SIGNAL = re.compile(r"T존|티존|겉.{0,8}번들|번들거리|기름지|피지", re.IGNORECASE)
+_INNER_DRY_SIGNAL = re.compile(r"속건조|속.{0,8}당|볼.{0,8}(?:건조|당)", re.IGNORECASE)
+
+
+def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[SkinType]:
+    """Enforce the dataset policy for sensitive and combination skin labels."""
+    normalized = list(skin_types)
+
+    # Disease/symptom or a low-irritation request alone does not establish a
+    # sensitive *skin type*. Keep it only when the user explicitly says so.
+    if SkinType.SENSITIVE in normalized and not _EXPLICIT_SENSITIVE_SKIN.search(message):
+        normalized.remove(SkinType.SENSITIVE)
+
+    # Oily surface/T-zone plus inner or cheek dryness is the direct definition
+    # of combination skin, even when the model emits only OILY or DRY.
+    is_combination = bool(
+        _COMBINATION_SKIN.search(message)
+        or (_OILY_SURFACE_SIGNAL.search(message) and _INNER_DRY_SIGNAL.search(message))
+    )
+    if is_combination:
+        normalized = [item for item in normalized if item not in {SkinType.OILY, SkinType.DRY}]
+        if SkinType.COMBINATION not in normalized:
+            normalized.append(SkinType.COMBINATION)
+    return normalized
+
+
+def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
+    """Remove two repeatedly observed adjacent-concern over-extractions.
+
+    Oily/combination skin does not imply enlarged pores. Likewise, the words
+    ``붉은 자국`` and ``빨간 여드름`` describe post-acne marks or acne itself,
+    not an independent redness concern. Only keep these labels when their own
+    explicit symptom signal is present in the user message.
+    """
+    normalized: list[Concern] = []
+    for concern in concerns:
+        if concern == Concern.ENLARGED_PORES and not _ENLARGED_PORE_SIGNAL.search(message):
+            continue
+        if concern == Concern.REDNESS and not _REDNESS_SIGNAL.search(message):
+            continue
+        normalized.append(concern)
+    return normalized
 
 
 def build_extract_extra_body() -> dict:
@@ -52,8 +108,14 @@ async def call_llm(message: str) -> UserProfile:
     raw = response.choices[0].message.content or "{}"
     data = json.loads(raw)
 
-    skin_types = [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_]
-    concerns = [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_]
+    skin_types = _normalize_skin_types(
+        message,
+        [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_],
+    )
+    concerns = _normalize_concerns(
+        message,
+        [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_],
+    )
     constraints = [Constraint(v) for v in data.get("constraints", []) if v in Constraint._value2member_map_]
     effects = infer_effects(concerns)
 

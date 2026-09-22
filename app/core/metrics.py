@@ -60,3 +60,11 @@ recommend_ingredients_found = Histogram(
     "추천 1건에서 Neo4j가 반환한 성분 수",
     buckets=(0, 1, 3, 5, 10, 20, 50),
 )
+
+# 결정론적 출력 가드 발동 횟수.
+#   kind = no_products | unverified_constraints | hanja_removed | grounding_fallback
+recommend_output_guard_total = Counter(
+    "recommend_output_guard_total",
+    "추천 응답에 적용된 결정론적 출력 가드",
+    ["kind"],
+)
