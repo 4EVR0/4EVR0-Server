@@ -10,7 +10,9 @@ python eval/run_eval.py --no-mlflow
 ```
 
 Dataset labels are validated before any model request. See `LABELING.md` for the
-labeling policy.
+labeling policy. The runner applies the same deterministic skin-type and concern
+normalization as the serving path before scoring, so the gate measures production
+behavior rather than the model's intermediate JSON.
 
 ## Recommendation response quality
 

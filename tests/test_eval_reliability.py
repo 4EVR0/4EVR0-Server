@@ -68,6 +68,38 @@ def test_correlations_support_ties_and_perfect_order():
     assert pearson_correlation([1, 1], [2, 3]) is None
 
 
+def test_extraction_eval_uses_serving_normalization(monkeypatch, tmp_path):
+    from eval import run_eval
+
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(json.dumps({
+        "id": 1,
+        "message": "속건조가 심해서 겉은 번들거리는데 속은 당겨요.",
+        "skin_types": ["COMBINATION"],
+        "concerns": ["ACNE"],
+        "constraints": [],
+    }))
+
+    async def fake_extract(*_args):
+        return {
+            "skin_types": ["OILY", "SENSITIVE"],
+            "concerns": ["ACNE", "REDNESS"],
+            "constraints": [],
+        }, {"prompt": 1, "completion": 1}, 0.01
+
+    monkeypatch.setattr(run_eval, "extract", fake_extract)
+    monkeypatch.setattr(run_eval, "get_async_llm_client", lambda: object())
+
+    report = asyncio.run(run_eval.run(dataset, None))
+
+    assert report["cases"][0]["pred"] == {
+        "skin_types": ["COMBINATION"],
+        "concerns": ["ACNE"],
+        "constraints": [],
+    }
+    assert report["metrics"]["skin_type_accuracy"] == 1.0
+
+
 def test_judge_config_rejects_same_model_and_endpoint(monkeypatch):
     monkeypatch.setenv("TEST_JUDGE_KEY", "EMPTY")
 
