@@ -8,6 +8,48 @@ def test_oily_surface_and_inner_dryness_normalize_to_combination():
     ) == [SkinType.COMBINATION]
 
 
+def test_local_oiliness_does_not_prove_combination_skin():
+    assert _normalize_skin_types(
+        "오후에는 이마가 번들거리고 뾰루지가 나요.", [SkinType.COMBINATION]
+    ) == [SkinType.OILY]
+
+
+def test_negated_oiliness_and_inner_tightness_do_not_prove_combination_or_dry_skin():
+    assert _normalize_skin_types(
+        "겉은 번들거리지 않고 속이 당겨요.", [SkinType.COMBINATION, SkinType.DRY]
+    ) == []
+    assert _normalize_skin_types(
+        "겉은 번들거리거나 각질이 보이지 않는데 속이 당겨요.", [SkinType.DRY]
+    ) == []
+
+
+def test_negated_inner_dryness_does_not_prove_combination_skin():
+    assert _normalize_skin_types(
+        "피지는 많지만 속당김은 없어요.", [SkinType.COMBINATION]
+    ) == [SkinType.OILY]
+
+
+def test_positive_oiliness_and_cheek_dryness_still_prove_combination_skin():
+    assert _normalize_skin_types(
+        "이마는 번들거리지만 각질은 없고 볼은 건조해요.", [SkinType.OILY]
+    ) == [SkinType.COMBINATION]
+    assert _normalize_skin_types(
+        "T존은 기름지고 볼은 건조한 복합성이에요.", [SkinType.DRY]
+    ) == [SkinType.COMBINATION]
+
+
+def test_dryness_negation_and_location_do_not_create_combination_skin():
+    assert _normalize_skin_types(
+        "T존은 번들거리지만 볼은 건조하지 않아요.", [SkinType.COMBINATION]
+    ) == [SkinType.OILY]
+    assert _normalize_skin_types(
+        "T존에 뾰루지가 생기고 속은 당겨요.", [SkinType.COMBINATION, SkinType.DRY]
+    ) == []
+    assert _normalize_skin_types(
+        "볼이 건조하고 당겨요.", [SkinType.DRY]
+    ) == [SkinType.DRY]
+
+
 def test_sensitive_skin_requires_explicit_skin_type_language():
     assert _normalize_skin_types(
         "아토피가 잘 올라오고 가려워서 저자극 제품을 원해요.", [SkinType.SENSITIVE]

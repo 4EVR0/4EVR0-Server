@@ -37,8 +37,17 @@ _REDNESS_SIGNAL = re.compile(
 )
 _EXPLICIT_SENSITIVE_SKIN = re.compile(r"민감|예민|sensitive", re.IGNORECASE)
 _COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
-_OILY_SURFACE_SIGNAL = re.compile(r"T존|티존|겉.{0,8}번들|번들거리|기름지|피지", re.IGNORECASE)
-_INNER_DRY_SIGNAL = re.compile(r"속건조|속.{0,8}당|볼.{0,8}(?:건조|당)", re.IGNORECASE)
+_OILY_SURFACE_SIGNAL = re.compile(r"번들|기름|피지|유분|oily", re.IGNORECASE)
+_INNER_DRY_SIGNAL = re.compile(
+    r"속.{0,20}?(?:건조|수분.{0,8}부족|당)|(?:볼|뺨).{0,8}?(?:건조|당)",
+    re.IGNORECASE,
+)
+_INNER_ONLY_DRY_SIGNAL = re.compile(r"속.{0,20}?(?:건조|수분.{0,8}부족|당)", re.IGNORECASE)
+_SKIN_DRY_SIGNAL = re.compile(r"건성|건조|당김|당기|당겨|메마르", re.IGNORECASE)
+_NEGATED_SKIN_SIGNAL = re.compile(
+    r"^(?:.{0,4}?(?:지\s*않|지\s*못|안\s*보|없)|.{0,6}?거나.{0,20}?보이지\s*않)",
+    re.IGNORECASE,
+)
 _DEHYDRATION_CONCERN = re.compile(
     r"(?<![가-힣])속(?:건조|당|.{0,6}(?:건조|수분|당김|당겨|당기))"
     r"|피부속.{0,6}(?:건조|수분|당김|당겨|당기)"
@@ -63,8 +72,16 @@ _SPECIFIC_AGING_SIGNALS = (
 )
 
 
+def _has_positive_skin_signal(message: str, signal: re.Pattern[str]) -> bool:
+    """A mentioned feature is not evidence when the user explicitly negates it."""
+    return any(
+        not _NEGATED_SKIN_SIGNAL.match(message[match.end():])
+        for match in signal.finditer(message)
+    )
+
+
 def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[SkinType]:
-    """Enforce the dataset policy for sensitive and combination skin labels."""
+    """Keep skin-type labels tied to positive, directly described evidence."""
     normalized = list(skin_types)
 
     # Disease/symptom or a low-irritation request alone does not establish a
@@ -72,16 +89,34 @@ def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[Skin
     if SkinType.SENSITIVE in normalized and not _EXPLICIT_SENSITIVE_SKIN.search(message):
         normalized.remove(SkinType.SENSITIVE)
 
-    # Oily surface/T-zone plus inner or cheek dryness is the direct definition
-    # of combination skin, even when the model emits only OILY or DRY.
-    is_combination = bool(
-        _COMBINATION_SKIN.search(message)
-        or (_OILY_SURFACE_SIGNAL.search(message) and _INNER_DRY_SIGNAL.search(message))
-    )
+    oily = _has_positive_skin_signal(message, _OILY_SURFACE_SIGNAL)
+    inner_dry = _has_positive_skin_signal(message, _INNER_DRY_SIGNAL)
+    # Inner tightness/dehydration alone is a concern, not a dry *skin type*.
+    surface_message = _INNER_ONLY_DRY_SIGNAL.sub("", message)
+    surface_dry = _has_positive_skin_signal(surface_message, _SKIN_DRY_SIGNAL)
+
+    # Only a named combination type or two positive, complementary signs
+    # establish COMBINATION. In particular, a negated oily surface does not.
+    is_combination = bool(_COMBINATION_SKIN.search(message) or (oily and inner_dry))
     if is_combination:
-        normalized = [item for item in normalized if item not in {SkinType.OILY, SkinType.DRY}]
+        normalized = [
+            item for item in normalized
+            if item not in {SkinType.OILY, SkinType.DRY, SkinType.COMBINATION}
+        ]
         if SkinType.COMBINATION not in normalized:
             normalized.append(SkinType.COMBINATION)
+    else:
+        normalized = [
+            item for item in normalized
+            if item != SkinType.COMBINATION
+            and not (item == SkinType.DRY and not surface_dry)
+            and not (item == SkinType.OILY and not oily)
+        ]
+        if SkinType.COMBINATION in skin_types:
+            if oily and SkinType.OILY not in normalized:
+                normalized.append(SkinType.OILY)
+            if surface_dry and SkinType.DRY not in normalized:
+                normalized.append(SkinType.DRY)
     return normalized
 
 
