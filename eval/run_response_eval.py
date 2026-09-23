@@ -47,7 +47,7 @@ from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import (  # noqa: E402
     _evidence_label,
     _ingredient_display_name,
-    _product_display_name,
+    _product_evidence_lines,
     recommend,
 )
 from eval.eval_utils import (  # noqa: E402
@@ -152,31 +152,13 @@ def render_evidence_context(ingredients, products) -> dict[str, str]:
     LLM judge와 사람 라벨러가 **같은 근거**를 보도록 리포트에도 이 결과를 저장한다
     (judge-vs-human 비교가 성립하려면 채점 입력이 같아야 한다).
     """
-    ingredient_by_name = {ingredient.name: ingredient for ingredient in ingredients}
     ing_lines = "\n".join(
         f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
         f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
         for i in ingredients[:10]
     ) or "(없음)"
 
-    def _annotate(names: list[str]) -> str:
-        annotated = []
-        for name in names[:3]:
-            ingredient = ingredient_by_name.get(name)
-            if ingredient:
-                annotated.append(
-                    f"{_ingredient_display_name(ingredient)} "
-                    f"[{_evidence_label(ingredient.eligibility_tier, ingredient.paper_ref)}]"
-                )
-            else:
-                annotated.append(f"{name} [근거 미상]")
-        return ", ".join(annotated)
-
-    prod_lines = "\n".join(
-        f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
-        f"(핵심성분: {_annotate(p.matched_ingredients)})"
-        for p in products
-    ) or "(없음)"
+    prod_lines = _product_evidence_lines(ingredients, products) or "(없음)"
     return {"ingredients": ing_lines, "products": prod_lines}
 
 

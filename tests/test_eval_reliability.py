@@ -434,6 +434,60 @@ def test_report_stores_evidence_context_for_human_labeling(tmp_path, monkeypatch
     assert evidence == response_eval.render_evidence_context([ingredient], [product])
 
 
+def test_judge_and_generator_share_product_review_evidence():
+    """리뷰를 인용한 응답도 Judge와 사람이 동일한 원문 근거로 검증해야 한다."""
+    from app.schemas.recommend import IngredientResult, ProductResult
+    from app.services.recommend_service import _compose_user_content
+
+    ingredient = IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드",
+                                  claim="피지 조절", eligibility_tier="A", paper_ref="p1")
+    product = ProductResult(
+        product_id="P1", product_name="테스트 세럼", brand="브랜드", category="세럼",
+        matched_count=1, matched_ingredients=["NIACINAMIDE"], rating=4.9,
+        review_count=4933, review_stats={"자극도": {"자극없이 순해요": "64%"}},
+    )
+    evidence = response_eval.render_evidence_context([ingredient], [product])
+    generator_input = _compose_user_content("피부가 민감해요", [ingredient], [product])
+
+    assert evidence["products"] in generator_input
+    assert "⭐4.9·리뷰 4933개" in evidence["products"]
+    assert "자극없이 순해요 64%" in evidence["products"]
+
+    product.rating = None
+    no_review = response_eval.render_evidence_context([ingredient], [product])
+    assert no_review["products"] in _compose_user_content("피부가 민감해요", [ingredient], [product])
+    assert "사용자 리뷰(참고)" not in no_review["products"]
+
+
+def test_rejudge_updates_judged_count_for_generate_only_report(tmp_path, monkeypatch):
+    from eval import rejudge as rejudge_module
+
+    report_path = tmp_path / "generated.json"
+    report_path.write_text(json.dumps({
+        "run": {"n_judged": 0, "judge_temperature": None},
+        "cases": [{"id": 1, "message": "민감성 피부", "response": "추천 응답",
+                   "evidence": {"ingredients": "(없음)", "products": "(없음)"}}],
+    }), encoding="utf-8")
+
+    async def fake_judge(*_args):
+        return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
+
+    monkeypatch.setattr(rejudge_module, "build_judge_client", lambda _config: object())
+    monkeypatch.setattr(rejudge_module, "judge_with_evidence", fake_judge)
+    config = response_eval.JudgeConfig(model="external/judge", base_url="https://judge.example/v1",
+                                       api_key="secret", timeout_seconds=30)
+
+    result = asyncio.run(rejudge_module.rejudge(
+        report_path, config, response_eval.JUDGE_PROMPT_NAME,
+        judge_repeats=1, bootstrap_samples=50, seed=23,
+    ))
+
+    assert result["run"]["n_cases"] == 1
+    assert result["run"]["n_scored"] == 1
+    assert result["run"]["n_judged"] == 1
+    assert result["run"]["judge_temperature"] == 0
+
+
 def test_eval_default_prompt_follows_service_setting():
     """기준선은 운영이 실제로 쓰는 프롬프트를 측정해야 한다."""
     assert response_eval.DEFAULT_GEN_PROMPT == settings.gen_prompt_name
