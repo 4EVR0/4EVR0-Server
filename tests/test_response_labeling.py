@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import eval.label_responses as labeling
-from eval.run_response_eval import DIMS, load_human_scores
+from eval.run_response_eval import DIMS, PRIMARY_DIMS, load_human_scores
 
 
 def _case(case_id: int, **overrides) -> dict:
@@ -109,13 +109,14 @@ def test_rubric_comes_from_the_judge_prompt():
 
 # --- 라벨링 실행 ------------------------------------------------------------
 
-def _run(tmp_path, monkeypatch, answers, *, sample=2, out_name="labeler.jsonl", n_cases=3):
+def _run(tmp_path, monkeypatch, answers, *, sample=2, out_name="labeler.jsonl", n_cases=3,
+         primary_only=False):
     report = _write_report(tmp_path / "report.json", n_cases)
     out = tmp_path / out_name
     supplied = iter(answers)
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(supplied))
     args = SimpleNamespace(report=str(report), labeler="labeler", sample=sample,
-                           seed=23, out=str(out))
+                           seed=23, out=str(out), primary_only=primary_only)
     labeling.run_labeling(args)
     return out
 
@@ -133,6 +134,22 @@ def test_labels_are_readable_by_the_calibration_loader(tmp_path, monkeypatch):
     assert rows[0]["note"] == "메모"
     assert rows[0]["labeler"] == "labeler"
     assert rows[0]["source_report"] == "report.json"
+
+
+def test_primary_only_labels_calibrate_without_secondary_scores(tmp_path, monkeypatch, capsys):
+    out = _run(tmp_path, monkeypatch, ["4", "5", "3", "메모", "5", "5", "5", ""],
+               primary_only=True)
+
+    scores = load_human_scores(out)
+    assert len(scores) == 2
+    assert all(set(value) == set(PRIMARY_DIMS) for value in scores.values())
+    calibration_path = tmp_path / "primary-calibration.json"
+    assert labeling.run_calibration([str(tmp_path / "report.json"), str(out)],
+                                    str(calibration_path)) == 0
+    calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+    assert set(calibration["dimensions"]) == set(PRIMARY_DIMS)
+    assert calibration["overall"]["scope"] == "available_dimensions_flattened"
+    assert "핵심 3축 평균" in capsys.readouterr().out
 
 
 def test_quitting_saves_completed_cases_and_resumes(tmp_path, monkeypatch):

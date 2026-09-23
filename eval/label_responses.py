@@ -125,10 +125,10 @@ def render_case(case: dict, position: int, total: int) -> str:
     )
 
 
-def prompt_scores(case: dict) -> dict | None:
+def prompt_scores(case: dict, dimensions: list[str] = DIMS) -> dict | None:
     """한 케이스의 5개 차원 점수를 입력받는다. None이면 사용자가 중단을 선택."""
     scores = {}
-    for dim in DIMS:
+    for dim in dimensions:
         while True:
             raw = input(f"  {DIM_KOR[dim]}\n    {dim} [1-5, q=저장 후 종료]: ").strip().lower()
             if raw == "q":
@@ -148,6 +148,9 @@ def run_labeling(args) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = load_existing_labels(out_path)
+    dimensions = PRIMARY_DIMS if getattr(args, "primary_only", False) else DIMS
+    if any(set(row.get("scores", {})) != set(dimensions) for row in existing.values()):
+        raise ValueError(f"{out_path}: 기존 라벨과 이번 채점 축이 다릅니다")
     selected = select_cases(cases, args.sample, args.seed)
     todo = [case for case in selected if case["id"] not in existing]
 
@@ -163,7 +166,11 @@ def run_labeling(args) -> int:
     print("─" * 72)
     print("  채점 기준 (LLM judge와 동일한 루브릭):")
     print()
-    print(extract_rubric(judge_prompt))
+    if getattr(args, "primary_only", False):
+        for dim in dimensions:
+            print(f"- {DIM_KOR[dim]}")
+    else:
+        print(extract_rubric(judge_prompt))
     print()
     print("  1=매우 나쁨 … 5=매우 좋음. 기본값으로 5를 주지 말고 전 구간을 쓰세요.")
     print("=" * 72)
@@ -176,7 +183,7 @@ def run_labeling(args) -> int:
     with out_path.open("a", encoding="utf-8") as fp:
         for case in todo:
             print(render_case(case, done + 1, len(selected)))
-            result = prompt_scores(case)
+            result = prompt_scores(case, dimensions)
             if result is None:
                 print(f"\n중단했습니다. {done}건 저장됨 → {out_path}")
                 print("같은 명령을 다시 실행하면 이어서 진행합니다.")
@@ -220,8 +227,11 @@ def run_agreement(paths: list[str]) -> int:
 
     all_left, all_right = [], []
     for dim in DIMS:
-        a = [left[i]["scores"][dim] for i in shared]
-        b = [right[i]["scores"][dim] for i in shared]
+        dim_ids = [i for i in shared if dim in left[i]["scores"] and dim in right[i]["scores"]]
+        if not dim_ids:
+            continue
+        a = [left[i]["scores"][dim] for i in dim_ids]
+        b = [right[i]["scores"][dim] for i in dim_ids]
         all_left.extend(a)
         all_right.extend(b)
         mae = statistics.mean(abs(x - y) for x, y in zip(a, b))
@@ -284,6 +294,8 @@ def run_calibration(paths: list[str], out: str | None = None) -> int:
     print(f"  {'차원':<20} {'MAE':>7} {'Pearson':>9} {'Spearman':>9}")
     print("─" * 72)
     for dim in DIMS:
+        if dim not in calibration["dimensions"]:
+            continue
         values = calibration["dimensions"][dim]
         print(
             f"  {dim:<20} {values['mae']:>7.3f} {str(values['pearson']):>9} "
@@ -323,6 +335,8 @@ def main():
     ap.add_argument("--seed", type=int, default=23,
                     help="표본·순서 시드. 두 라벨러가 같은 표본을 보려면 같은 값 사용")
     ap.add_argument("--out", default=None, help="라벨 저장 경로 (기본 eval/labels/<labeler>.jsonl)")
+    ap.add_argument("--primary-only", action="store_true",
+                    help="핵심 3축(concern_fit, grounding, korean_quality)만 사람 채점")
     ap.add_argument("--agreement", nargs=2, metavar=("A.jsonl", "B.jsonl"),
                     help="두 라벨 파일의 일치도만 계산하고 종료")
     ap.add_argument("--calibrate", nargs=2, metavar=("REPORT.json", "LABELS.jsonl"),

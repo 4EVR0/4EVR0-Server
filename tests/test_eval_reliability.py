@@ -11,6 +11,7 @@ import eval.run_response_eval as response_eval
 from eval.check_gate import _check_report_code_sha, _hard_failure_section
 from eval.eval_utils import (
     bootstrap_mean_ci,
+    file_sha256,
     load_dataset,
     pearson_correlation,
     spearman_correlation,
@@ -34,6 +35,18 @@ def test_shared_dataset_has_50_valid_unique_cases():
     assert {value for case in cases for value in case["skin_types"]} == {item.value for item in SkinType}
     assert {value for case in cases for value in case["concerns"]} == {item.value for item in Concern}
     assert {value for case in cases for value in case["constraints"]} == {item.value for item in Constraint}
+
+
+def test_frozen_holdout_is_distinct_from_development_cases():
+    development = load_dataset(REPO_ROOT / "eval" / "dataset.jsonl")
+    holdout_path = REPO_ROOT / "eval" / "holdout" / "2026-09-23.jsonl"
+    holdout = load_dataset(holdout_path)
+
+    assert len(holdout) == 30
+    assert file_sha256(holdout_path) == "64aff8da51f626891196fc98b8953ebd209eed84f1dcf8d44bc9229d610c8c7c"
+    assert not ({case["id"] for case in holdout} & {case["id"] for case in development})
+    assert not ({case["message"] for case in holdout} & {case["message"] for case in development})
+    assert {value for case in holdout for value in case["constraints"]} == {item.value for item in Constraint}
 
 
 def test_dataset_validation_rejects_unknown_enum(tmp_path):
@@ -254,6 +267,37 @@ def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
     assert store.turns == {}
     for session_id in sessions:
         assert store.cleared.count(session_id) == 2
+
+
+def test_generate_only_keeps_responses_and_hard_checks_without_judge(tmp_path, monkeypatch):
+    from eval.rejudge import load_scorable
+
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+    store = _FakeConversationStore()
+
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        await store.append_turn(session_id, user=message, assistant="응답")
+        return SimpleNamespace(ingredients=[], products=[], response_text="현재 제품 근거가 없습니다.")
+
+    def unexpected_judge_client(_config):
+        raise AssertionError("generate-only must not build an external judge client")
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", unexpected_judge_client)
+
+    report = asyncio.run(response_eval.run(
+        dataset, None, response_eval.DEFAULT_GEN_PROMPT, None,
+        bootstrap_samples=50, session_mode="isolated",
+    ))
+
+    assert report["run"]["n_judged"] == 0
+    assert report["run"]["judge_model"] is None
+    assert report["metrics"]["error_rate"] == 0
+    assert report["metrics"]["hard_failure_rate"] == 0
+    assert "scores" not in report["cases"][0]
+    assert len(load_scorable(report)) == 1
+    assert store.turns == {}
 
 
 def test_isolated_sessions_differ_between_runs(tmp_path, monkeypatch):
