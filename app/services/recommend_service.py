@@ -87,7 +87,8 @@ def _appropriate_categories(concerns: list[Concern],
 
 
 # 리뷰 재정렬 (부연 신호): 관련도(논문 근거)를 코스 버킷으로 묶어 메인으로 두고,
-# 같은 버킷 안에서만 리뷰 강도(리뷰수×평점)로 순서를 조정한다. bucket이 클수록 리뷰 영향↑.
+# 같은 버킷 안에서 제품 타겟 고민의 정확 일치·그룹 일치를 먼저 본 다음 리뷰 강도로
+# 순서를 조정한다. 리뷰가 많다는 이유로 직접 고민 라벨이 없는 제품이 앞서는 것을 막는다.
 _RELEVANCE_BUCKET = 1.0
 
 
@@ -95,12 +96,22 @@ def _review_strength(p: dict) -> float:
     return float(p.get("review_count") or 0) * float(p.get("rating") or 0.0)
 
 
-def _rerank_by_review(products: list[dict]) -> list[dict]:
-    """관련도 버킷 내림차순 → 버킷 내 리뷰강도 내림차순. 논문 메인 / 리뷰 부연."""
+def _rerank_by_review(products: list[dict], concerns: list[Concern] | None = None) -> list[dict]:
+    """관련도 버킷 → 정확 고민 → 고민 그룹 → 리뷰강도 순으로 재정렬한다.
+
+    제품 라벨이 없거나 concerns가 없으면 기존처럼 리뷰강도만 부연 신호로 사용한다.
+    """
+    query_codes = {c.value for c in (concerns or [])}
+    query_groups = _concern_groups(query_codes)
+
     def key(p: dict):
         rel = float(p.get("relevance_score") or 0.0)
         bucket = round(rel / _RELEVANCE_BUCKET)
-        return (-bucket, -_review_strength(p))
+        labels = set(_PRODUCT_CONCERNS.get(str(p.get("product_id"))) or [])
+        exact_matches = len(labels & query_codes)
+        group_matches = len(_concern_groups(labels) & query_groups)
+        return (-bucket, -exact_matches, -group_matches, -_review_strength(p), -rel)
+
     return sorted(products, key=key)
 
 
@@ -224,7 +235,7 @@ async def select_products(message: str, concerns: list[Concern],
         limit=30,
     )
     raw = filter_by_target_concerns(raw, concerns)
-    raw = _rerank_by_review(raw)  # 관련도 버킷 유지 + 버킷 내 리뷰 우선(부연)
+    raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
     if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
         return raw[: settings.product_result_limit]
     return _diversify(raw, per_category=2, total=settings.product_result_limit)
