@@ -1,0 +1,24 @@
+{"id": 301, "label": "세수 뒤 당기는 건성", "message": "세수하고 나면 피부가 당기고 하루 종일 건조해요. 촉촉하게 관리하고 싶습니다.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN"], "constraints": []}
+{"id": 302, "label": "속의 수분 부족", "message": "겉은 멀쩡해 보이는데 속이 자꾸 당겨요. 피부 속 수분이 부족한 느낌입니다.", "skin_types": [], "concerns": ["DEHYDRATED_SKIN"], "constraints": []}
+{"id": 303, "label": "유분과 뾰루지", "message": "오후만 되면 피지가 많아 번들거리고 이마에 뾰루지도 올라와요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN", "ACNE"], "constraints": []}
+{"id": 304, "label": "코의 블랙헤드", "message": "코에 블랙헤드가 계속 생겨서 짜지 않고 관리하려고 해요.", "skin_types": [], "concerns": ["COMEDONES"], "constraints": []}
+{"id": 305, "label": "답답한 막힌 모공", "message": "양 볼의 모공이 막힌 듯 답답해요. 아직 여드름은 없고 막힘이 고민입니다.", "skin_types": [], "concerns": ["PORE_CONGESTION"], "constraints": []}
+{"id": 306, "label": "눈에 띄는 넓은 모공", "message": "코 옆 모공이 눈에 띄게 넓고 커 보여요. 크기를 덜 도드라져 보이게 하고 싶습니다.", "skin_types": [], "concerns": ["ENLARGED_PORES"], "constraints": []}
+{"id": 307, "label": "제품에 반응하는 민감성", "message": "제 피부는 민감성이라 화장품을 바꾸면 쉽게 예민해져요. 민감한 피부를 고려해 주세요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN"], "constraints": []}
+{"id": 308, "label": "찬바람 뒤 붉음", "message": "찬바람을 맞으면 양 볼이 붉어졌다가 오래 가요. 붉은 기를 줄이고 싶어요.", "skin_types": [], "concerns": ["REDNESS"], "constraints": []}
+{"id": 309, "label": "새 토너로 인한 따가움", "message": "새 토너를 쓴 뒤 얼굴이 따끔거리고 자극받은 느낌이 들어요.", "skin_types": [], "concerns": ["IRRITATED_SKIN"], "constraints": []}
+{"id": 310, "label": "아토피 피부 경향", "message": "아토피 피부 경향이 있어 계절이 바뀔 때마다 신경 쓰여요. 이를 고려한 관리를 원합니다.", "skin_types": [], "concerns": ["ATOPIC_PRONE"], "constraints": []}
+{"id": 311, "label": "들뜬 각질과 거친 결", "message": "입가에 각질이 들뜨고 볼 피부결도 만지면 거칠어요.", "skin_types": [], "concerns": ["FLAKY_SKIN", "ROUGH_TEXTURE"], "constraints": []}
+{"id": 312, "label": "필링 후 약해진 장벽", "message": "필링을 여러 번 하고 나서 피부 장벽이 약해진 것 같아요. 장벽을 우선 관리하고 싶어요.", "skin_types": [], "concerns": ["BARRIER_DAMAGE"], "constraints": []}
+{"id": 313, "label": "갈색 기미", "message": "광대에 기미와 갈색 색소침착이 눈에 띄어요. 이 부분이 고민입니다.", "skin_types": [], "concerns": ["HYPERPIGMENTATION"], "constraints": []}
+{"id": 314, "label": "칙칙한 안색", "message": "안색이 탁하고 얼굴이 칙칙해 보여서 생기가 없어 보여요.", "skin_types": [], "concerns": ["DULLNESS"], "constraints": []}
+{"id": 315, "label": "부위별 피부톤 불균일", "message": "이마는 밝은데 턱 주변은 어두워서 피부톤이 고르지 않아요. 그 차이가 고민입니다.", "skin_types": [], "concerns": ["UNEVEN_SKIN_TONE"], "constraints": []}
+{"id": 316, "label": "볼에 남은 잡티", "message": "양쪽 볼에 작은 잡티가 여러 개 보여요. 잡티를 관리할 제품을 찾습니다.", "skin_types": [], "concerns": ["BLEMISHES"], "constraints": []}
+{"id": 317, "label": "여드름 뒤 갈색 자국", "message": "여드름은 다 가라앉았는데 턱에 갈색 자국만 남았습니다. 그 흔적을 관리하고 싶어요.", "skin_types": [], "concerns": ["POST_ACNE_MARKS"], "constraints": []}
+{"id": 318, "label": "잔주름과 탄력 저하", "message": "눈가 잔주름이 늘고 볼 탄력도 예전만 못해요. 두 고민을 함께 관리하고 싶습니다.", "skin_types": [], "concerns": ["WRINKLES", "LOSS_OF_ELASTICITY"], "constraints": []}
+{"id": 319, "label": "턱선 처짐", "message": "턱선의 피부가 아래로 처져 보여요. 처짐에 맞는 제품이 있을까요?", "skin_types": [], "concerns": ["SAGGING_SKIN"], "constraints": []}
+{"id": 320, "label": "전체적인 노화 관리", "message": "특정 부위보다 전체적인 피부 노화가 걱정돼 안티에이징 관리를 시작하려고 해요.", "skin_types": [], "concerns": ["AGING_SIGNS"], "constraints": []}
+{"id": 321, "label": "불편 없는 일상 관리", "message": "불편한 피부 문제는 딱히 없어요. 매일 바르기 좋은 기본 화장품을 알려주세요.", "skin_types": [], "concerns": [], "constraints": []}
+{"id": 322, "label": "T존 유분과 볼 건조", "message": "T존은 기름이 돌지만 양 볼은 건조해요. 유분과 건조함을 동시에 관리하고 싶습니다.", "skin_types": ["COMBINATION"], "concerns": ["OILY_SKIN", "DRY_SKIN"], "constraints": []}
+{"id": 323, "label": "홍조와 향료 제한", "message": "얼굴에 홍조가 자주 올라와요. 향료가 없는 제품만 추천해 주세요.", "skin_types": [], "concerns": ["REDNESS"], "constraints": ["FRAGRANCE_FREE"]}
+{"id": 324, "label": "건성에 비건 저자극 조건", "message": "피부가 건성이라 자주 건조해요. 비건 인증과 저자극 표시를 확인할 수 있는 제품만 골라주세요.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN"], "constraints": ["VEGAN", "HYPOALLERGENIC"]}
