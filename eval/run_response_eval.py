@@ -232,8 +232,18 @@ def load_human_scores(path: Path) -> dict[int | str, dict[str, float]]:
             raise ValueError(f"{path}:{line_number}: missing or duplicate id")
         raw_scores = row.get("scores", {})
         scores: dict[str, float] = {}
-        for dim in DIMS:
+        unknown = set(raw_scores) - set(DIMS)
+        if unknown:
+            raise ValueError(f"{path}:{line_number}: unknown score dimensions: {sorted(unknown)}")
+        for dim in PRIMARY_DIMS:
             value = raw_scores.get(dim)
+            if not isinstance(value, (int, float)) or not 1 <= float(value) <= 5:
+                raise ValueError(f"{path}:{line_number}: {dim} must be a number from 1 to 5")
+            scores[dim] = float(value)
+        for dim in set(DIMS) - set(PRIMARY_DIMS):
+            if dim not in raw_scores:
+                continue
+            value = raw_scores[dim]
             if not isinstance(value, (int, float)) or not 1 <= float(value) <= 5:
                 raise ValueError(f"{path}:{line_number}: {dim} must be a number from 1 to 5")
             scores[dim] = float(value)
@@ -252,8 +262,11 @@ def calibrate_against_humans(results: list[dict], human_scores: dict) -> dict:
     all_judge: list[float] = []
     all_human: list[float] = []
     for dim in DIMS:
-        judge_values = [float(judged[case_id][dim]) for case_id in shared_ids]
-        human_values = [float(human_scores[case_id][dim]) for case_id in shared_ids]
+        dimension_ids = [case_id for case_id in shared_ids if dim in human_scores[case_id]]
+        if not dimension_ids:
+            continue
+        judge_values = [float(judged[case_id][dim]) for case_id in dimension_ids]
+        human_values = [float(human_scores[case_id][dim]) for case_id in dimension_ids]
         all_judge.extend(judge_values)
         all_human.extend(human_values)
         dimensions[dim] = {
@@ -297,7 +310,10 @@ def calibrate_against_humans(results: list[dict], human_scores: dict) -> dict:
             "spearman": spearman_correlation(primary_judge, primary_human),
         },
         "overall": {
-            "scope": "all_dimensions_flattened",
+            "scope": ("all_dimensions_flattened" if all(
+                dim in human_scores[case_id] for case_id in shared_ids for dim in DIMS
+            )
+                      else "available_dimensions_flattened"),
             "mae": round(statistics.mean(abs(a - b) for a, b in zip(all_judge, all_human)), 4)
             if all_judge else None,
             "pearson": pearson_correlation(all_judge, all_human),

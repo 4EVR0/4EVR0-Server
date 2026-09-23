@@ -11,6 +11,7 @@ import eval.run_response_eval as response_eval
 from eval.check_gate import _check_report_code_sha, _hard_failure_section
 from eval.eval_utils import (
     bootstrap_mean_ci,
+    file_sha256,
     load_dataset,
     pearson_correlation,
     spearman_correlation,
@@ -34,6 +35,18 @@ def test_shared_dataset_has_50_valid_unique_cases():
     assert {value for case in cases for value in case["skin_types"]} == {item.value for item in SkinType}
     assert {value for case in cases for value in case["concerns"]} == {item.value for item in Concern}
     assert {value for case in cases for value in case["constraints"]} == {item.value for item in Constraint}
+
+
+def test_frozen_holdout_is_distinct_from_development_cases():
+    development = load_dataset(REPO_ROOT / "eval" / "dataset.jsonl")
+    holdout_path = REPO_ROOT / "eval" / "holdout" / "2026-09-23.jsonl"
+    holdout = load_dataset(holdout_path)
+
+    assert len(holdout) == 30
+    assert file_sha256(holdout_path) == "64aff8da51f626891196fc98b8953ebd209eed84f1dcf8d44bc9229d610c8c7c"
+    assert not ({case["id"] for case in holdout} & {case["id"] for case in development})
+    assert not ({case["message"] for case in holdout} & {case["message"] for case in development})
+    assert {value for case in holdout for value in case["constraints"]} == {item.value for item in Constraint}
 
 
 def test_dataset_validation_rejects_unknown_enum(tmp_path):
