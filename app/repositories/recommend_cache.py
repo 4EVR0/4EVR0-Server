@@ -24,8 +24,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 출력 무결성 가드 이전에 저장된 응답을 재서빙하지 않도록 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v5:"
+# 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
+_KEY_PREFIX = "reccache:v6:"
 _client: aioredis.Redis | None = None
 
 
