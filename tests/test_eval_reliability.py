@@ -269,6 +269,37 @@ def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
         assert store.cleared.count(session_id) == 2
 
 
+def test_generate_only_keeps_responses_and_hard_checks_without_judge(tmp_path, monkeypatch):
+    from eval.rejudge import load_scorable
+
+    dataset = _write_dataset(tmp_path / "dataset.jsonl", 1)
+    store = _FakeConversationStore()
+
+    async def fake_recommend(session_id, message, _gen_prompt=None):
+        await store.append_turn(session_id, user=message, assistant="응답")
+        return SimpleNamespace(ingredients=[], products=[], response_text="현재 제품 근거가 없습니다.")
+
+    def unexpected_judge_client(_config):
+        raise AssertionError("generate-only must not build an external judge client")
+
+    monkeypatch.setattr(response_eval, "conversation_store", store)
+    monkeypatch.setattr(response_eval, "recommend", fake_recommend)
+    monkeypatch.setattr(response_eval, "build_judge_client", unexpected_judge_client)
+
+    report = asyncio.run(response_eval.run(
+        dataset, None, response_eval.DEFAULT_GEN_PROMPT, None,
+        bootstrap_samples=50, session_mode="isolated",
+    ))
+
+    assert report["run"]["n_judged"] == 0
+    assert report["run"]["judge_model"] is None
+    assert report["metrics"]["error_rate"] == 0
+    assert report["metrics"]["hard_failure_rate"] == 0
+    assert "scores" not in report["cases"][0]
+    assert len(load_scorable(report)) == 1
+    assert store.turns == {}
+
+
 def test_isolated_sessions_differ_between_runs(tmp_path, monkeypatch):
     """이력 TTL 안에 같은 평가를 다시 돌려도 실행 간 이력이 섞이지 않는다."""
     dataset = _write_dataset(tmp_path / "dataset.jsonl", 2)

@@ -9,8 +9,11 @@
 사용:
     JUDGE_MODEL=<external-model> JUDGE_API_KEY=<key> python eval/run_response_eval.py
     python eval/run_response_eval.py --judge-model <external-model> --limit 5
+    python eval/run_response_eval.py --generate-only --out eval/results/local-generation.json
 
 기본 동작은 생성기와 다른 외부 judge를 요구하고, 생성 temperature를 0으로 고정한다.
+--generate-only는 같은 응답·근거·결정론적 검사를 저장하고 외부 judge는 호출하지 않는다.
+저장된 응답은 eval/rejudge.py로 나중에 채점할 수 있다.
 self-judge는 편향을 명시적으로 감수하는 --allow-self-judge 없이는 실행되지 않는다.
 
 세션 격리(중요): 케이스마다 고유 session_id를 쓰고 실행 전후로 대화 이력을 비운다.
@@ -326,7 +329,7 @@ async def run(
     dataset_path: Path,
     limit: int | None,
     gen_prompt: str,
-    judge_config: JudgeConfig,
+    judge_config: JudgeConfig | None,
     *,
     judge_repeats: int = 1,
     gen_temperature: float = 0.0,
@@ -345,9 +348,11 @@ async def run(
         raise ValueError("bootstrap_samples must be at least 1")
     if session_mode not in SESSION_MODES:
         raise ValueError(f"session_mode must be one of {SESSION_MODES}")
+    if human_labels_path and judge_config is None:
+        raise ValueError("human-label calibration requires a judged report")
     settings.gen_temperature = gen_temperature
-    client = build_judge_client(judge_config)
-    judge_prompt = load_prompt(judge_prompt_name)
+    client = build_judge_client(judge_config) if judge_config else None
+    judge_prompt = load_prompt(judge_prompt_name) if judge_config else None
 
     # 실행 ID — isolated 모드의 session_id 네임스페이스. 이력 TTL(기본 2h) 안에 같은 평가를
     # 여러 번 돌려도 실행 간 이력이 섞이지 않도록 실행마다 새로 만든다.
@@ -379,31 +384,33 @@ async def run(
             t0 = time.perf_counter()
             rec = await recommend(session_id, case["message"], gen_prompt)  # 실제 파이프라인 (Neo4j+vLLM)
             gen_latencies.append(time.perf_counter() - t0)
-            score_runs = [
-                await judge_response(
-                    client,
-                    judge_config.model,
-                    case["message"],
-                    rec.ingredients,
-                    rec.products,
-                    rec.response_text,
-                    judge_prompt,
-                )
-                for _ in range(judge_repeats)
-            ]
-            scores = {
-                dim: round(statistics.mean(run[dim] for run in score_runs if run[dim] is not None), 3)
-                if any(run[dim] is not None for run in score_runs) else None
-                for dim in DIMS
-            }
-            scores["comment"] = score_runs[0]["comment"]
             hard_failures = [failure.as_dict() for failure in check_response(case, rec)]
-            if judge_repeats > 1:
-                repeat_stddevs.extend(
-                    statistics.pstdev([run[dim] for run in score_runs if run[dim] is not None])
+            scores = None
+            if judge_config:
+                score_runs = [
+                    await judge_response(
+                        client,
+                        judge_config.model,
+                        case["message"],
+                        rec.ingredients,
+                        rec.products,
+                        rec.response_text,
+                        judge_prompt,
+                    )
+                    for _ in range(judge_repeats)
+                ]
+                scores = {
+                    dim: round(statistics.mean(run[dim] for run in score_runs if run[dim] is not None), 3)
+                    if any(run[dim] is not None for run in score_runs) else None
                     for dim in DIMS
-                    if any(run[dim] is not None for run in score_runs)
-                )
+                }
+                scores["comment"] = score_runs[0]["comment"]
+                if judge_repeats > 1:
+                    repeat_stddevs.extend(
+                        statistics.pstdev([run[dim] for run in score_runs if run[dim] is not None])
+                        for dim in DIMS
+                        if any(run[dim] is not None for run in score_runs)
+                    )
         except Exception as exc:
             errors += 1
             row["error"] = f"{type(exc).__name__}: {exc}"
@@ -415,14 +422,13 @@ async def run(
             if session_mode == "isolated":
                 await conversation_store.clear(session_id)
 
-        valid = [scores[d] for d in DIMS if scores[d] is not None]
-        for d in DIMS:
-            if scores[d] is not None:
-                dim_scores[d].append(scores[d])
+        valid = [scores[d] for d in DIMS if scores[d] is not None] if scores else []
+        if scores:
+            for d in DIMS:
+                if scores[d] is not None:
+                    dim_scores[d].append(scores[d])
         overall = round(statistics.mean(valid), 2) if valid else None
         row.update({
-            "scores": {d: scores[d] for d in DIMS}, "overall": overall,
-            "comment": scores["comment"],
             "n_products": len(rec.products), "n_ingredients": len(rec.ingredients),
             "response": rec.response_text,
             # 사람 라벨러가 judge와 같은 근거를 보고 채점할 수 있도록 함께 저장.
@@ -432,11 +438,20 @@ async def run(
             "hard_pass": not hard_failures,
             "hard_failures": hard_failures,
         })
+        if scores:
+            row.update({
+                "scores": {d: scores[d] for d in DIMS},
+                "overall": overall,
+                "comment": scores["comment"],
+            })
         results.append(row)
-        _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
-                 "korean_quality": "kor", "format_adherence": "fmt"}
-        print(f"  [id {case['id']:>2}] overall={overall}  " +
-              " ".join(f"{_abbr[d]}={scores[d]}" for d in DIMS))
+        if scores:
+            _abbr = {"concern_fit": "fit", "grounding": "grnd", "conciseness": "concise",
+                     "korean_quality": "kor", "format_adherence": "fmt"}
+            print(f"  [id {case['id']:>2}] overall={overall}  " +
+                  " ".join(f"{_abbr[d]}={scores[d]}" for d in DIMS))
+        else:
+            print(f"  [id {case['id']:>2}] generated  hard_failures={len(hard_failures)}")
 
     scored = len(cases) - errors
     metrics = {f"resp_{d}": round(statistics.mean(dim_scores[d]), 3) for d in DIMS if dim_scores[d]}
@@ -477,16 +492,17 @@ async def run(
         "service_gen_prompt": settings.gen_prompt_name,
         "service_gen_prompt_version": prompt_version(settings.gen_prompt_name),
         "matches_service_prompt": gen_prompt == settings.gen_prompt_name,
-        "judge_model": judge_config.model,
-        "judge_base_url": judge_config.base_url,
-        "judge_temperature": 0,
-        "judge_repeats": judge_repeats,
-        "judge_prompt": judge_prompt_name,
-        "judge_prompt_version": prompt_version(judge_prompt_name),
+        "judge_model": judge_config.model if judge_config else None,
+        "judge_base_url": judge_config.base_url if judge_config else None,
+        "judge_temperature": 0 if judge_config else None,
+        "judge_repeats": judge_repeats if judge_config else 0,
+        "judge_prompt": judge_prompt_name if judge_config else None,
+        "judge_prompt_version": prompt_version(judge_prompt_name) if judge_config else None,
         "dataset": str(dataset_path),
         "dataset_sha256": file_sha256(dataset_path),
         "n_cases": len(cases),
         "n_scored": scored,
+        "n_judged": scored if judge_config else 0,
         "bootstrap_samples": bootstrap_samples,
         "bootstrap_seed": seed,
         # 평가 조건을 리포트만 보고 재현·해석할 수 있도록 세션 격리 상태를 함께 남긴다.
@@ -506,7 +522,7 @@ async def run(
 def print_summary(report: dict) -> None:
     r, m = report["run"], report["metrics"]
     print("\n" + "═" * 60)
-    print("  응답 품질 평가 (LLM-judge)")
+    print("  응답 품질 평가 (LLM-judge)" if r["judge_model"] else "  응답 생성 및 결정론적 검사")
     print("═" * 60)
     print(
         f"  generator={r['generator_model']}  judge={r['judge_model']}  "
@@ -616,10 +632,12 @@ def main():
     ap.add_argument("--seed", type=int, default=23)
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-mlflow", action="store_true")
+    ap.add_argument("--generate-only", action="store_true",
+                    help="외부 judge 없이 응답·근거·결정론적 검사만 저장")
     args = ap.parse_args()
 
     try:
-        judge_config = build_judge_config(
+        judge_config = None if args.generate_only else build_judge_config(
             model=args.judge_model,
             base_url=args.judge_base_url,
             api_key_env=args.judge_api_key_env,

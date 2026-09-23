@@ -17,6 +17,18 @@
 4. 사람이 저장된 **같은 응답**을 `concern_fit`, `grounding`, `korean_quality` 세 축으로 블라인드 채점한다.
 5. 사람 채점 후 동일 응답의 Judge 점수와 MAE·편향·상관을 비교한다. Judge 절대 점수는 릴리스 게이트로 사용하지 않는다.
 
+외부 Judge를 호출하기 전에 응답과 자동 검사 결과만 저장할 수 있다:
+
+```bash
+python eval/run_response_eval.py \
+  --dataset eval/holdout/2026-09-23.jsonl \
+  --session-mode isolated --generate-only --no-mlflow \
+  --out /private/tmp/4evr0-holdout-response-20260923.json
+```
+
+저장된 응답의 Judge 평가는 `eval/rejudge.py --report`로 수행한다. 이때 다시 응답을
+생성하지 않으므로 사람이 채점하는 답변과 Judge가 채점하는 답변이 정확히 같다.
+
 사람 채점 명령 예시:
 
 ```bash
