@@ -471,6 +471,21 @@ def _join_korean(items: list[str]) -> str:
     return f"{', '.join(items[:-1])} 및 {items[-1]}"
 
 
+def _distinct_evidence_products(products: list[ProductResult]) -> list[ProductResult]:
+    """랭킹을 유지하면서 동일한 매칭 성분 근거의 반복 설명을 피한다."""
+    selected: list[ProductResult] = []
+    seen_signatures: set[frozenset[str]] = set()
+    for product in products:
+        signature = frozenset(product.matched_ingredients)
+        if signature in seen_signatures:
+            continue
+        selected.append(product)
+        seen_signatures.add(signature)
+        if len(selected) == 3:
+            break
+    return selected
+
+
 def _build_grounded_product_response(
     message: str,
     ingredients: list[IngredientResult],
@@ -482,20 +497,23 @@ def _build_grounded_product_response(
     제품-성분 연결을 새로 추측하지 않으면서도 고민→효능→제품 이유를 보존한다.
     """
     ingredient_map = {item.name: item for item in ingredients}
+    selected_products = _distinct_evidence_products(products)
     highlighted: list[IngredientResult] = []
     seen_ingredients: set[str] = set()
-    seen_benefits: set[str] = set()
-    for product in products[:3]:
-        for name in product.matched_ingredients[:3]:
+    # 제품별 첫 번째 성분을 먼저 살펴 한 제품의 성분이 설명 공간을 독점하지 않게 한다.
+    for position in range(3):
+        for product in selected_products:
+            if position >= len(product.matched_ingredients):
+                continue
+            name = product.matched_ingredients[position]
             item = ingredient_map.get(name)
-            benefit = _claim_benefit_phrase(item)
-            benefit_key = benefit or f"unknown:{name}"
-            if item and item.name not in seen_ingredients and benefit_key not in seen_benefits:
+            if item and item.name not in seen_ingredients:
                 highlighted.append(item)
                 seen_ingredients.add(item.name)
-                seen_benefits.add(benefit_key)
-    highlighted = highlighted[:4]
-
+            if len(highlighted) == 4:
+                break
+        if len(highlighted) == 4:
+            break
     benefits = []
     for item in highlighted:
         benefit = _claim_benefit_phrase(item)
@@ -531,23 +549,27 @@ def _build_grounded_product_response(
         lines.append("- 제공된 제품의 매칭 성분만 사용했습니다.")
 
     lines.extend(["", "추천 제품"])
-    for product in products[:3]:
-        reasons: list[str] = []
+    for product in selected_products:
+        reasons_by_benefit: dict[str, list[str]] = {}
+        reason_ingredient_count = 0
         matched_names: list[str] = []
-        product_benefits: set[str] = set()
         for name in product.matched_ingredients[:3]:
             item = ingredient_map.get(name)
             short_name = (item.kor_name or item.name) if item else name
             matched_names.append(short_name)
             benefit = _claim_benefit_phrase(item)
-            if benefit and benefit not in product_benefits:
-                reasons.append(f"{short_name}의 {benefit}")
-                product_benefits.add(benefit)
+            if benefit and reason_ingredient_count < 2:
+                reasons_by_benefit.setdefault(benefit, []).append(short_name)
+                reason_ingredient_count += 1
+        reasons = [
+            f"{_join_korean(names)}의 {benefit}"
+            for benefit, names in reasons_by_benefit.items()
+        ]
         product_name = _product_display_name(product.brand, product.product_name)
         if reasons:
             lines.append(
                 f"- [{product.category}] {product_name}: 추천 이유는 "
-                f"{_join_korean(reasons)} 근거입니다."
+                f"{_join_korean(reasons)} 근거가 제품 매칭 성분에서 확인되기 때문입니다."
             )
         else:
             matched_text = _join_korean(matched_names) or "제공된 매칭 성분"

@@ -183,6 +183,43 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         self.assertNotIn("논문 근거", product_line)
         self.assertFalse(_has_product_grounding_violation(response, ingredients, products))
 
+    def test_fallback_keeps_distinct_ingredients_with_same_benefit(self):
+        ingredients = [
+            IngredientResult(name="BAKUCHIOL", kor_name="바쿠치올", claim="Anti-aging",
+                             eligibility_tier="pubmed_evidence", paper_ref="2"),
+            IngredientResult(name="RETINOL", kor_name="레티놀", claim="Anti-aging",
+                             eligibility_tier="pubmed_evidence", paper_ref="2"),
+            IngredientResult(name="PEPTIDE", kor_name="펩타이드", claim="Anti-aging",
+                             eligibility_tier="pubmed_evidence", paper_ref="1"),
+        ]
+
+        def product(product_id, name, matched, category="세럼"):
+            return ProductResult(
+                product_id=product_id, product_name=name, brand="테스트",
+                category=category, matched_count=len(matched), matched_ingredients=matched,
+            )
+
+        products = [
+            product("p1", "첫 제품", ["BAKUCHIOL", "RETINOL"], "크림"),
+            product("p2", "근거 중복 제품", ["RETINOL", "BAKUCHIOL"], "앰플"),
+            product("p3", "다른 근거 제품", ["BAKUCHIOL", "PEPTIDE"]),
+            product("p4", "세 번째 근거 제품", ["RETINOL", "PEPTIDE"]),
+        ]
+
+        response = _build_grounded_product_response(
+            "입가 잔주름 관리 제품을 추천해 주세요.", ingredients, products,
+        )
+
+        self.assertIn("바쿠치올 (BAKUCHIOL):", response)
+        self.assertIn("레티놀 (RETINOL):", response)
+        self.assertIn("펩타이드 (PEPTIDE):", response)
+        self.assertIn("첫 제품: 추천 이유는 바쿠치올 및 레티놀의 탄력·주름 관리", response)
+        self.assertIn("다른 근거 제품: 추천 이유는 바쿠치올 및 펩타이드의 탄력·주름 관리", response)
+        self.assertIn("세 번째 근거 제품: 추천 이유는 레티놀 및 펩타이드의 탄력·주름 관리", response)
+        self.assertNotIn("근거 중복 제품", response)
+        self.assertEqual(3, sum(line.startswith("- [") for line in response.splitlines()))
+        self.assertFalse(_has_product_grounding_violation(response, ingredients, products))
+
     def test_grounded_fallback_does_not_invent_a_claim_for_unknown_labels(self):
         ingredients = [IngredientResult(name="UNKNOWN", kor_name="알수없는성분")]
         products = [ProductResult(
