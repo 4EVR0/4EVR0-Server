@@ -65,17 +65,27 @@ class HeuristicClassifyTest(unittest.TestCase):
             "입 주변과 이마의 피부톤 차이가 고민이에요.",
             "따끔거리는 피부에 알코올 없는 제품만 골라주세요.",
             "비건 제품 중에서 무향인 것만 보여주세요.",
+            "친구가 추천한 제품들을 비교해줘.",
         ):
             with self.subTest(message=message):
                 self.assertFalse(_has_followup_cue(message))
                 self.assertEqual("new", _heuristic_kind(message, []))
 
     def test_explicit_previous_recommendation_refs(self):
-        for message in ("그 중에서 비교해줘", "이거 장단점 알려줘", "방금 추천한 제품 중 뭐가 나아?"):
+        for message in (
+            "그 중에서 비교해줘",
+            "이거 장단점 알려줘",
+            "방금 추천한 제품 중 뭐가 나아?",
+            "추천한 제품들 차이를 비교해줘",
+            "추천한 제품들을 리뷰는 보조로만 쓰서 비교해줘",
+        ):
             with self.subTest(message=message):
                 self.assertTrue(_has_followup_cue(message))
+                self.assertEqual("followup", _heuristic_kind(message, self._HIST))
         self.assertTrue(_has_missing_history_cue("그 중에서 비교해줘"))
         self.assertTrue(_has_missing_history_cue("방금 추천한 제품 중 뭐가 나아?"))
+        self.assertTrue(_has_missing_history_cue("추천한 제품들을 비교해줘"))
+        self.assertFalse(_has_missing_history_cue("친구가 추천한 제품들을 비교해줘"))
         self.assertFalse(_has_missing_history_cue("이 제품 추천해줘"))
         self.assertFalse(_has_missing_history_cue("이중 세안 제품 추천해줘"))
 
@@ -220,6 +230,34 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
         llm_client.assert_not_called()
         self.assertEqual([], response.products)
         self.assertEqual([], response.ingredients)
+        self.assertIn("비교할 제품이 없습니다", response.response_text)
+
+    async def test_recommended_products_followup_after_zero_products_skips_classifier(self):
+        history = [{
+            "user": "수부지인데 모공도 신경 쓰여",
+            "assistant": "조건에 맞는 제품이 없습니다.",
+            "products": [],
+        }]
+        with mock.patch.object(
+            recommend_service.conversation_store,
+            "load_recent",
+            mock.AsyncMock(return_value=history),
+        ), mock.patch.object(
+            recommend_service,
+            "_llm_classify",
+            mock.AsyncMock(),
+        ) as classifier, mock.patch.object(
+            recommend_service,
+            "_store_turn",
+            mock.AsyncMock(),
+        ):
+            response = await recommend_service._resolve_conversation_response(
+                "session-1", "turn-2", "추천한 제품들을 리뷰는 보조로만 쓰서 비교해줘"
+            )
+
+        classifier.assert_not_awaited()
+        self.assertIsNotNone(response)
+        self.assertEqual([], response.products)
         self.assertIn("비교할 제품이 없습니다", response.response_text)
 
 
