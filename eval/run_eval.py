@@ -16,7 +16,6 @@
 import argparse
 import asyncio
 import json
-import os
 import statistics
 import sys
 import time
@@ -36,6 +35,7 @@ from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint, SkinType  # noqa: E402
 from app.prompts import load_prompt, prompt_version  # noqa: E402
 from eval.eval_utils import file_sha256, git_code_sha, load_dataset  # noqa: E402
+from eval.mlflow_tracking import log_report  # noqa: E402
 
 _VALID = {
     "skin_types": {e.value for e in SkinType},
@@ -211,33 +211,6 @@ def print_summary(report: dict) -> None:
     print("═" * 60)
 
 
-def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
-    """run/metrics 를 MLflow 에 기록. mlflow 미설치 시 조용히 건너뜀.
-
-    추적 백엔드: 기본 sqlite(eval/mlflow.db). MLFLOW_TRACKING_URI 로 덮어쓸 수 있음.
-    조회: mlflow ui --backend-store-uri sqlite:///eval/mlflow.db
-    """
-    try:
-        import mlflow
-    except ImportError:
-        print("  (mlflow 미설치 — MLflow 기록 건너뜀. `pip install mlflow`)")
-        return
-
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_REPO_ROOT / 'eval' / 'mlflow.db'}")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("4evr0-profile-extraction")
-
-    run, metrics = report["run"], report["metrics"]
-    with mlflow.start_run(run_name=run["timestamp"]):
-        mlflow.log_params({
-            k: run[k] for k in ("model", "prompt_name", "prompt_version", "temperature", "dataset", "n_cases", "n_scored")
-        })
-        mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
-        if artifact_path:
-            mlflow.log_artifact(str(artifact_path))
-    print(f"  MLflow 기록 완료: experiment='4evr0-profile-extraction' @ {tracking_uri}")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
@@ -257,7 +230,8 @@ def main():
     print(f"\n결과 저장: {out}")
 
     if not args.no_mlflow:
-        log_to_mlflow(report, out)
+        status, run_id = log_report(out)
+        print(f"  MLflow {status}: {run_id}")
 
 
 if __name__ == "__main__":

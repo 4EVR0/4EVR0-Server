@@ -56,6 +56,7 @@ from eval.eval_utils import (  # noqa: E402
     spearman_correlation,
 )
 from eval.hard_checks import HANJA_PATTERN, check_response, summarize_hard_failures  # noqa: E402
+from eval.mlflow_tracking import log_report  # noqa: E402
 
 JUDGE_PROMPT_NAME = "response_judge"  # 기본 루브릭(--judge-prompt 로 과거 버전 지정 가능)
 # 평가 대상 응답 생성 프롬프트. 기준선은 **운영이 실제로 쓰는 프롬프트**를 측정해야 하므로
@@ -538,39 +539,6 @@ def print_summary(report: dict) -> None:
     print("═" * 60)
 
 
-def log_to_mlflow(report: dict, artifact_path: Path | None) -> None:
-    try:
-        import mlflow
-    except ImportError:
-        print("  (mlflow 미설치 — 기록 건너뜀)")
-        return
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_REPO_ROOT / 'eval' / 'mlflow.db'}")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("4evr0-response-quality")
-    run, metrics = report["run"], report["metrics"]
-    with mlflow.start_run(run_name=run["timestamp"]):
-        parameter_names = (
-            "code_sha", "generator_model", "generator_base_url", "generator_temperature",
-            "gen_prompt", "gen_prompt_version", "judge_model", "judge_base_url",
-            "judge_temperature", "judge_repeats", "judge_prompt_version",
-            "dataset_sha256", "n_cases", "n_scored", "bootstrap_samples", "bootstrap_seed",
-            "run_id", "session_mode", "conversation_enabled",
-        )
-        mlflow.log_params({key: run[key] for key in parameter_names})
-        mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
-        if "human_calibration" in report:
-            calibration = report["human_calibration"]
-            mlflow.log_metrics({
-                f"human_{key}": value
-                for key, value in calibration["overall"].items()
-                if isinstance(value, (int, float))
-            })
-            mlflow.log_param("human_n_cases", calibration["n_cases"])
-        if artifact_path:
-            mlflow.log_artifact(str(artifact_path))
-    print(f"  MLflow 기록: experiment='4evr0-response-quality' @ {tracking_uri}")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
@@ -635,7 +603,8 @@ def main():
     print(f"\n결과 저장: {out}")
 
     if not args.no_mlflow:
-        log_to_mlflow(report, out)
+        status, run_id = log_report(out)
+        print(f"  MLflow {status}: {run_id}")
 
 
 if __name__ == "__main__":

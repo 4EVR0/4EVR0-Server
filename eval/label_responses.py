@@ -29,7 +29,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from eval.eval_utils import pearson_correlation, spearman_correlation  # noqa: E402
+from eval.eval_utils import file_sha256, pearson_correlation, spearman_correlation  # noqa: E402
 from eval.run_response_eval import (  # noqa: E402
     DIMS,
     JUDGE_PROMPT_NAME,
@@ -265,6 +265,17 @@ def run_calibration(paths: list[str], out: str | None = None) -> int:
         report.get("cases", []),
         load_human_scores(labels_path),
     )
+    source_run = report.get("run", {})
+    calibration["run"] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_report": report_path.name,
+        "source_report_sha256": file_sha256(report_path),
+        "labels_sha256": file_sha256(labels_path),
+        "source_code_sha": source_run.get("code_sha"),
+        "dataset_sha256": source_run.get("dataset_sha256"),
+        "judge_model": source_run.get("judge_model"),
+        "judge_prompt_version": source_run.get("judge_prompt_version"),
+    }
     print("=" * 72)
     print(f"  JUDGE VS HUMAN  ({report_path.name} vs {labels_path.name})")
     print("=" * 72)
@@ -317,12 +328,18 @@ def main():
     ap.add_argument("--calibrate", nargs=2, metavar=("REPORT.json", "LABELS.jsonl"),
                     help="라벨의 source report에 저장된 judge 점수와 사람 점수 비교")
     ap.add_argument("--calibration-out", default=None, help="judge-vs-human 결과 JSON 저장 경로")
+    ap.add_argument("--no-mlflow", action="store_true", help="calibration 결과의 MLflow 기록 비활성화")
     args = ap.parse_args()
 
     if args.agreement:
         return run_agreement(args.agreement)
     if args.calibrate:
-        return run_calibration(args.calibrate, args.calibration_out)
+        result = run_calibration(args.calibrate, args.calibration_out)
+        if result == 0 and args.calibration_out and not args.no_mlflow:
+            from eval.mlflow_tracking import log_report
+            status, run_id = log_report(Path(args.calibration_out))
+            print(f"  MLflow {status}: {run_id}")
+        return result
     if not args.report or not args.labeler:
         ap.error("--report 와 --labeler 가 필요합니다 (또는 --agreement/--calibrate 사용)")
     if args.sample == 0:

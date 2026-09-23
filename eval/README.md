@@ -1,12 +1,40 @@
 # Evaluation
 
+## Experiment tracking
+
+Install `eval/requirements.txt` before running an evaluation. Extraction, response,
+retrieval, rejudge, and saved judge-vs-human calibration reports are logged to MLflow
+after their JSON files are written. If MLflow logging fails, the report remains on
+disk and the command exits with an error; it no longer silently skips tracking.
+Use `--no-mlflow` only for an intentional offline run (CI does this).
+
+By default, MLflow uses the ignored `eval/mlflow.db` in the original Git checkout,
+even when the command runs in a worktree. New local experiments store artifacts in
+that checkout's ignored `mlruns/` directory. To use a shared tracking server, set
+`MLFLOW_TRACKING_URI` explicitly. Reports contain prompts, generated responses,
+retrieved evidence, and possibly human-calibration summaries: review data access
+before using a remote server. Raw human-label JSONL files are not logged.
+
+Import previously saved reports without calling the GPU or judge again:
+
+```bash
+python eval/mlflow_tracking.py eval/results/old-extraction.json eval/results/old-response.json
+mlflow ui --backend-store-uri "sqlite:////absolute/path/to/original/checkout/eval/mlflow.db"
+```
+
+Imports are idempotent by report SHA-256 within each experiment. The MLflow run
+keeps the report's original timestamp, code/dataset hashes, model and prompt
+metadata (when present), numeric metrics, and the source JSON as an artifact.
+`provenance=backfill` distinguishes an import from a live evaluation. The MLflow
+run creation time is the import time, not the historical execution time.
+
 ## Profile extraction
 
 The shared dataset contains 50 labeled cases spanning concern groups, constraints,
 negative examples, mixed concerns, and colloquial inputs.
 
 ```bash
-python eval/run_eval.py --no-mlflow
+python eval/run_eval.py
 ```
 
 Dataset labels are validated before any model request. See `LABELING.md` for the

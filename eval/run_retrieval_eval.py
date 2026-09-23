@@ -48,6 +48,7 @@ from app.clients.neo4j_client import (  # noqa: E402
     query_ingredients_by_effects,
 )
 from eval.eval_utils import bootstrap_mean_ci, file_sha256, git_code_sha, load_dataset  # noqa: E402
+from eval.mlflow_tracking import log_report  # noqa: E402
 from eval.run_response_eval import build_judge_config, build_judge_client  # noqa: E402
 
 _TOP_INGREDIENTS = 8   # judge에 보낼 성분 상위 수
@@ -228,6 +229,9 @@ async def main_async(args) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(f"결과 저장: {out}")
+    if not args.no_mlflow:
+        status, run_id = log_report(out)
+        print(f"  MLflow {status}: {run_id}")
 
 
 def main() -> None:
@@ -239,7 +243,7 @@ def main() -> None:
     ap.add_argument("--judge-timeout", type=float, default=120.0)
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--out", default=None)
-    ap.add_argument("--no-mlflow", action="store_true")  # 호환용(현재 mlflow 미기록)
+    ap.add_argument("--no-mlflow", action="store_true", help="MLflow 기록 비활성화")
     args = ap.parse_args()
     asyncio.run(main_async(args))
 
