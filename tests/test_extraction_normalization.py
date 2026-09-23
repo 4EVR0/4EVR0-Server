@@ -67,6 +67,10 @@ def test_surface_dryness_does_not_imply_inner_moisture_loss():
         "기본 보습 화장품을 찾습니다.",
         [Concern.DEHYDRATED_SKIN],
     ) == []
+    assert _normalize_concerns(
+        "오후에도 계속 건조합니다.",
+        [Concern.DEHYDRATED_SKIN],
+    ) == [Concern.DRY_SKIN]
 
 
 def test_pore_and_blemish_neighbors_require_their_own_signal():
@@ -112,3 +116,22 @@ def test_named_wrinkles_replace_generic_aging_label():
         "전체적인 노화가 걱정돼요.",
         [Concern.AGING_SIGNS],
     ) == [Concern.AGING_SIGNS]
+
+
+def test_explicit_sensitive_skin_and_redness_do_not_require_model_inference():
+    assert _normalize_concerns(
+        "민감성 피부라 새 제품을 쓰면 따가워요.",
+        [Concern.IRRITATED_SKIN],
+    ) == [Concern.IRRITATED_SKIN, Concern.SENSITIVE_SKIN]
+    assert _normalize_concerns(
+        "피부가 예민해서 저자극 제품을 찾습니다.",
+        [],
+    ) == [Concern.SENSITIVE_SKIN]
+    assert _normalize_concerns(
+        "로사케아 경향이 있다는 말을 들었어요.",
+        [Concern.ROSACEA_PRONE],
+    ) == [Concern.ROSACEA_PRONE]
+    assert _normalize_concerns(
+        "볼에 홍조가 생겨요.",
+        [Concern.ROSACEA_PRONE],
+    ) == [Concern.REDNESS]

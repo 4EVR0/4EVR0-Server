@@ -40,10 +40,16 @@ _COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
 _OILY_SURFACE_SIGNAL = re.compile(r"T존|티존|겉.{0,8}번들|번들거리|기름지|피지", re.IGNORECASE)
 _INNER_DRY_SIGNAL = re.compile(r"속건조|속.{0,8}당|볼.{0,8}(?:건조|당)", re.IGNORECASE)
 _DEHYDRATION_CONCERN = re.compile(
-    r"속건조|속당|속.{0,6}(?:건조|수분|당김|당겨|당기)|수분.{0,6}부족|수분감.{0,4}없|탈수",
+    r"(?<![가-힣])속(?:건조|당|.{0,6}(?:건조|수분|당김|당겨|당기))"
+    r"|피부속.{0,6}(?:건조|수분|당김|당겨|당기)"
+    r"|수분.{0,6}부족|수분감.{0,4}없|탈수",
     re.IGNORECASE,
 )
 _SURFACE_DRYNESS_SIGNAL = re.compile(r"건성|건조|당김|당기|당겨")
+_SENSITIVE_CONCERN_SIGNAL = re.compile(
+    r"민감성\s*피부|민감성이라|예민한?\s*피부|피부.{0,3}(?:민감|예민)"
+)
+_ROSACEA_SIGNAL = re.compile(r"로사케아|로사세아|주사(?:성|피부)?")
 _COMEDONE_SIGNAL = re.compile(r"면포|블랙헤드|화이트헤드|좁쌀|검은\s*점|하얀\s*알갱이")
 _CLOGGED_PORE_SIGNAL = re.compile(
     r"모공.{0,10}(?:막|답답|피지.{0,3}차)|막힌.{0,8}모공"
@@ -93,6 +99,10 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
             continue
         if concern == Concern.REDNESS and not _REDNESS_SIGNAL.search(message):
             continue
+        if concern == Concern.ROSACEA_PRONE and not _ROSACEA_SIGNAL.search(message):
+            if _REDNESS_SIGNAL.search(message) and Concern.REDNESS not in concerns:
+                normalized.append(Concern.REDNESS)
+            continue
         if concern == Concern.DEHYDRATED_SKIN and not _DEHYDRATION_CONCERN.search(message):
             if _SURFACE_DRYNESS_SIGNAL.search(message) and Concern.DRY_SKIN not in concerns:
                 normalized.append(Concern.DRY_SKIN)
@@ -108,6 +118,9 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
         if concern == Concern.DULLNESS and not _DULLNESS_SIGNAL.search(message):
             continue
         normalized.append(concern)
+
+    if _SENSITIVE_CONCERN_SIGNAL.search(message) and Concern.SENSITIVE_SKIN not in normalized:
+        normalized.append(Concern.SENSITIVE_SKIN)
 
     # The model sometimes emits the umbrella aging category despite naming a
     # specific symptom. Replace it only when the text positively names one.
