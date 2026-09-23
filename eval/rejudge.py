@@ -185,6 +185,7 @@ def main():
     ap.add_argument("--bootstrap-samples", type=int, default=2_000)
     ap.add_argument("--seed", type=int, default=23)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--no-mlflow", action="store_true", help="MLflow 기록 비활성화")
     ap.add_argument("--compare", nargs=2, metavar=("BEFORE.json", "AFTER.json"),
                     help="두 채점 결과를 비교하고 종료")
     args = ap.parse_args()
@@ -214,6 +215,10 @@ def main():
     m = report["metrics"]
     print(f"\n  OVERALL {m.get('resp_overall')} / 5   (루브릭 {report['run']['judge_prompt_version']})")
     print(f"결과 저장: {out}")
+    if not args.no_mlflow:
+        from eval.mlflow_tracking import log_report
+        status, run_id = log_report(out)
+        print(f"  MLflow {status}: {run_id}")
     return 0
 
 
