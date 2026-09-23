@@ -646,7 +646,10 @@ _DEICTIC_SET_REF = re.compile(
 )
 _PRIOR_REPLY_REF = re.compile(
     r"(?:이전|앞서|방금|아까|직전|위에|위에서)\s*(?:추천|보여|말|언급|나온|제품)"
-    r"|추천해\s*준|추천해\s*주신",
+    r"|추천해\s*준|추천해\s*주신"
+    # 문장 첫머리의 '추천한 제품들'은 직전 답변을 가리킨다. 중간에 나오는
+    # '친구가 추천한 제품들' 같은 외부 추천은 이전 답변으로 오인하지 않는다.
+    r"|^추천한\s*제품(?:들)?(?=$|[\s은는이가을를의,.!?])",
     re.IGNORECASE,
 )
 _PREVIOUS_RECOMMENDATION_REF = re.compile(
