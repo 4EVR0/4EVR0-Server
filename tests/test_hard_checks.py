@@ -45,6 +45,28 @@ def test_text_integrity_failures_are_deterministic():
     assert _codes({}, _response(text="")) == ["EMPTY_RESPONSE"]
 
 
+def test_generation_corruption_fails_hard_gate():
+    response = _response(
+        text=("성분 설명\n- 레티놀 (RETINOL): 피부 세포 세포 세포 세포 세포 "
+              "CELLULAR 재생을 돕습니다.\n추천 제품\n- 수분 앰플: 레티놀이 확인됩니다."),
+        products=[_product(matched_ingredients=["RETINOL"])],
+        ingredients=[{"name": "RETINOL", "kor_name": "레티놀"}],
+    )
+
+    assert _codes({}, response) == ["DEGENERATE_REPETITION", "STRAY_ENGLISH_TOKEN"]
+
+
+def test_known_inci_and_product_english_do_not_fail_hard_gate():
+    response = _response(
+        text=("성분 설명\n- 글리세린 (GLYCERIN)을 확인했습니다.\n"
+              "추천 제품\n- CELLULAR 크림: 글리세린이 확인됩니다."),
+        products=[_product(product_name="CELLULAR 크림")],
+        ingredients=[{"name": "GLYCERIN", "kor_name": "글리세린"}],
+    )
+
+    assert _codes({}, response) == []
+
+
 def test_first_turn_false_followup_is_hard_failure():
     response = _response(text="이전 추천 내역을 찾지 못했어요. 다시 알려주세요.")
     case = {"message": "민감성 제품 중에서 무향인 것만 보여주세요."}

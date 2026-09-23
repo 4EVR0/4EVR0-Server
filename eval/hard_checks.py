@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
 from app.domain.enums import Concern
+from app.services.response_integrity import find_response_integrity_issues
 
 
 HANJA_PATTERN = re.compile(r"[\u4e00-\u9fff]")
@@ -190,6 +191,11 @@ def check_response(case: Mapping[str, Any], response: Any) -> list[HardFailure]:
     for term in BANNED_CONSUMER_TERMS:
         if term in text:
             failures.append(HardFailure("BANNED_TERM", f"소비자 금칙 표현: {term}"))
+
+    failures.extend(
+        HardFailure(code, detail)
+        for code, detail in find_response_integrity_issues(text, ingredients, products)
+    )
 
     for product in products:
         row = _as_dict(product)

@@ -11,6 +11,7 @@ from app.services.recommend_service import (
     _build_llm_response,
     _ingredient_display_name,
     recommend,
+    recommend_stream,
 )
 from app.services.product_image_service import build_product_image_url
 from eval.run_response_eval import judge_response
@@ -45,6 +46,57 @@ class ProductImageUrlTest(unittest.TestCase):
 
 
 class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
+    async def test_batch_and_stream_replace_corrupted_generation_before_delivery(self):
+        profile = SimpleNamespace(effects=[], concerns=[], constraints=[])
+        ingredient_rows = [{
+            "name": "RETINOL", "kor_name": "레티놀", "claim": "Anti-aging",
+            "eligibility_tier": "pubmed_evidence", "paper_ref": "2",
+        }]
+        product_rows = [{
+            "product_id": "p1", "product_name": "테스트 크림", "brand": "테스트",
+            "category": "크림", "matched_count": 1,
+            "matched_ingredients": ["RETINOL"],
+        }]
+        corrupted = (
+            "고민 분석\n주름을 살핍니다.\n성분 설명\n"
+            "- 레티놀 (RETINOL): 피부 세포 세포 세포 세포 세포 CELLULAR 재생.\n"
+            "추천 제품\n- 테스트 크림: 레티놀이 확인됩니다."
+        )
+
+        async def chunks():
+            for piece in (corrupted[:35], corrupted[35:]):
+                yield SimpleNamespace(choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=piece),
+                )])
+
+        completion = AsyncMock(return_value=chunks())
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+        cache_set = AsyncMock()
+        with (
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
+            patch("app.services.recommend_service.extract_with_fallback", new=AsyncMock(return_value=(profile, "llm"))),
+            patch("app.services.recommend_service.query_ingredients_by_effects", new=AsyncMock(return_value=ingredient_rows)),
+            patch("app.services.recommend_service.select_products", new=AsyncMock(return_value=product_rows)),
+            patch("app.services.recommend_service._build_llm_response", new=AsyncMock(return_value=corrupted)),
+            patch("app.services.recommend_service.get_async_llm_client", return_value=client),
+            patch("app.services.recommend_service.recommend_cache.set", new=cache_set),
+        ):
+            batch = await recommend("batch-session", "입가 주름이 고민이에요.")
+            frames = [frame async for frame in recommend_stream("stream-session", "입가 주름이 고민이에요.")]
+
+        deltas = [
+            json.loads(frame.split("data: ", 1)[1])["text"]
+            for frame in frames if frame.startswith("event: delta\n")
+        ]
+        self.assertEqual([batch.response_text], deltas)
+        self.assertIn("추천 이유는", batch.response_text)
+        self.assertNotIn("세포 세포", batch.response_text)
+        self.assertNotIn("CELLULAR", batch.response_text)
+        self.assertEqual(2, cache_set.await_count)
+        self.assertEqual(batch.response_text, cache_set.await_args.args[2]["response_text"])
+
     async def test_recommend_preserves_korean_name_from_graph_result(self):
         profile = SimpleNamespace(effects=[], concerns=[])
         ingredient_rows = [{

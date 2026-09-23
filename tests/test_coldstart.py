@@ -59,6 +59,9 @@ class HealthReadinessGateTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SingleFlightTest(unittest.IsolatedAsyncioTestCase):
+    def test_output_guard_uses_new_cache_namespace(self):
+        self.assertTrue(recommend_cache._key("피부 고민", None).startswith("reccache:v5:"))
+
     async def test_concurrent_misses_coalesce_to_one_compute(self):
         store: dict[str, str] = {}
         computes = 0
