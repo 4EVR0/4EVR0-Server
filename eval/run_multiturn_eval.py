@@ -25,6 +25,7 @@ from app.prompts import prompt_version  # noqa: E402
 from app.repositories import conversation_store  # noqa: E402
 from app.services.recommend_service import recommend, recommend_stream  # noqa: E402
 from eval.hard_checks import check_response  # noqa: E402
+from eval.mlflow_tracking import log_report  # noqa: E402
 
 DEFAULT_DATASET = _REPO_ROOT / "eval" / "multiturn_dataset.jsonl"
 DEFAULT_OUT = _REPO_ROOT / "eval" / "results" / "multiturn-latest.json"
@@ -279,6 +280,7 @@ def main() -> int:
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--transport", choices=["batch", "stream", "both"], default="both")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--no-mlflow", action="store_true", help="MLflow 기록 비활성화")
     args = parser.parse_args()
 
     report = asyncio.run(run(args))
@@ -287,6 +289,9 @@ def main() -> int:
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print_summary(report)
     print(f"  report={out_path}")
+    if not args.no_mlflow:
+        status, run_id = log_report(out_path)
+        print(f"  MLflow {status}: {run_id}")
     return 0 if report["metrics"]["passed"] else 1
 
 

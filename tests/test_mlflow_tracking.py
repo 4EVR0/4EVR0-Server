@@ -50,6 +50,38 @@ def test_calibration_metrics_do_not_require_missing_historical_metadata():
     }
 
 
+def test_multiturn_failure_is_logged_with_transport_and_artifact(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{tmp_path / 'tracking.db'}"
+    path = tmp_path / "multiturn.json"
+    report = {
+        "run": {
+            "timestamp": "2026-09-23T00:00:00+00:00",
+            "code_sha": "abc123", "dataset_sha256": "dataset123",
+            "model": "gpu-model", "n_scenarios": 15,
+            "transports": ["batch", "stream"], "cache_enabled": False,
+        },
+        "metrics": {
+            "functional_failures": 1, "transport_differences": 0,
+            "hard_failure_rate": 1 / 15, "passed": False,
+        },
+        "scenarios": [],
+    }
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    assert report_kind(report) == "multiturn"
+    status, run_id = log_report(path, source="live", tracking_uri=uri)
+    assert status == "logged"
+    run = mlflow.get_run(run_id)
+    assert mlflow.get_experiment(run.info.experiment_id).name == EXPERIMENTS["multiturn"]
+    assert run.data.params["code_sha"] == "abc123"
+    assert run.data.params["transports"] == "batch,stream"
+    assert run.data.metrics["passed"] == 0.0
+    assert run.data.metrics["functional_failures"] == 1.0
+    assert len(mlflow.MlflowClient().list_artifacts(run_id, "reports")) == 1
+    assert log_report(path, source="live", tracking_uri=uri) == ("skipped", run_id)
+
+
 def test_backfill_is_idempotent_and_keeps_original_metadata(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     uri = f"sqlite:///{tmp_path / 'tracking.db'}"
