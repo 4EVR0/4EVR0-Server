@@ -2,6 +2,7 @@ import unittest
 
 from app.domain.enums import Concern, Constraint
 from app.schemas.recommend import IngredientResult, ProductResult
+from app.services.response_integrity import find_response_integrity_issues
 from app.services.recommend_service import (
     _apply_constraint_evidence_guard,
     _build_grounded_product_response,
@@ -205,6 +206,31 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         self.assertNotIn("肤", response)
         self.assertNotIn("심부", response)
         self.assertIn("피가 피부 속까지 건조해요", response)
+
+    def test_corrupted_generation_is_detected_and_grounded_fallback_is_clean(self):
+        ingredients, products = self._ingredient_and_product()
+        corrupted = (
+            "추천 제품\n- 테스트 크림: 피부 세포 세포 세포 세포 세포 "
+            "CELLULAR 재생에 도움을 줍니다."
+        )
+
+        codes = [code for code, _ in find_response_integrity_issues(corrupted, ingredients, products)]
+        self.assertEqual(["DEGENERATE_REPETITION", "STRAY_ENGLISH_TOKEN"], codes)
+        fallback = _build_grounded_product_response("피부가 건조해요.", ingredients, products)
+        self.assertEqual([], find_response_integrity_issues(fallback, ingredients, products))
+
+    def test_known_english_names_and_parenthesized_inci_are_not_corruption(self):
+        ingredients = [IngredientResult(name="CERAMIDE NP", kor_name="세라마이드엔피")]
+        products = [ProductResult(
+            product_id="p1", product_name="CELLULAR 리페어 크림", brand="CELLULAR",
+            category="크림", matched_count=1, matched_ingredients=["CERAMIDE NP"],
+        )]
+        clean = (
+            "성분 설명\n- 세라마이드엔피 (CERAMIDE NP)는 피부 장벽 관리에 쓰입니다.\n"
+            "추천 제품\n- CELLULAR 리페어 크림: 세라마이드엔피가 확인됩니다."
+        )
+
+        self.assertEqual([], find_response_integrity_issues(clean, ingredients, products))
 
 
 class ProductPurposeFilterTest(unittest.TestCase):

@@ -21,6 +21,7 @@ from app.prompts import load_prompt
 from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 from app.services.product_image_service import build_product_image_url
+from app.services.response_integrity import find_response_integrity_issues
 
 # concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
 _LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
@@ -475,7 +476,7 @@ def _build_grounded_product_response(
     ingredients: list[IngredientResult],
     products: list[ProductResult],
 ) -> str:
-    """제품-성분 연결 검증 실패 시 근거 부분집합으로 유용한 응답을 재구성한다.
+    """생성 본문 검증 실패 시 근거 부분집합으로 유용한 응답을 재구성한다.
 
     생성 모델의 문장을 수선하지 않고 검색 결과의 구조화 필드만 사용한다. 따라서
     제품-성분 연결을 새로 추측하지 않으면서도 고민→효능→제품 이유를 보존한다.
@@ -1041,8 +1042,11 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             response_text, hanja_removed = _normalize_response_text(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
-            if products and _has_product_grounding_violation(response_text, ingredients, products):
-                metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
+            integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+            grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
+            if products and (integrity_issues or grounding_violation):
+                kind = "quality_fallback" if integrity_issues else "grounding_fallback"
+                metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_text = _build_grounded_product_response(message, ingredients, products)
             spans["generate"] = time.perf_counter() - _t
 
@@ -1245,8 +1249,8 @@ def _sse(event: str, data: dict) -> str:
 async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
     """SSE 추천: meta(구조 데이터 즉시) → delta(검증된 본문) → done.
 
-    성분·제품 카드를 생성 전에 보내 빈 화면을 줄인다. 본문은 한자와
-    제품-성분 연결을 검증한 뒤 전송한다. 모델 내부 생성 단계는
+    성분·제품 카드를 생성 전에 보내 빈 화면을 줄인다. 본문은 한자·
+    출력 무결성·제품-성분 연결을 검증한 뒤 전송한다. 모델 내부 생성 단계는
     generate_ttft/generate_decode로 계속 분리 계측한다.
     """
     turn_id = str(uuid.uuid4())
@@ -1406,10 +1410,13 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 response_text = _normalize_product_names(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
-            if products and _has_product_grounding_violation(response_text, ingredients, products):
-                metrics.recommend_output_guard_total.labels(kind="grounding_fallback").inc()
+            integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+            grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
+            if products and (integrity_issues or grounding_violation):
+                kind = "quality_fallback" if integrity_issues else "grounding_fallback"
+                metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_text = _build_grounded_product_response(message, ingredients, products)
-            # 제품-성분 연결을 검사한 뒤에만 클라이언트에 본문을 전송한다.
+            # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
                 yield _sse("delta", {"text": response_text})

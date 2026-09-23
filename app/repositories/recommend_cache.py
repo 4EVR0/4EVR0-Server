@@ -24,7 +24,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "reccache:v4:"
+# 출력 무결성 가드 이전에 저장된 응답을 재서빙하지 않도록 네임스페이스 갱신.
+_KEY_PREFIX = "reccache:v5:"
 _client: aioredis.Redis | None = None
 
 
