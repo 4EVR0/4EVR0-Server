@@ -12,6 +12,7 @@ from app.services.recommend_service import (
     _normalize_product_names,
     _product_display_name,
     _remove_hanja,
+    _rerank_by_review,
     filter_by_target_concerns,
     filter_purpose_mismatch,
 )
@@ -221,6 +222,44 @@ class ProductPurposeFilterTest(unittest.TestCase):
             self.assertEqual(
                 [],
                 filter_by_target_concerns(products, [Concern.SENSITIVE_SKIN]),
+            )
+        finally:
+            recommend_service._PRODUCT_CONCERNS = original
+
+    def test_rerank_prioritizes_exact_concern_before_group_and_reviews(self):
+        from app.services import recommend_service
+
+        products = [
+            {
+                "product_id": "group-only",
+                "relevance_score": 3.2,
+                "review_count": 10_000,
+                "rating": 5.0,
+            },
+            {
+                "product_id": "exact-one",
+                "relevance_score": 3.1,
+                "review_count": 10,
+                "rating": 4.0,
+            },
+            {
+                "product_id": "exact-two",
+                "relevance_score": 3.0,
+                "review_count": 1,
+                "rating": 3.0,
+            },
+        ]
+        original = recommend_service._PRODUCT_CONCERNS
+        recommend_service._PRODUCT_CONCERNS = {
+            "group-only": ["ENLARGED_PORES"],
+            "exact-one": ["ACNE"],
+            "exact-two": ["ACNE", "OILY_SKIN"],
+        }
+        try:
+            ranked = _rerank_by_review(products, [Concern.ACNE, Concern.OILY_SKIN])
+            self.assertEqual(
+                ["exact-two", "exact-one", "group-only"],
+                [p["product_id"] for p in ranked],
             )
         finally:
             recommend_service._PRODUCT_CONCERNS = original

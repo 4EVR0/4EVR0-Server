@@ -1,7 +1,9 @@
 """검색(RAG) 품질 eval — Neo4j 검색 자체의 precision (이슈 #40).
 
-추출·생성과 분리해 **검색만** 격리 측정한다:
-    gold concern → infer_effects → query_ingredients_by_effects → query_products_by_ingredients
+추출·생성과 분리해 **검색만** 격리 측정한다. gold profile을 사용하되 제품 선택은
+운영과 같은 경로를 재사용한다:
+    gold concern → infer_effects → query_ingredients_by_effects → caution filter
+    → select_products(30개 후보·목적 필터·재정렬·다양화) → constraint evidence guard
 (추출 LLM을 안 타므로 추출 오류가 검색 점수를 오염시키지 않는다.)
 
 reference-free LLM-judge로 "검색된 성분/제품이 이 고민에 관련 있나"를 항목별 판정 → precision@k.
@@ -34,13 +36,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import settings  # noqa: E402
-from app.domain.enums import Concern  # noqa: E402
+from app.domain.enums import Concern, Constraint  # noqa: E402
 from app.services.taxonomy_normalization_service import infer_effects  # noqa: E402
-from app.services.recommend_service import _appropriate_categories, filter_by_target_concerns  # noqa: E402
+from app.services.recommend_service import (  # noqa: E402
+    _apply_constraint_evidence_guard,
+    apply_caution_filter,
+    select_products,
+)
 from app.clients.neo4j_client import (  # noqa: E402
     close_driver,
     query_ingredients_by_effects,
-    query_products_by_ingredients,
 )
 from eval.eval_utils import bootstrap_mean_ci, file_sha256, git_code_sha, load_dataset  # noqa: E402
 from eval.run_response_eval import build_judge_config, build_judge_client  # noqa: E402
@@ -49,6 +54,7 @@ _TOP_INGREDIENTS = 8   # judge에 보낼 성분 상위 수
 _JUDGE_PROMPT = """당신은 화장품 추천 시스템의 **검색 품질 평가자**입니다.
 사용자 고민에 대해 검색 시스템이 반환한 '성분'과 '제품'이 **그 고민에 실제로 관련 있는지** 항목별로 판정하세요.
 - 제품은 이름·성분으로 판단: 그 고민을 위한 제품이면 1, 목적이 다른 제품(예: 여드름 고민인데 '기미/미백' 제품)이면 0.
+- 다중 고민에서 제품 하나가 모든 고민을 동시에 해결할 필요는 없습니다. 명시된 고민 중 하나 이상에 직접 맞고 다른 고민과 명백히 충돌하지 않으면 1입니다.
 - 성분은 그 고민 개선에 쓰이는 성분이면 1, 무관하면 0.
 
 사용자 고민: "{message}"
@@ -92,14 +98,19 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
     effects = infer_effects(concerns)
     raw_ings = await query_ingredients_by_effects(
         [e.value for e in effects], min_graph_score=settings.ingredient_min_graph_score)
+    # 운영 추천과 동일하게 민감성 계열 요청의 주의 성분을 먼저 제거한다. 이 단계가 빠지면
+    # 평가기만 다른 상위 성분·제품을 보게 되어 실제 서비스에는 없는 검색 공백이 생긴다.
+    raw_ings = await apply_caution_filter(raw_ings, concerns)
     scores = [{"name": r["name"], "weight": float(r.get("graph_score") or 1.0)} for r in raw_ings[:10]]
-    cats = _appropriate_categories(concerns)
-    products = await query_products_by_ingredients(
-        scores, cats,
-        min_relevance_ratio=settings.product_min_relevance_ratio,
-        min_matched_count=settings.product_min_matched_count,
-    )
-    products = filter_by_target_concerns(products, concerns)
+    # 실제 서비스는 기본 query limit(5)이 아니라 30개 후보를 확보한 뒤 목적 필터·리뷰
+    # 재정렬·카테고리 다양화를 적용한다. 평가기도 같은 함수를 재사용해 경로 드리프트를 막는다.
+    products = await select_products(case["message"], concerns, scores)
+    constraints = [
+        Constraint(code)
+        for code in case.get("constraints", [])
+        if code in Constraint._value2member_map_
+    ]
+    products = _apply_constraint_evidence_guard(products, constraints)
     ing_names = [r["name"] for r in raw_ings[:_TOP_INGREDIENTS]]
 
     # 랭킹 품질: 상위 성분 중 pubmed_evidence 비율
@@ -111,7 +122,7 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
         "n_ingredients": len(raw_ings), "n_products": len(products),
         # 고민 없음 또는 현재 제품 속성 데이터로 검증할 수 없는 제약 요청은
         # 제품 0건이 안전한 정상 결과다. 회귀 게이트의 검색 공백에서 제외한다.
-        "expects_products": bool(concerns) and not bool(case.get("constraints")),
+        "expects_products": bool(concerns) and not bool(constraints),
         "evidence_top_ratio": ev_ratio,
         "ingredient_precision": None, "product_precision": None,
     }
