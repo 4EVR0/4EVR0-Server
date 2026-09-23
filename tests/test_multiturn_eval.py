@@ -1,5 +1,9 @@
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from eval import run_multiturn_eval as multiturn_eval
 from eval.run_multiturn_eval import compare_transports, evaluate_turn, load_scenarios, parse_sse_frame
 
 
@@ -71,3 +75,34 @@ def test_compare_transports_ignores_order_but_detects_candidate_difference():
         "batch_product_ids": ["a", "b"],
         "stream_product_ids": ["a", "c"],
     }]
+
+
+@pytest.mark.parametrize(
+    ("passed", "no_mlflow"),
+    [(True, False), (False, False), (False, True)],
+)
+def test_cli_logs_failures_unless_explicitly_disabled(
+    tmp_path, monkeypatch, passed, no_mlflow,
+):
+    output = tmp_path / "multiturn.json"
+    report = {
+        "run": {"n_scenarios": 15, "transports": ["batch", "stream"],
+                "code_sha": "abc123", "dataset_sha256": "dataset123"},
+        "metrics": {"functional_failures": 0 if passed else 1,
+                    "transport_differences": 0, "passed": passed},
+        "scenarios": [],
+    }
+    monkeypatch.setattr(multiturn_eval, "run", AsyncMock(return_value=report))
+    log = Mock(return_value=("logged", "run123"))
+    monkeypatch.setattr(multiturn_eval, "log_report", log)
+    args = ["run_multiturn_eval.py", "--out", str(output)]
+    if no_mlflow:
+        args.append("--no-mlflow")
+    monkeypatch.setattr("sys.argv", args)
+
+    assert multiturn_eval.main() == (0 if passed else 1)
+    assert output.exists()
+    if no_mlflow:
+        log.assert_not_called()
+    else:
+        log.assert_called_once_with(output)

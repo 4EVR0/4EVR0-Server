@@ -17,6 +17,7 @@ EXPERIMENTS = {
     "response": "4evr0-response-quality",
     "retrieval": "4evr0-retrieval-quality",
     "calibration": "4evr0-judge-calibration",
+    "multiturn": "4evr0-multiturn-functional",
 }
 
 
@@ -46,6 +47,8 @@ def _local_artifact_location(uri: str, experiment_name: str) -> str | None:
 def report_kind(report: dict) -> str:
     if "run" in report and "metrics" in report:
         run, metrics = report["run"], report["metrics"]
+        if "scenarios" in report and "transport_differences" in metrics:
+            return "multiturn"
         if "generator_model" in run or "resp_overall" in metrics:
             return "response"
         if "product_precision" in metrics:
@@ -81,6 +84,8 @@ def _report_metrics(report: dict, kind: str) -> dict[str, float]:
             metrics.update(_numeric_metrics(values, f"{dimension}_"))
         return metrics
     metrics = _numeric_metrics(report["metrics"])
+    if kind == "multiturn" and isinstance(report["metrics"].get("passed"), bool):
+        metrics["passed"] = float(report["metrics"]["passed"])
     calibration = report.get("human_calibration")
     if isinstance(calibration, dict):
         metrics.update(_numeric_metrics(calibration.get("overall", {}), "human_"))
@@ -124,6 +129,8 @@ def log_report(path: Path, *, source: str = "live", tracking_uri: str | None = N
         key: value for key, value in run_info.items()
         if key != "timestamp" and isinstance(value, (str, int, float, bool))
     }
+    if kind == "multiturn" and isinstance(run_info.get("transports"), list):
+        params["transports"] = ",".join(run_info["transports"])
     tags = {
         "report_sha256": digest,
         "report_kind": kind,

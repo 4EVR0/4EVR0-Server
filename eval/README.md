@@ -3,7 +3,7 @@
 ## Experiment tracking
 
 Install `eval/requirements.txt` before running an evaluation. Extraction, response,
-retrieval, rejudge, and saved judge-vs-human calibration reports are logged to MLflow
+retrieval, multi-turn, rejudge, and saved judge-vs-human calibration reports are logged to MLflow
 after their JSON files are written. If MLflow logging fails, the report remains on
 disk and the command exits with an error; it no longer silently skips tracking.
 Use `--no-mlflow` only for an intentional offline run (CI does this).
@@ -219,6 +219,11 @@ GEN_TEMPERATURE=0 RECOMMEND_CACHE_ENABLED=false PYTHONPATH=. \
 python eval/run_multiturn_eval.py --transport both \
   --out eval/results/multiturn-v7.json
 ```
+
+For host-side evaluation when `.env` uses the Docker-only `redis` hostname,
+set `REDIS_URL=redis://127.0.0.1:6379` for the command. Both passing and failing
+reports are saved and logged to the `4evr0-multiturn-functional` experiment;
+`--no-mlflow` intentionally disables logging.
 
 The report records the code SHA, dataset hash, model, and production prompt version.
 It fails when a follow-up changes the previous product set, the missing-history
