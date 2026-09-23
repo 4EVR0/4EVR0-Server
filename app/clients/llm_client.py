@@ -31,7 +31,7 @@ _ENLARGED_PORE_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 _REDNESS_SIGNAL = re.compile(
-    r"홍조|로사케아|rosacea|redness|빨개지|붉어지|붉은\s*기"
+    r"홍조|로사케아|rosacea|redness|빨개지|빨개져|붉어지|붉어져|붉은\s*기"
     r"|(?:얼굴|피부).{0,12}(?:빨갛|붉)",
     re.IGNORECASE,
 )
@@ -39,6 +39,22 @@ _EXPLICIT_SENSITIVE_SKIN = re.compile(r"민감|예민|sensitive", re.IGNORECASE)
 _COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
 _OILY_SURFACE_SIGNAL = re.compile(r"T존|티존|겉.{0,8}번들|번들거리|기름지|피지", re.IGNORECASE)
 _INNER_DRY_SIGNAL = re.compile(r"속건조|속.{0,8}당|볼.{0,8}(?:건조|당)", re.IGNORECASE)
+_DEHYDRATION_CONCERN = re.compile(
+    r"속건조|속당|속.{0,6}(?:건조|수분|당김|당겨|당기)|수분.{0,6}부족|수분감.{0,4}없|탈수",
+    re.IGNORECASE,
+)
+_SURFACE_DRYNESS_SIGNAL = re.compile(r"건성|건조|당김|당기|당겨")
+_COMEDONE_SIGNAL = re.compile(r"면포|블랙헤드|화이트헤드|좁쌀|검은\s*점|하얀\s*알갱이")
+_CLOGGED_PORE_SIGNAL = re.compile(
+    r"모공.{0,10}(?:막|답답|피지.{0,3}차)|막힌.{0,8}모공"
+)
+_PIGMENT_SIGNAL = re.compile(r"기미|색소|침착|갈색.{0,5}(?:반점|자국)|검버섯")
+_DULLNESS_SIGNAL = re.compile(r"칙칙|생기.{0,4}없|안색.{0,6}탁|얼굴빛.{0,6}탁")
+_SPECIFIC_AGING_SIGNALS = (
+    (re.compile(r"잔주름|깊은\s*주름|주름(?:이\s*고민|\s*관리|\s*개선)"), Concern.WRINKLES),
+    (re.compile(r"탄력(?:이\s*없|이\s*떨어|\s*저하|\s*개선)"), Concern.LOSS_OF_ELASTICITY),
+    (re.compile(r"처짐|처져|처지는"), Concern.SAGGING_SKIN),
+)
 
 
 def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[SkinType]:
@@ -64,12 +80,12 @@ def _normalize_skin_types(message: str, skin_types: list[SkinType]) -> list[Skin
 
 
 def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
-    """Remove two repeatedly observed adjacent-concern over-extractions.
+    """Keep model labels aligned with directly stated, non-adjacent concerns.
 
     Oily/combination skin does not imply enlarged pores. Likewise, the words
     ``붉은 자국`` and ``빨간 여드름`` describe post-acne marks or acne itself,
-    not an independent redness concern. Only keep these labels when their own
-    explicit symptom signal is present in the user message.
+    not independent redness. Nearby dryness, pigmentation and pore labels also
+    require their own evidence rather than being inferred from a related label.
     """
     normalized: list[Concern] = []
     for concern in concerns:
@@ -77,7 +93,31 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
             continue
         if concern == Concern.REDNESS and not _REDNESS_SIGNAL.search(message):
             continue
+        if concern == Concern.DEHYDRATED_SKIN and not _DEHYDRATION_CONCERN.search(message):
+            if _SURFACE_DRYNESS_SIGNAL.search(message) and Concern.DRY_SKIN not in concerns:
+                normalized.append(Concern.DRY_SKIN)
+            continue
+        if concern == Concern.COMEDONES and not _COMEDONE_SIGNAL.search(message):
+            continue
+        if concern == Concern.PORE_CONGESTION and not _CLOGGED_PORE_SIGNAL.search(message):
+            continue
+        if concern == Concern.HYPERPIGMENTATION and not _PIGMENT_SIGNAL.search(message):
+            if "잡티" in message and Concern.BLEMISHES not in concerns:
+                normalized.append(Concern.BLEMISHES)
+            continue
+        if concern == Concern.DULLNESS and not _DULLNESS_SIGNAL.search(message):
+            continue
         normalized.append(concern)
+
+    # The model sometimes emits the umbrella aging category despite naming a
+    # specific symptom. Replace it only when the text positively names one.
+    if Concern.AGING_SIGNS in normalized:
+        specific = [label for signal, label in _SPECIFIC_AGING_SIGNALS if signal.search(message)]
+        if specific:
+            normalized.remove(Concern.AGING_SIGNS)
+            for label in specific:
+                if label not in normalized:
+                    normalized.append(label)
     return normalized
 
 
