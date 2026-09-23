@@ -45,6 +45,15 @@ def test_text_integrity_failures_are_deterministic():
     assert _codes({}, _response(text="")) == ["EMPTY_RESPONSE"]
 
 
+def test_first_turn_false_followup_is_hard_failure():
+    response = _response(text="이전 추천 내역을 찾지 못했어요. 다시 알려주세요.")
+    case = {"message": "민감성 제품 중에서 무향인 것만 보여주세요."}
+
+    assert _codes(case, response) == ["FALSE_FOLLOWUP"]
+    assert _codes({"message": "이 제품 추천해줘."}, response) == ["FALSE_FOLLOWUP"]
+    assert _codes({"message": "그 중에서 하나만 골라줘"}, response) == []
+
+
 def test_unknown_product_and_ingredient_mismatch_fail():
     ingredients = [
         {"name": "GLYCERIN", "kor_name": "글리세린"},

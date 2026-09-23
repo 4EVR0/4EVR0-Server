@@ -638,10 +638,24 @@ async def _store_turn(session_id, message, products, response_text, concerns=Non
 
 
 # ── 멀티턴: 후속(이전 추천에 대한 질문) 감지 + 처리 (P2) ────────────────────
-# 후속 지시어/비교 큐 — 있으면 이전 추천에 대한 질문
-_FOLLOWUP_CUES = ("그 중", "그중", "이 중", "이중", "저 중", "저중", "중에서", "비교",
-                  "차이", "몇 번", "몇번", "이거", "그거", "저거", "골라", "방금", "위에",
-                  "장단점", "뭐가 더", "어떤 게", "어떤게", "어느", "낫", "추천한")
+# 이력이 없는 요청을 막을 때는 이전 답변을 *지칭하는* 표현만 사용한다.
+# "톤 차이", "제품 중에서", "골라주세요" 같은 일반 표현은 첫 질문에도 등장한다.
+_DEICTIC_SET_REF = re.compile(
+    r"(?:이|그|저)\s+중(?:에서|에|은|엔)?(?![가-힣])"
+    r"|(?:이|그|저)중(?:에서|에|은|엔)(?![가-힣])"
+)
+_PRIOR_REPLY_REF = re.compile(
+    r"(?:이전|앞서|방금|아까|직전|위에|위에서)\s*(?:추천|보여|말|언급|나온|제품)"
+    r"|추천해\s*준|추천해\s*주신",
+    re.IGNORECASE,
+)
+_PREVIOUS_RECOMMENDATION_REF = re.compile(
+    _DEICTIC_SET_REF.pattern
+    + r"|(?:이|그|저)\s*(?:거|것|제품)(?:들)?"
+    + r"|(?:이것|그것|저것)들?"
+    + r"|" + _PRIOR_REPLY_REF.pattern,
+    re.IGNORECASE,
+)
 # 새 추천 신호(피부 고민 어휘) — 있으면 새 요청
 _CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건조", "속건조", "수분",
                  "민감", "붉은", "홍조", "자극", "트러블", "기미", "잡티", "미백", "색소",
@@ -649,19 +663,21 @@ _CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건
 
 
 def _has_followup_cue(message: str) -> bool:
-    return any(c in message for c in _FOLLOWUP_CUES)
+    return bool(_PREVIOUS_RECOMMENDATION_REF.search(message))
+
+
+def _has_missing_history_cue(message: str) -> bool:
+    """Only an explicit prior reply/set can justify the expired-history answer."""
+    return bool(_PRIOR_REPLY_REF.search(message) or _DEICTIC_SET_REF.search(message))
 
 
 # 지시적(deictic) 후속 — "이 중에서/그 중에서/이것들 중"처럼 **직전 추천 세트**를 콕 집어
 # 좁히는 요청. 이런 요청에 옛 턴의 대화 맥락(다른 고민)이 섞이면 필터가 오염된다
 # ("건조" 추천 뒤 "이 중에서 지성용" → 옛 '건조' 맥락이 새면 안 됨). 제품 후보는 이미
 # 직전 턴만 보므로, 생성 컨텍스트의 '이전 대화'도 직전 턴 하나로 한정한다.
-_DEICTIC_CUES = ("그 중", "그중", "이 중", "이중", "저 중", "저중", "중에서",
-                 "이것들", "그것들")
-
-
 def _is_deictic(message: str) -> bool:
-    return any(c in message for c in _DEICTIC_CUES)
+    return bool(_DEICTIC_SET_REF.search(message) or
+                re.search(r"(?:이것|그것|저것)들", message))
 
 
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
@@ -897,7 +913,7 @@ async def _resolve_conversation_response(
     history = await conversation_store.load_recent(session_id)
     if history and await _is_followup(message, history):
         return await _handle_followup(session_id, turn_id, message, history)
-    if not history and _has_followup_cue(message):
+    if not history and _has_missing_history_cue(message):
         metrics.recommend_requests_total.labels(status="ok").inc()
         text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
                 "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "

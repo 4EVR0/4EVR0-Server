@@ -10,6 +10,8 @@ from app.services import recommend_service
 from app.services.recommend_service import (
     _extract_ranking,
     _followup_context,
+    _has_followup_cue,
+    _has_missing_history_cue,
     _heuristic_kind,
     _is_deictic,
     _reorder_by_ranking,
@@ -56,6 +58,26 @@ class HeuristicClassifyTest(unittest.TestCase):
     def test_followup_cue(self):
         self.assertEqual("followup", _heuristic_kind("그 중에서 비교해줘", self._HIST))
         self.assertEqual("followup", _heuristic_kind("이거 장단점 알려줘", self._HIST))
+        self.assertEqual("followup", _heuristic_kind("추천해준 제품 중 하나만 골라줘", self._HIST))
+
+    def test_generic_comparison_words_are_not_previous_recommendation_refs(self):
+        for message in (
+            "입 주변과 이마의 피부톤 차이가 고민이에요.",
+            "따끔거리는 피부에 알코올 없는 제품만 골라주세요.",
+            "비건 제품 중에서 무향인 것만 보여주세요.",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(_has_followup_cue(message))
+                self.assertEqual("new", _heuristic_kind(message, []))
+
+    def test_explicit_previous_recommendation_refs(self):
+        for message in ("그 중에서 비교해줘", "이거 장단점 알려줘", "방금 추천한 제품 중 뭐가 나아?"):
+            with self.subTest(message=message):
+                self.assertTrue(_has_followup_cue(message))
+        self.assertTrue(_has_missing_history_cue("그 중에서 비교해줘"))
+        self.assertTrue(_has_missing_history_cue("방금 추천한 제품 중 뭐가 나아?"))
+        self.assertFalse(_has_missing_history_cue("이 제품 추천해줘"))
+        self.assertFalse(_has_missing_history_cue("이중 세안 제품 추천해줘"))
 
     def test_concern_cue_is_new(self):
         self.assertEqual("new", _heuristic_kind("민감성 피부에 좋은거 있어?", self._HIST))
@@ -63,7 +85,7 @@ class HeuristicClassifyTest(unittest.TestCase):
 
     def test_ambiguous_returns_none(self):
         # 후속 큐도 고민 큐도 없으면 None(→ LLM 위임)
-        self.assertIsNone(_heuristic_kind("이 제품들 사용 순서 알려줘", self._HIST))
+        self.assertIsNone(_heuristic_kind("사용 순서 알려줘", self._HIST))
 
 
 class DeicticContextTest(unittest.TestCase):
@@ -84,6 +106,7 @@ class DeicticContextTest(unittest.TestCase):
         self.assertTrue(_is_deictic("이 중에서 가장 산뜻한 거"))
         self.assertTrue(_is_deictic("그것들 차이를 알려줘"))
         self.assertFalse(_is_deictic("세 제품을 전반적으로 비교해줘"))
+        self.assertFalse(_is_deictic("비건 제품 중에서 무향인 것만 보여주세요"))
 
     def test_deictic_context_keeps_only_latest_recommendation_turn(self):
         context = _followup_context(self._HISTORY, {}, deictic=True)
@@ -156,6 +179,25 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response)
         self.assertEqual([], response.products)
         self.assertIn("이전 추천 내역을 찾지 못했어요", response.response_text)
+
+    async def test_first_turn_with_generic_words_continues_to_recommendation(self):
+        with mock.patch.object(
+            recommend_service.conversation_store,
+            "load_recent",
+            mock.AsyncMock(return_value=[]),
+        ):
+            for message in (
+                "피부톤 차이가 고민입니다.",
+                "알코올 없는 제품만 골라주세요.",
+                "비건 제품 중에서 무향인 것만 보여주세요.",
+                "이 제품 추천해줘.",
+                "이중 세안 제품 추천해줘.",
+            ):
+                with self.subTest(message=message):
+                    response = await recommend_service._resolve_conversation_response(
+                        "new-session", "turn-1", message
+                    )
+                    self.assertIsNone(response)
 
     async def test_followup_after_zero_product_result_is_deterministic(self):
         history = [{

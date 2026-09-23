@@ -164,6 +164,18 @@ def check_response(case: Mapping[str, Any], response: Any) -> list[HardFailure]:
     if not text.strip():
         failures.append(HardFailure("EMPTY_RESPONSE", "response_text가 비어 있음"))
 
+    # A first-turn skin/product request must never be dismissed as an expired
+    # recommendation merely because it contains words like "차이" or "중에서".
+    if "이전 추천 내역을 찾지 못했어요" in text:
+        from app.services.recommend_service import _has_missing_history_cue
+
+        message = str(case.get("message") or "")
+        if message and not _has_missing_history_cue(message):
+            failures.append(HardFailure(
+                "FALSE_FOLLOWUP",
+                "이전 추천을 지칭하지 않는 질문을 이력 없는 후속 질문으로 처리함",
+            ))
+
     hanja = sorted(set(HANJA_PATTERN.findall(text)))
     if hanja:
         failures.append(HardFailure("HANJA_LEAK", f"한자 노출: {''.join(hanja)}"))

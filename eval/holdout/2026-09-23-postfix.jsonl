@@ -1,0 +1,20 @@
+{"id": 201, "label": "오후까지 이어지는 건조", "message": "세안하고 나면 볼이 메마르고 오후에도 계속 건조해요. 보습 위주로 관리하고 싶습니다.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN"], "constraints": []}
+{"id": 202, "label": "겉은 멀쩡한 속수분 부족", "message": "겉으로는 크게 건조해 보이지 않는데 피부 속이 자꾸 당기고 수분감이 없는 느낌이에요.", "skin_types": [], "concerns": ["DEHYDRATED_SKIN"], "constraints": []}
+{"id": 203, "label": "점심 이후 유분", "message": "점심이 지나면 코와 이마에 피지가 많이 올라와서 번들거려요. 유분을 관리하고 싶어요.", "skin_types": ["OILY"], "concerns": ["OILY_SKIN"], "constraints": []}
+{"id": 204, "label": "검은 점 없는 모공 막힘", "message": "코 옆 모공이 막힌 듯 답답하지만 블랙헤드는 없어요. 막힘 자체를 줄이고 싶습니다.", "skin_types": [], "concerns": ["PORE_CONGESTION"], "constraints": []}
+{"id": 205, "label": "턱의 화이트헤드", "message": "턱에 작은 화이트헤드가 반복해서 보여요. 짜지 않고 관리할 제품을 찾습니다.", "skin_types": [], "concerns": ["COMEDONES"], "constraints": []}
+{"id": 206, "label": "광대 기미", "message": "양쪽 광대에 기미처럼 보이는 갈색 색소침착이 생겨서 신경 쓰여요.", "skin_types": [], "concerns": ["HYPERPIGMENTATION"], "constraints": []}
+{"id": 207, "label": "희미한 잡티", "message": "볼에 희미한 잡티가 몇 개 보여서 깨끗하게 관리하고 싶어요.", "skin_types": [], "concerns": ["BLEMISHES"], "constraints": []}
+{"id": 208, "label": "탁한 얼굴빛", "message": "요즘 얼굴빛이 탁하고 칙칙해서 생기가 없어 보여요.", "skin_types": [], "concerns": ["DULLNESS"], "constraints": []}
+{"id": 209, "label": "얼굴 부위별 톤 차이", "message": "이마와 턱의 피부톤 차이가 커서 얼굴 색이 고르지 않아요. 전체 톤을 균일하게 하고 싶어요.", "skin_types": [], "concerns": ["UNEVEN_SKIN_TONE"], "constraints": []}
+{"id": 210, "label": "눈가 잔주름", "message": "웃을 때마다 눈가에 가는 잔주름이 선명해져요. 주름을 중심으로 관리하고 싶어요.", "skin_types": [], "concerns": ["WRINKLES"], "constraints": []}
+{"id": 211, "label": "반복되는 볼 붉음", "message": "운동할 때만이 아니라 평소에도 양 볼이 자주 붉어져요. 붉은 기가 고민이에요.", "skin_types": [], "concerns": ["REDNESS"], "constraints": []}
+{"id": 212, "label": "민감성 피부와 따가움", "message": "민감성 피부라 새 화장품을 바르면 금방 따가워요. 자극된 상태를 진정시키고 싶어요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN", "IRRITATED_SKIN"], "constraints": []}
+{"id": 213, "label": "건성과 속수분 부족", "message": "원래 건성인데 최근에는 피부 속까지 수분이 부족해서 당겨요. 겉 건조함과 속당김을 같이 관리하고 싶습니다.", "skin_types": ["DRY"], "concerns": ["DRY_SKIN", "DEHYDRATED_SKIN"], "constraints": []}
+{"id": 214, "label": "고민을 부정한 기본 요청", "message": "여드름도 홍조도 없고 특별히 불편한 피부 고민은 없어요. 매일 쓸 기본 제품을 알려주세요.", "skin_types": [], "concerns": [], "constraints": []}
+{"id": 215, "label": "홍조와 무향 조건", "message": "볼 홍조가 신경 쓰여요. 향료 없는 제품 중에서만 보여주세요.", "skin_types": [], "concerns": ["REDNESS"], "constraints": ["FRAGRANCE_FREE"]}
+{"id": 216, "label": "예민한 피부와 비건 저자극 조건", "message": "피부가 예민해서 순한 제품이 필요해요. 비건 인증과 저자극을 확인할 수 있는 것만 골라주세요.", "skin_types": ["SENSITIVE"], "concerns": ["SENSITIVE_SKIN"], "constraints": ["VEGAN", "HYPOALLERGENIC"]}
+{"id": 217, "label": "복합성 유분 건조 넓은 모공", "message": "T존은 기름이 많이 돌고 볼은 건조한데 코 모공도 눈에 띄게 넓어요. 세 가지를 같이 관리하고 싶어요.", "skin_types": ["COMBINATION"], "concerns": ["OILY_SKIN", "DRY_SKIN", "ENLARGED_PORES"], "constraints": []}
+{"id": 218, "label": "각질과 울퉁불퉁한 결", "message": "입가에 하얀 각질이 일어나고 볼을 만지면 피부결이 울퉁불퉁해요.", "skin_types": [], "concerns": ["FLAKY_SKIN", "ROUGH_TEXTURE"], "constraints": []}
+{"id": 219, "label": "고민 없는 비건 무향 조건", "message": "지금 피부 고민은 딱히 없습니다. 비건 화장품 중에서 무향인 것만 추천해 주세요.", "skin_types": [], "concerns": [], "constraints": ["VEGAN", "FRAGRANCE_FREE"]}
+{"id": 220, "label": "특정 주름 없는 일반 노화", "message": "주름은 아직 없지만 전반적인 피부 노화가 걱정돼요. 안티에이징 관리를 시작하려고 합니다.", "skin_types": [], "concerns": ["AGING_SIGNS"], "constraints": []}

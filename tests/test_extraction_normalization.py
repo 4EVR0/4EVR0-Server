@@ -45,3 +45,93 @@ def test_independent_redness_signal_is_preserved():
     assert _normalize_concerns(
         "피부가 자극받으면 바로 붉어져요.", [Concern.IRRITATED_SKIN, Concern.REDNESS]
     ) == [Concern.IRRITATED_SKIN, Concern.REDNESS]
+    assert _normalize_concerns(
+        "아토피 피부라 자주 빨개져요.", [Concern.ATOPIC_PRONE, Concern.REDNESS]
+    ) == [Concern.ATOPIC_PRONE, Concern.REDNESS]
+
+
+def test_surface_dryness_does_not_imply_inner_moisture_loss():
+    assert _normalize_concerns(
+        "건성이라 씻고 나면 뺨이 당기고 건조합니다.",
+        [Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN],
+    ) == [Concern.DRY_SKIN]
+    assert _normalize_concerns(
+        "건성이고 속까지 수분이 부족합니다.",
+        [Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN],
+    ) == [Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN]
+    assert _normalize_concerns(
+        "뺨이 건조해요.",
+        [Concern.DEHYDRATED_SKIN],
+    ) == [Concern.DRY_SKIN]
+    assert _normalize_concerns(
+        "기본 보습 화장품을 찾습니다.",
+        [Concern.DEHYDRATED_SKIN],
+    ) == []
+    assert _normalize_concerns(
+        "오후에도 계속 건조합니다.",
+        [Concern.DEHYDRATED_SKIN],
+    ) == [Concern.DRY_SKIN]
+
+
+def test_pore_and_blemish_neighbors_require_their_own_signal():
+    assert _normalize_concerns(
+        "붉은 여드름이 올라왔어요.",
+        [Concern.ACNE, Concern.COMEDONES],
+    ) == [Concern.ACNE]
+    assert _normalize_concerns(
+        "코에 블랙헤드가 보이고 모공도 막혀요.",
+        [Concern.COMEDONES, Concern.PORE_CONGESTION],
+    ) == [Concern.COMEDONES, Concern.PORE_CONGESTION]
+    assert _normalize_concerns(
+        "콧등에 검은 점이 보여요.",
+        [Concern.COMEDONES, Concern.PORE_CONGESTION],
+    ) == [Concern.COMEDONES]
+
+
+def test_pigmentation_dullness_and_spots_are_distinct():
+    assert _normalize_concerns(
+        "얼굴의 갈색 색소침착을 관리하고 싶어요.",
+        [Concern.HYPERPIGMENTATION, Concern.DULLNESS],
+    ) == [Concern.HYPERPIGMENTATION]
+    assert _normalize_concerns(
+        "볼에 잡티가 보여요.",
+        [Concern.HYPERPIGMENTATION],
+    ) == [Concern.BLEMISHES]
+    assert _normalize_concerns(
+        "볼에 잡티가 보여요.",
+        [Concern.HYPERPIGMENTATION, Concern.BLEMISHES],
+    ) == [Concern.BLEMISHES]
+    assert _normalize_concerns(
+        "기미도 있고 안색이 칙칙해요.",
+        [Concern.HYPERPIGMENTATION, Concern.DULLNESS],
+    ) == [Concern.HYPERPIGMENTATION, Concern.DULLNESS]
+
+
+def test_named_wrinkles_replace_generic_aging_label():
+    assert _normalize_concerns(
+        "눈가 잔주름을 관리하고 싶어요.",
+        [Concern.AGING_SIGNS],
+    ) == [Concern.WRINKLES]
+    assert _normalize_concerns(
+        "전체적인 노화가 걱정돼요.",
+        [Concern.AGING_SIGNS],
+    ) == [Concern.AGING_SIGNS]
+
+
+def test_explicit_sensitive_skin_and_redness_do_not_require_model_inference():
+    assert _normalize_concerns(
+        "민감성 피부라 새 제품을 쓰면 따가워요.",
+        [Concern.IRRITATED_SKIN],
+    ) == [Concern.IRRITATED_SKIN, Concern.SENSITIVE_SKIN]
+    assert _normalize_concerns(
+        "피부가 예민해서 저자극 제품을 찾습니다.",
+        [],
+    ) == [Concern.SENSITIVE_SKIN]
+    assert _normalize_concerns(
+        "로사케아 경향이 있다는 말을 들었어요.",
+        [Concern.ROSACEA_PRONE],
+    ) == [Concern.ROSACEA_PRONE]
+    assert _normalize_concerns(
+        "볼에 홍조가 생겨요.",
+        [Concern.ROSACEA_PRONE],
+    ) == [Concern.REDNESS]
