@@ -1140,6 +1140,34 @@ def _review_note(p: ProductResult) -> str:
     return " · ".join(parts)
 
 
+def _product_evidence_lines(
+    ingredients: list[IngredientResult], products: list[ProductResult],
+) -> str:
+    """생성기와 평가기가 공유하는 제품 근거 문자열."""
+    ingredient_by_name = {ingredient.name: ingredient for ingredient in ingredients}
+
+    def _annotate(names: list[str]) -> str:
+        annotated = []
+        for name in names[:3]:
+            ingredient = ingredient_by_name.get(name)
+            if ingredient:
+                annotated.append(
+                    f"{_ingredient_display_name(ingredient)} "
+                    f"[{_evidence_label(ingredient.eligibility_tier, ingredient.paper_ref)}]"
+                )
+            else:
+                annotated.append(name)
+        return ", ".join(annotated)
+
+    def _product_line(p: ProductResult) -> str:
+        base = (f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
+                f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
+        note = _review_note(p)
+        return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
+
+    return "\n".join(_product_line(p) for p in products)
+
+
 def _compose_user_content(
     message: str,
     ingredients: list[IngredientResult],
@@ -1149,8 +1177,6 @@ def _compose_user_content(
     sections = [f"사용자 메시지: {message}"]
 
     # INCI 성분명 → 표시명·근거. 제품 매칭 결과의 영문 이름도 같은 소비자용 표기로 변환한다.
-    ingredient_by_name = {ingredient.name: ingredient for ingredient in ingredients}
-
     if ingredients:
         ingredient_lines = "\n".join(
             f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
@@ -1162,27 +1188,7 @@ def _compose_user_content(
         sections.append("(현재 성분 데이터베이스에 해당 고민에 맞는 성분 데이터가 없습니다. 일반적인 추천을 제공해 주세요.)")
 
     if products:
-        def _annotate(names: list[str]) -> str:
-            # 제품의 핵심 성분에 근거 라벨을 붙여 모델이 제품 추천을 근거에 묶을 수 있게 한다.
-            annotated = []
-            for name in names[:3]:
-                ingredient = ingredient_by_name.get(name)
-                if ingredient:
-                    annotated.append(
-                        f"{_ingredient_display_name(ingredient)} "
-                        f"[{_evidence_label(ingredient.eligibility_tier, ingredient.paper_ref)}]"
-                    )
-                else:
-                    annotated.append(name)
-            return ", ".join(annotated)
-
-        def _product_line(p: ProductResult) -> str:
-            base = (f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
-                    f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
-            note = _review_note(p)
-            return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
-
-        product_lines = "\n".join(_product_line(p) for p in products)
+        product_lines = _product_evidence_lines(ingredients, products)
         sections.append(
             "추천 제품 데이터:\n" + product_lines +
             "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, "
