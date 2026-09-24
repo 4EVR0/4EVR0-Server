@@ -1,5 +1,35 @@
 # Evaluation
 
+## Source evidence audit
+
+Before adding detailed ingredient explanations, trace local Gold claims back to
+their stored source sentences and PMID URLs:
+
+```bash
+python eval/audit_evidence_sources.py \
+  --claims-root ../GraphRAG_Pipeline/gold/claim \
+  --ingredient BAKUCHIOL --ingredient RETINOL --ingredient 'CERAMIDE NP' \
+  --effect ANTI_AGING --out eval/results/anti-aging-source-audit.json
+```
+
+The tool reads each batch's `graph_claim.csv` and `claim_effect_map.csv`, joins on
+batch ID and claim key, and records input SHA-256 hashes. Ingredient matching is
+case/whitespace-normalized exact matching: `Ceramide` is not assumed to mean
+`CERAMIDE NP`. A missing exact match is a coverage gap to investigate, not proof
+that no scientific evidence exists. Missing mapping files and duplicate selected
+claim identities fail the audit instead of silently joining unrelated rows.
+
+Every usable candidate still has `needs_review` status. Animal/cell, combination,
+formulation and tolerability keyword flags help review; they are not scientific
+classification or approval. Verify the publication, exact ingredient, study
+population, formulation and measured outcome before using a source in responses.
+The tool cannot establish that local batches produced the deployed Neo4j edges;
+candidate PMID counts must not be substituted for serving paper counts.
+
+This is an offline data audit. It calls no model or external service and creates
+no MLflow experiment run. Results stay under ignored `eval/results/`; use a new
+output filename for each audit because existing reports are never overwritten.
+
 ## Experiment tracking
 
 Install `eval/requirements.txt` before running an evaluation. Extraction, response,
