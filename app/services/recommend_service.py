@@ -595,6 +595,52 @@ def _build_redness_rosacea_response(
     return "\n".join(lines)
 
 
+def _redness_study_match(
+    concerns: list[Concern],
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+) -> tuple[IngredientResult, ProductResult, dict] | None:
+    """질문 고민·성분 효능·제품 함유가 모두 맞는 별도 검토 연구만 사용한다."""
+    if not settings.verified_study_response_enabled or not _is_redness_rosacea_query(concerns):
+        return None
+    concern = Concern.ROSACEA_PRONE if Concern.ROSACEA_PRONE in concerns else Concern.REDNESS
+    ingredient_map = {item.name: item for item in ingredients[:10]}
+    for product in products:
+        for name in product.matched_ingredients:
+            ingredient = ingredient_map.get(name)
+            study = verified_study_for(ingredient) if ingredient else None
+            if study and concern.value in study.get("reviewed_concern_codes", []):
+                return ingredient, product, study
+    return None
+
+
+def _build_redness_study_response(
+    concerns: list[Concern],
+    match: tuple[IngredientResult, ProductResult, dict],
+) -> str:
+    """측정된 연구 결과와 제품의 성분 포함 사실을 분리해 한 후보만 설명한다."""
+    ingredient, product, study = match
+    concern = (
+        "말씀하신 로사케아 경향을" if Concern.ROSACEA_PRONE in concerns
+        else "말씀하신 붉은 기를"
+    )
+    ingredient_name = ingredient.kor_name or ingredient.name
+    product_name = _product_display_name(product.brand, product.product_name)
+    return "\n".join([
+        "고민 분석",
+        f"{concern} 고려해 피부 변화를 측정한 연구를 참고했습니다.",
+        "",
+        "성분 설명",
+        f"- {ingredient_name}: {study['brief_summary_ko']} [연구 보기]({study['url']})",
+        "",
+        "추천 제품",
+        f"- [{product.category}] {product_name}: 제품 데이터에서 {ingredient_name} 성분이 확인돼 "
+        f"{study['product_bridge_ko']} 비교 후보로 골랐습니다. 다만 {study['limitation_ko']}",
+        "",
+        "구매 전 향료 표시와 전체 성분을 확인해 주세요.",
+    ])
+
+
 def _verified_study_match(
     message: str,
     concerns: list[Concern],
@@ -1224,7 +1270,14 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             _t = time.perf_counter()
             response_mode = "generated" if products else "no_products"
             study_match = _verified_study_match(message, profile.concerns, ingredients, products)
-            if products and _is_redness_rosacea_query(profile.concerns):
+            redness_match = _redness_study_match(profile.concerns, ingredients, products)
+            if redness_match:
+                # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
+                products = [redness_match[1]]
+            if products and redness_match:
+                response_mode = "redness_verified_study_template"
+                response_text = _build_redness_study_response(profile.concerns, redness_match)
+            elif products and _is_redness_rosacea_query(profile.concerns):
                 response_mode = "redness_evidence_template"
                 response_text = _build_redness_rosacea_response(
                     ingredients, products, profile.concerns,
@@ -1568,6 +1621,9 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                               review_stats=_parse_review_stats(row.get("review_stats")))
                 for row in raw_products
             ]
+            redness_match = _redness_study_match(profile.concerns, ingredients, products)
+            if redness_match:
+                products = [redness_match[1]]
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
@@ -1585,6 +1641,12 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 )
                 chunks.append(response_text)
                 yield _sse("delta", {"text": response_text})
+                gen_total = 0.0
+                spans["generate_ttft"] = 0.0
+                spans["generate_decode"] = 0.0
+            elif redness_match:
+                response_mode = "redness_verified_study_template"
+                response_text = _build_redness_study_response(profile.concerns, redness_match)
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0

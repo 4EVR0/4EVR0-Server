@@ -46,6 +46,52 @@ class ProductImageUrlTest(unittest.TestCase):
 
 
 class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rosacea_study_template_matches_batch_stream_and_can_rollback(self):
+        from app.domain.enums import Concern
+
+        profile = SimpleNamespace(effects=[], concerns=[Concern.ROSACEA_PRONE], constraints=[])
+        ingredient_rows = [{
+            "name": "NIACINAMIDE", "kor_name": "나이아신아마이드", "claim": "Soothing",
+            "eligibility_tier": "pubmed_evidence", "paper_ref": "1",
+        }]
+        product_rows = [{
+            "product_id": "p1", "product_name": "테스트 레드 세럼", "brand": "테스트",
+            "category": "세럼", "matched_count": 1,
+            "matched_ingredients": ["NIACINAMIDE"],
+        }, {
+            "product_id": "p2", "product_name": "다른 레드 세럼", "brand": "테스트",
+            "category": "세럼", "matched_count": 1,
+            "matched_ingredients": ["NIACINAMIDE"],
+        }]
+        with (
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
+            patch("app.services.recommend_service.extract_with_fallback", new=AsyncMock(return_value=(profile, "llm"))),
+            patch("app.services.recommend_service.query_ingredients_by_effects", new=AsyncMock(return_value=ingredient_rows)),
+            patch("app.services.recommend_service.query_cautioned_ingredients", new=AsyncMock(return_value=set())),
+            patch("app.services.recommend_service.select_products", new=AsyncMock(return_value=product_rows)),
+            patch("app.services.recommend_service.get_async_llm_client", side_effect=AssertionError("generator called")),
+        ):
+            batch = await recommend("rosacea-study-batch", "로사케아 경향에 맞는 제품")
+            frames = [frame async for frame in recommend_stream(
+                "rosacea-study-stream", "로사케아 경향에 맞는 제품",
+            )]
+            with patch.object(settings, "verified_study_response_enabled", False):
+                rollback = await recommend("rosacea-study-off", "로사케아 경향에 맞는 제품")
+
+        self.assertEqual("redness_verified_study_template", batch.response_mode)
+        self.assertEqual(["p1"], [product.product_id for product in batch.products])
+        self.assertIn("[연구 보기](https://pubmed.ncbi.nlm.nih.gov/16209160/)", batch.response_text)
+        meta = next(frame for frame in frames if frame.startswith("event: meta\n"))
+        self.assertEqual(1, len(json.loads(meta.split("data: ", 1)[1])["products"]))
+        deltas = [json.loads(frame.split("data: ", 1)[1])["text"] for frame in frames
+                  if frame.startswith("event: delta\n")]
+        self.assertEqual([batch.response_text], deltas)
+        self.assertIn('"response_mode": "redness_verified_study_template"', frames[-1])
+        self.assertEqual("redness_evidence_template", rollback.response_mode)
+        self.assertNotIn("[연구 보기]", rollback.response_text)
+
     async def test_verified_study_toggle_off_uses_previous_generation_path(self):
         from app.domain.enums import Concern
 
