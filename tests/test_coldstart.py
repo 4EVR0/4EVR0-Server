@@ -60,7 +60,7 @@ class HealthReadinessGateTest(unittest.IsolatedAsyncioTestCase):
 
 class SingleFlightTest(unittest.IsolatedAsyncioTestCase):
     def test_current_response_uses_new_cache_namespace(self):
-        self.assertTrue(recommend_cache._key("피부 고민", None).startswith("reccache:v6:"))
+        self.assertTrue(recommend_cache._key("피부 고민", None).startswith("reccache:v7:"))
 
     async def test_concurrent_misses_coalesce_to_one_compute(self):
         store: dict[str, str] = {}

@@ -46,10 +46,47 @@ class ProductImageUrlTest(unittest.TestCase):
 
 
 class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
+    async def test_verified_retinol_study_uses_grounded_template_in_batch_and_stream(self):
+        from app.domain.enums import Concern
+
+        profile = SimpleNamespace(effects=[], concerns=[Concern.WRINKLES], constraints=[])
+        ingredient_rows = [{
+            "name": "RETINOL", "kor_name": "레티놀", "claim": "Anti-aging",
+            "eligibility_tier": "pubmed_evidence", "paper_ref": "2",
+        }]
+        product_rows = [{
+            "product_id": "p1", "product_name": "테스트 주름 세럼", "brand": "테스트",
+            "category": "세럼", "matched_count": 1,
+            "matched_ingredients": ["RETINOL"],
+        }]
+        cache_set = AsyncMock()
+        with (
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
+            patch("app.services.recommend_service.extract_with_fallback", new=AsyncMock(return_value=(profile, "llm"))),
+            patch("app.services.recommend_service.query_ingredients_by_effects", new=AsyncMock(return_value=ingredient_rows)),
+            patch("app.services.recommend_service.select_products", new=AsyncMock(return_value=product_rows)),
+            patch("app.services.recommend_service._build_llm_response", new=AsyncMock(side_effect=AssertionError("generator called"))),
+            patch("app.services.recommend_service.get_async_llm_client", side_effect=AssertionError("generator called")),
+            patch("app.services.recommend_service.recommend_cache.set", new=cache_set),
+        ):
+            batch = await recommend("verified-batch", "입가 잔주름이 고민이에요.")
+            frames = [frame async for frame in recommend_stream("verified-stream", "입가 잔주름이 고민이에요.")]
+
+        self.assertEqual("verified_study_template", batch.response_mode)
+        self.assertIn("0.1% 안정화 레티놀 제형", batch.response_text)
+        self.assertIn("제품 자체에서 동일한 효과가 난다고 단정할 수 없습니다", batch.response_text)
+        self.assertNotIn("24아마이드", batch.response_text)
+        deltas = [json.loads(frame.split("data: ", 1)[1])["text"] for frame in frames
+                  if frame.startswith("event: delta\n")]
+        self.assertEqual([batch.response_text], deltas)
+        self.assertEqual("verified_study_template", cache_set.await_args.args[2]["response_mode"])
+
     async def test_batch_and_stream_replace_corrupted_generation_before_delivery(self):
         profile = SimpleNamespace(effects=[], concerns=[], constraints=[])
         ingredient_rows = [{
-            "name": "RETINOL", "kor_name": "레티놀", "claim": "Anti-aging",
+            "name": "RETINOL", "kor_name": "레티놀", "claim": "Hydrating",
             "eligibility_tier": "pubmed_evidence", "paper_ref": "2",
         }]
         product_rows = [{
@@ -91,6 +128,10 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
             for frame in frames if frame.startswith("event: delta\n")
         ]
         self.assertEqual([batch.response_text], deltas)
+        self.assertEqual("quality_fallback", batch.response_mode)
+        done = [json.loads(frame.split("data: ", 1)[1]) for frame in frames
+                if frame.startswith("event: done\n")]
+        self.assertEqual("quality_fallback", done[-1]["response_mode"])
         self.assertIn("추천 이유는", batch.response_text)
         self.assertNotIn("세포 세포", batch.response_text)
         self.assertNotIn("CELLULAR", batch.response_text)
