@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+from app.core.config import settings
 from app.domain.enums import Concern, Constraint
 from app.schemas.recommend import IngredientResult, ProductResult
 from app.services.response_integrity import find_response_integrity_issues
@@ -46,8 +48,11 @@ class EvidenceLabelTest(unittest.TestCase):
 
         for text in (judge_input["verified_studies"], response):
             self.assertIn("0.1%", text)
-        self.assertIn("제품 자체에서 동일한 효과가 난다고 단정할 수 없습니다", response)
+        self.assertIn("입가 주름을 별도로 평가하지 않았고", response)
+        self.assertIn("추천 제품의 효과를 입증한 연구도 아닙니다", response)
         self.assertIn("입가 주름 고민", response)
+        self.assertIn("[연구 보기](https://pubmed.ncbi.nlm.nih.gov/38564380/)", response)
+        self.assertNotIn("사용 4~12주", response)
         self.assertNotIn("논문 근거 2건", response)
         self.assertEqual([], find_response_integrity_issues(response, [ingredient], [product]))
         self.assertFalse(_has_product_grounding_violation(response, [ingredient], [product]))
@@ -56,6 +61,10 @@ class EvidenceLabelTest(unittest.TestCase):
         self.assertEqual("(없음)", render_evidence_context([ingredient], [product])["verified_studies"])
         self.assertIsNone(_verified_study_match("탄력이 떨어져요", [Concern.LOSS_OF_ELASTICITY], [ingredient], [product]))
         self.assertIsNone(_verified_study_match("목주름이 고민이에요", [Concern.WRINKLES], [ingredient], [product]))
+        with patch.object(settings, "verified_study_response_enabled", False):
+            self.assertIsNone(_verified_study_match(
+                "입가 잔주름이 고민이에요.", [Concern.WRINKLES], [ingredient], [product],
+            ))
         self.assertNotIn("0.1%", _compose_user_content(
             "건조해요", [ingredient.model_copy(update={"claim": "Hydrating"})], [product],
         ))

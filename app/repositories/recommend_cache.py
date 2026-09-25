@@ -25,7 +25,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v7:"
+_KEY_PREFIX = "reccache:v8:"
 _client: aioredis.Redis | None = None
 
 
@@ -53,7 +53,8 @@ def _key(message: str, gen_prompt_name: str | None) -> str:
     # 공백 정규화 + 소문자화 → "건조해요 "와 "건조해요"가 같은 키. 응답 프롬프트가 다르면
     # 결과도 다르므로 키에 포함(실험용 프롬프트 교체와 캐시 충돌 방지).
     norm = " ".join(message.strip().split()).lower()
-    raw = f"{gen_prompt_name or 'default'}|{norm}"
+    # 기능을 끄거나 다시 켠 직후에도 반대 설정에서 생성한 24h 캐시를 재사용하지 않는다.
+    raw = f"{gen_prompt_name or 'default'}|verified_study={int(settings.verified_study_response_enabled)}|{norm}"
     return _KEY_PREFIX + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

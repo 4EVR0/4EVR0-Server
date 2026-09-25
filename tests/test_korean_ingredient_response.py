@@ -46,6 +46,40 @@ class ProductImageUrlTest(unittest.TestCase):
 
 
 class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
+    async def test_verified_study_toggle_off_uses_previous_generation_path(self):
+        from app.domain.enums import Concern
+
+        profile = SimpleNamespace(effects=[], concerns=[Concern.WRINKLES], constraints=[])
+        ingredient_rows = [{
+            "name": "RETINOL", "kor_name": "레티놀", "claim": "Anti-aging",
+            "eligibility_tier": "pubmed_evidence", "paper_ref": "2",
+        }]
+        product_rows = [{
+            "product_id": "p1", "product_name": "테스트 주름 세럼", "brand": "테스트",
+            "category": "세럼", "matched_count": 1, "matched_ingredients": ["RETINOL"],
+        }]
+        generated = (
+            "고민 분석\n입가 잔주름이 고민이군요.\n\n성분 설명\n"
+            "- 레티놀: 제품 데이터의 매칭 성분입니다.\n\n추천 제품\n"
+            "- [세럼] 테스트 주름 세럼: 레티놀이 매칭 성분으로 확인됩니다."
+        )
+        generator = AsyncMock(return_value=generated)
+        with (
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch.object(settings, "verified_study_response_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
+            patch("app.services.recommend_service.extract_with_fallback", new=AsyncMock(return_value=(profile, "llm"))),
+            patch("app.services.recommend_service.query_ingredients_by_effects", new=AsyncMock(return_value=ingredient_rows)),
+            patch("app.services.recommend_service.select_products", new=AsyncMock(return_value=product_rows)),
+            patch("app.services.recommend_service._build_llm_response", new=generator),
+        ):
+            result = await recommend("verified-off", "입가 잔주름이 고민이에요.")
+
+        generator.assert_awaited_once()
+        self.assertEqual("generated", result.response_mode)
+        self.assertNotIn("연구 보기", result.response_text)
+
     async def test_verified_retinol_study_uses_grounded_template_in_batch_and_stream(self):
         from app.domain.enums import Concern
 
@@ -75,8 +109,9 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
             frames = [frame async for frame in recommend_stream("verified-stream", "입가 잔주름이 고민이에요.")]
 
         self.assertEqual("verified_study_template", batch.response_mode)
-        self.assertIn("0.1% 안정화 레티놀 제형", batch.response_text)
-        self.assertIn("제품 자체에서 동일한 효과가 난다고 단정할 수 없습니다", batch.response_text)
+        self.assertIn("특정 0.1% 레티놀 제형", batch.response_text)
+        self.assertIn("입가 주름을 별도로 평가하지 않았고", batch.response_text)
+        self.assertIn("[연구 보기](https://pubmed.ncbi.nlm.nih.gov/38564380/)", batch.response_text)
         self.assertNotIn("24아마이드", batch.response_text)
         deltas = [json.loads(frame.split("data: ", 1)[1])["text"] for frame in frames
                   if frame.startswith("event: delta\n")]

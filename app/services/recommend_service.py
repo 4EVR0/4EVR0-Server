@@ -516,7 +516,7 @@ def _verified_study_match(
     products: list[ProductResult],
 ) -> tuple[IngredientResult, ProductResult, dict] | None:
     """얼굴 주름 질문에만 검토된 연구와 해당 성분이 매칭된 제품을 연결한다."""
-    if Concern.WRINKLES not in concerns:
+    if not settings.verified_study_response_enabled or Concern.WRINKLES not in concerns:
         return None
     query = message.casefold()
     if not any(term in query for term in ("입가", "팔자", "눈가", "이마", "얼굴", "볼주름")):
@@ -537,20 +537,24 @@ def _build_verified_study_response(
     """별도 검증 연구와 제품 성분 매칭을 구분해 한 후보만 설명한다."""
     ingredient, product, study = match
     area = next((part for part in ("입가", "팔자", "눈가", "이마", "얼굴") if part in message), "얼굴")
-    display = _ingredient_display_name(ingredient)
+    display = ingredient.kor_name or ingredient.name
     product_name = _product_display_name(product.brand, product.product_name)
+    limitation = (
+        "입가 주름을 별도로 평가하지 않았고, 추천 제품의 효과를 입증한 연구도 아닙니다."
+        if area in ("입가", "팔자") else
+        "추천 제품 자체의 효과를 입증한 연구는 아닙니다."
+    )
     return "\n".join([
         "고민 분석",
-        f"{area} 주름 고민에 대해 얼굴 주름 연구 결과와 제품의 성분 데이터를 따로 살폈습니다.",
+        f"{area} 주름 고민에 맞춰 연구 결과와 제품 성분을 따로 살폈습니다.",
         "",
         "성분 설명",
-        f"- {display}: {study['summary_ko']}",
-        f"  연구 출처: {study['url']}",
+        f"- {display}: {study['brief_summary_ko']} {limitation} "
+        f"[연구 보기]({study['url']})",
         "",
         "추천 제품",
-        f"- [{product.category}] {product_name}: 제품 데이터에서 {ingredient.kor_name or ingredient.name}이 "
-        "매칭 성분으로 확인됩니다. 다만 연구에 사용된 제형과 이 제품의 농도·제형이 같은지는 "
-        "확인되지 않아, 제품 자체에서 동일한 효과가 난다고 단정할 수 없습니다.",
+        f"- [{product.category}] {product_name}: 제품 데이터에서 {display}이 "
+        "매칭 성분으로 확인되어 추천 후보로 골랐습니다.",
     ])
 
 
