@@ -7,6 +7,7 @@
 """
 
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.domain.enums import Concern
 from app.services.recommend_service import (
@@ -16,6 +17,8 @@ from app.services.recommend_service import (
     _rerank_by_review,
     _requested_categories,
     _review_strength,
+    apply_caution_filter,
+    select_products,
 )
 
 
@@ -42,6 +45,10 @@ class RequestedCategoriesTest(unittest.TestCase):
 
 
 class AppropriateCategoriesTest(unittest.TestCase):
+    def test_rosacea_excludes_toner_even_if_explicitly_requested(self):
+        self.assertNotIn("토너", _appropriate_categories([Concern.ROSACEA_PRONE]))
+        self.assertEqual([], _appropriate_categories([Concern.ROSACEA_PRONE], {"토너"}))
+
     def test_no_request_returns_concern_base(self):
         cats = _appropriate_categories([Concern.ACNE])
         self.assertIn("토너", cats)
@@ -97,6 +104,36 @@ class SensitivityQueryTest(unittest.TestCase):
         self.assertFalse(_is_sensitivity_query([Concern.HYPERPIGMENTATION]))
         self.assertFalse(_is_sensitivity_query([Concern.AGING_SIGNS]))
         self.assertFalse(_is_sensitivity_query([]))
+
+
+class RednessRosaceaEvidenceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fragrance_and_retinoids_do_not_become_positive_evidence(self):
+        rows = [{"name": name} for name in
+                ("LINALOOL", "FARNESOL", "RETINOL", "RETINAL", "PANTHENOL")]
+        with patch("app.services.recommend_service.query_cautioned_ingredients",
+                   new=AsyncMock(return_value=set())):
+            for concern in (Concern.REDNESS, Concern.ROSACEA_PRONE):
+                self.assertEqual([{"name": "PANTHENOL"}],
+                                 await apply_caution_filter(rows, [concern]))
+            self.assertEqual(rows,
+                             await apply_caution_filter(rows, [Concern.SENSITIVE_SKIN]))
+
+    async def test_all_excluded_ingredients_are_not_revived(self):
+        with patch("app.services.recommend_service.query_cautioned_ingredients",
+                   new=AsyncMock(return_value=set())):
+            self.assertEqual([], await apply_caution_filter(
+                [{"name": "LINALOOL"}], [Concern.ROSACEA_PRONE],
+            ))
+
+    async def test_product_query_uses_full_ingredient_exclusion_only_for_target_concerns(self):
+        scores = [{"name": "PANTHENOL", "weight": 1.0}]
+        with patch("app.services.recommend_service.query_products_by_ingredients",
+                   new=AsyncMock(return_value=[])) as query:
+            await select_products("붉은기가 오래 가요", [Concern.REDNESS], scores)
+            self.assertEqual(["FARNESOL", "LINALOOL", "RETINAL", "RETINOL"],
+                             query.call_args.kwargs["excluded_ingredients"])
+            await select_products("여드름이 고민이에요", [Concern.ACNE], scores)
+            self.assertEqual([], query.call_args.kwargs["excluded_ingredients"])
 
 
 class ReviewRerankTest(unittest.TestCase):

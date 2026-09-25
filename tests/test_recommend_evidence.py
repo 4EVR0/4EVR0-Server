@@ -9,6 +9,7 @@ from app.services.recommend_service import (
     _apply_constraint_evidence_guard,
     _build_grounded_product_response,
     _build_no_product_response,
+    _build_redness_rosacea_response,
     _build_verified_study_response,
     _compose_user_content,
     _evidence_label,
@@ -96,6 +97,26 @@ class EvidenceLabelTest(unittest.TestCase):
 
 
 class DeterministicOutputGuardTest(unittest.TestCase):
+    def test_rosacea_template_states_candidate_reason_without_claiming_treatment(self):
+        ingredients = [IngredientResult(
+            name="TROXERUTIN", kor_name="트록세루틴", claim="Soothing",
+            eligibility_tier="pubmed_evidence", paper_ref="1",
+        )]
+        products = [ProductResult(
+            product_id="p1", product_name="레드 세럼", brand="테스트", category="세럼",
+            matched_count=1, matched_ingredients=["TROXERUTIN"],
+        )]
+        response = _build_redness_rosacea_response(
+            ingredients, products, [Concern.ROSACEA_PRONE],
+        )
+        self.assertIn("말씀하신 로사케아 경향", response)
+        self.assertIn("트록세루틴의 포함이 제품 데이터에서 확인돼 비교 후보", response)
+        self.assertIn("실제 개선 효과를 확인할 수는 없습니다", response)
+        self.assertNotIn("진단받아", response)
+        self.assertNotIn("혈관 확장", response)
+        self.assertEqual([], find_response_integrity_issues(response, ingredients, products))
+        self.assertFalse(_has_product_grounding_violation(response, ingredients, products))
+
     @staticmethod
     def _ingredient_and_product():
         ingredients = [
@@ -160,6 +181,25 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         response = _build_no_product_response([], [Constraint.FRAGRANCE_FREE])
         self.assertIn("향료 미포함", response)
         self.assertIn("확인할 수 있는 제품 속성 데이터가 없어", response)
+
+    def test_redness_no_product_response_does_not_suggest_retinoids(self):
+        ingredients = [IngredientResult(name="RETINOL", kor_name="레티놀")]
+        response = _build_no_product_response(ingredients, [], [Concern.REDNESS])
+        self.assertIn("붉은 기", response)
+        self.assertIn("구체적인 제품명을 추천하지 않겠습니다", response)
+        self.assertIn("향료 표시와 전성분", response)
+        self.assertNotIn("레티놀", response)
+
+    def test_rosacea_no_product_response_preserves_uncertain_status(self):
+        response = _build_no_product_response([], [], [Concern.ROSACEA_PRONE])
+        self.assertIn("로사케아 경향", response)
+        self.assertNotIn("진단", response)
+
+    def test_rosacea_requested_toner_has_explicit_no_product_reason(self):
+        response = _build_no_product_response(
+            [], [], [Concern.ROSACEA_PRONE], "로사케아 경향에 맞는 토너 추천해줘",
+        )
+        self.assertIn("토너는 추천하지 않겠습니다", response)
 
     def test_product_ingredient_association_violation_is_detected(self):
         ingredients, products = self._ingredient_and_product()
