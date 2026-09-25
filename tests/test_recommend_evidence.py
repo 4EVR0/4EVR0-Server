@@ -52,6 +52,8 @@ class EvidenceLabelTest(unittest.TestCase):
         ))
         with patch.object(settings, "verified_study_response_enabled", False):
             self.assertIsNone(_redness_study_match([Concern.REDNESS], ingredients, [product]))
+        with patch.object(settings, "redness_verified_study_response_enabled", False):
+            self.assertIsNone(_redness_study_match([Concern.REDNESS], ingredients, [product]))
 
         for concerns, match in (([Concern.REDNESS], redness), ([Concern.ROSACEA_PRONE], rosacea)):
             response = _build_redness_study_response(concerns, match)
@@ -117,6 +119,10 @@ class EvidenceLabelTest(unittest.TestCase):
         self.assertEqual("(없음)", render_evidence_context([ingredient], [product])["verified_studies"])
         self.assertIsNone(_verified_study_match("탄력이 떨어져요", [Concern.LOSS_OF_ELASTICITY], [ingredient], [product]))
         self.assertIsNone(_verified_study_match("목주름이 고민이에요", [Concern.WRINKLES], [ingredient], [product]))
+        with patch.object(settings, "redness_verified_study_response_enabled", False):
+            self.assertIsNotNone(_verified_study_match(
+                "입가 잔주름이 고민이에요.", [Concern.WRINKLES], [ingredient], [product],
+            ))
         with patch.object(settings, "verified_study_response_enabled", False):
             self.assertIsNone(_verified_study_match(
                 "입가 잔주름이 고민이에요.", [Concern.WRINKLES], [ingredient], [product],

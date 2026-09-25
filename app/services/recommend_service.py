@@ -601,7 +601,11 @@ def _redness_study_match(
     products: list[ProductResult],
 ) -> tuple[IngredientResult, ProductResult, dict] | None:
     """질문 고민·성분 효능·제품 함유가 모두 맞는 별도 검토 연구만 사용한다."""
-    if not settings.verified_study_response_enabled or not _is_redness_rosacea_query(concerns):
+    if (
+        not settings.verified_study_response_enabled
+        or not settings.redness_verified_study_response_enabled
+        or not _is_redness_rosacea_query(concerns)
+    ):
         return None
     concern = Concern.ROSACEA_PRONE if Concern.ROSACEA_PRONE in concerns else Concern.REDNESS
     ingredient_map = {item.name: item for item in ingredients[:10]}

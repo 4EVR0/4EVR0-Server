@@ -69,6 +69,13 @@ class SingleFlightTest(unittest.IsolatedAsyncioTestCase):
             disabled_key = recommend_cache._key("입가 주름", None)
         self.assertNotEqual(enabled_key, disabled_key)
 
+    def test_redness_study_toggle_uses_separate_cache_keys(self):
+        with mock.patch.object(recommend_cache.settings, "redness_verified_study_response_enabled", True):
+            enabled_key = recommend_cache._key("붉은 기", None)
+        with mock.patch.object(recommend_cache.settings, "redness_verified_study_response_enabled", False):
+            disabled_key = recommend_cache._key("붉은 기", None)
+        self.assertNotEqual(enabled_key, disabled_key)
+
     async def test_concurrent_misses_coalesce_to_one_compute(self):
         store: dict[str, str] = {}
         computes = 0
