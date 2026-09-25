@@ -109,8 +109,8 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
             frames = [frame async for frame in recommend_stream("verified-stream", "입가 잔주름이 고민이에요.")]
 
         self.assertEqual("verified_study_template", batch.response_mode)
-        self.assertIn("특정 0.1% 레티놀 제형", batch.response_text)
-        self.assertIn("입가 주름을 별도로 평가하지 않았고", batch.response_text)
+        self.assertIn("0.1% 안정화 레티놀 제형을 비교한 6개 연구", batch.response_text)
+        self.assertIn("이 연구는 입가 주름을 따로 평가하지 않았고", batch.response_text)
         self.assertIn("[연구 보기](https://pubmed.ncbi.nlm.nih.gov/38564380/)", batch.response_text)
         self.assertNotIn("24아마이드", batch.response_text)
         deltas = [json.loads(frame.split("data: ", 1)[1])["text"] for frame in frames

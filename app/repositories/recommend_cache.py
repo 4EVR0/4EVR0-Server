@@ -25,7 +25,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v8:"
+_KEY_PREFIX = "reccache:v9:"
 _client: aioredis.Redis | None = None
 
 

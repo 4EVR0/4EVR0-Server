@@ -540,21 +540,23 @@ def _build_verified_study_response(
     display = ingredient.kor_name or ingredient.name
     product_name = _product_display_name(product.brand, product.product_name)
     limitation = (
-        "입가 주름을 별도로 평가하지 않았고, 추천 제품의 효과를 입증한 연구도 아닙니다."
-        if area in ("입가", "팔자") else
-        "추천 제품 자체의 효과를 입증한 연구는 아닙니다."
+        f"이 연구는 {area} 주름을 따로 평가하지 않았고, "
+        if area in ("입가", "팔자") else ""
     )
     return "\n".join([
         "고민 분석",
-        f"{area} 주름 고민에 맞춰 연구 결과와 제품 성분을 따로 살폈습니다.",
+        f"{area} 주름이 신경 쓰이시는군요. 얼굴 주름 개선이 관찰된 "
+        f"{display} 연구를 참고해 제품을 살펴봤습니다.",
         "",
         "성분 설명",
-        f"- {display}: {study['brief_summary_ko']} {limitation} "
+        f"- {display}: {study['brief_summary_ko']} "
         f"[연구 보기]({study['url']})",
         "",
         "추천 제품",
-        f"- [{product.category}] {product_name}: 제품 데이터에서 {display}이 "
-        "매칭 성분으로 확인되어 추천 후보로 골랐습니다.",
+        f"- [{product.category}] {product_name}: 제품 성분 정보에서 {display}이 "
+        f"확인돼 후보로 골랐습니다. 다만 {limitation}이 제품의 {display} "
+        "함량·배합도 확인되지 않아 연구 결과를 이 제품의 효과로 "
+        "단정할 수는 없습니다.",
     ])
 
 
