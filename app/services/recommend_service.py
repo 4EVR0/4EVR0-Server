@@ -74,7 +74,8 @@ def _appropriate_categories(concerns: list[Concern],
     """복수 concern의 교집합 카테고리를 반환한다 (가장 제한적인 조건 적용).
 
     requested가 있으면(사용자가 포맷을 콕 집음) 그 카테고리를 우선 존중한다 —
-    concern 적합 카테고리와 교집합하되, 비면 요청 그대로 따른다(사용자 의도 우선).
+    concern 적합 카테고리와 교집합하되, 비면 요청 그대로 따른다.
+    단, 로사케아 경향에서는 토너를 허용하지 않는다.
     """
     if not concerns:
         base = list(_LEAVE_ON)
@@ -84,7 +85,10 @@ def _appropriate_categories(concerns: list[Concern],
         base = list(intersection) if intersection else list(_LEAVE_ON)
     if requested:
         narrowed = [c for c in base if c in requested]
-        return narrowed or list(requested)
+        base = narrowed or list(requested)
+    # 로사케아 경향에서는 토너를 권하지 않는 피부과 지침을 사용자 포맷 요청보다 우선한다.
+    if Concern.ROSACEA_PRONE in concerns:
+        base = [category for category in base if category != "토너"]
     return base
 
 
@@ -256,6 +260,8 @@ async def select_products(message: str, concerns: list[Concern],
         min_relevance_ratio=settings.product_min_relevance_ratio,
         min_matched_count=settings.product_min_matched_count,
         limit=30,
+        excluded_ingredients=(sorted(_REDNESS_ROSACEA_AVOID_INCI)
+                              if _is_redness_rosacea_query(concerns) else []),
     )
     raw = filter_by_target_concerns(raw, concerns)
     raw = filter_explicit_application_area(raw, message)
@@ -270,6 +276,15 @@ async def select_products(message: str, concerns: list[Concern],
 # 성분을 후보에서 제거. AFFECTS(효능)와 분리된 안전 오버레이 — 여드름 요청엔 적용 안 함.
 _SENSITIVITY_CONCERN_CODES = ["SENSITIVE_SKIN", "REDNESS", "IRRITATED_SKIN",
                               "ATOPIC_PRONE", "ROSACEA_PRONE", "BARRIER_DAMAGE"]
+_REDNESS_ROSACEA_CONCERNS = {Concern.REDNESS, Concern.ROSACEA_PRONE}
+# 성분의 일반적인 항염 라벨만으로 홍조·로사케아 적합성을 주장하지 않는다.
+# 향료 성분 및 레티노이드는 이 두 고민에서 긍정 근거/제품 후보로 사용하지 않는다.
+# 이는 모든 사용자에게 해롭다는 판정이 아니라, 현재 데이터로 적합성을 확인할 수 없다는 보수적 정책이다.
+_REDNESS_ROSACEA_AVOID_INCI = frozenset({"LINALOOL", "FARNESOL", "RETINOL", "RETINAL"})
+
+
+def _is_redness_rosacea_query(concerns: list[Concern]) -> bool:
+    return bool(_REDNESS_ROSACEA_CONCERNS.intersection(concerns))
 
 
 def _is_sensitivity_query(concerns: list[Concern]) -> bool:
@@ -277,14 +292,17 @@ def _is_sensitivity_query(concerns: list[Concern]) -> bool:
 
 
 async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Concern]) -> list[dict]:
-    """민감성 요청 시 CAUTION 엣지가 있는 자극 성분을 컷. 전부 걸러지면 원본 유지."""
+    """민감성 CAUTION을 적용하고 홍조·로사케아에는 별도 보수적 정책을 적용한다."""
     if not _is_sensitivity_query(concerns):
         return raw_ingredients
     cautioned = await query_cautioned_ingredients(_SENSITIVITY_CONCERN_CODES)
-    if not cautioned:
+    redness_guard = _is_redness_rosacea_query(concerns)
+    excluded = cautioned | (_REDNESS_ROSACEA_AVOID_INCI if redness_guard else set())
+    if not excluded:
         return raw_ingredients
-    kept = [r for r in raw_ingredients if r.get("name") not in cautioned]
-    return kept if kept else raw_ingredients
+    kept = [r for r in raw_ingredients if r.get("name") not in excluded]
+    # 홍조·로사케아에서는 부적합 후보를 되살려 0건을 피하지 않는다.
+    return kept if kept or redness_guard else raw_ingredients
 
 
 logger = logging.getLogger(__name__)
@@ -392,6 +410,8 @@ def _apply_constraint_evidence_guard(
 def _build_no_product_response(
     ingredients: list[IngredientResult],
     constraints: list[Constraint],
+    concerns: list[Concern] | None = None,
+    message: str = "",
 ) -> str:
     """검색 공백에서 제품명을 만들지 않는 결정론적 응답."""
     metrics.recommend_output_guard_total.labels(kind="no_products").inc()
@@ -401,6 +421,18 @@ def _build_no_product_response(
             f"요청하신 조건({labels})을 확인할 수 있는 제품 속성 데이터가 없어 "
             "구체적인 제품명을 추천하지 않겠습니다. 구매 전에 전성분 표시와 인증 정보를 "
             "직접 확인해 주세요."
+        )
+    if _is_redness_rosacea_query(concerns or []):
+        if Concern.ROSACEA_PRONE in concerns and _requested_categories(message) == {"토너"}:
+            return (
+                "로사케아 경향 피부에는 토너 대신 순한 보습 제품을 고려하는 편이 좋습니다. "
+                "요청하신 토너는 추천하지 않겠습니다. 구매 전 향료 표시와 전성분을 확인해 주세요."
+            )
+        concern = "로사케아 경향" if Concern.ROSACEA_PRONE in concerns else "붉은 기"
+        return (
+            f"현재 제품 성분 정보만으로는 {concern}에 맞는 후보를 확인하지 못해 "
+            "구체적인 제품명을 추천하지 않겠습니다. 구매 전 향료 표시와 전성분을 "
+            "확인하고, 증상이 계속되면 피부과에서 상담해 주세요."
         )
     if ingredients:
         names = ", ".join(_ingredient_display_name(item) for item in ingredients[:3])
@@ -507,6 +539,60 @@ def _distinct_evidence_products(products: list[ProductResult]) -> list[ProductRe
         if len(selected) == 3:
             break
     return selected
+
+
+def _build_redness_rosacea_response(
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+    concerns: list[Concern],
+) -> str:
+    """검증되지 않은 작용기전이나 제품 효과를 만들지 않는 보수적 후보 설명."""
+    ingredient_map = {item.name: item for item in ingredients}
+    selected = _distinct_evidence_products(products)
+    headline = (
+        "말씀하신 로사케아 경향을" if Concern.ROSACEA_PRONE in concerns
+        else "말씀하신 붉은 기를"
+    )
+    lines = [
+        "고민 분석",
+        f"{headline} 고려해 진정 관련 성분이 확인된 제품을 후보로 골랐습니다.",
+        "",
+        "성분 설명",
+    ]
+    seen: set[str] = set()
+    for product in selected:
+        for name in product.matched_ingredients:
+            if name in seen or name not in ingredient_map:
+                continue
+            item = ingredient_map[name]
+            benefit = _claim_benefit_phrase(item) or "피부 관리"
+            lines.append(
+                f"- {_ingredient_display_name(item)}: 제공된 데이터에서 "
+                f"{benefit} 관련 성분으로 분류되어 있습니다."
+            )
+            seen.add(name)
+            if len(seen) == 3:
+                break
+        if len(seen) == 3:
+            break
+    lines.extend(["", "추천 제품"])
+    for product in selected:
+        matched = [
+            ingredient_map[name].kor_name or name
+            for name in product.matched_ingredients
+            if name in ingredient_map
+        ][:2]
+        reason = _join_korean(matched) or "진정 관련 매칭 성분"
+        lines.append(
+            f"- [{product.category}] {_product_display_name(product.brand, product.product_name)}: "
+            f"진정 관련 성분 {reason}의 포함이 제품 데이터에서 확인돼 비교 후보로 골랐습니다."
+        )
+    lines.extend([
+        "",
+        "성분 분류만으로 추천 제품의 실제 개선 효과를 확인할 수는 없습니다. "
+        "구매 전 향료 표시와 전체 성분을 확인해 주세요.",
+    ])
+    return "\n".join(lines)
 
 
 def _verified_study_match(
@@ -1138,13 +1224,20 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             _t = time.perf_counter()
             response_mode = "generated" if products else "no_products"
             study_match = _verified_study_match(message, profile.concerns, ingredients, products)
-            if products and study_match:
+            if products and _is_redness_rosacea_query(profile.concerns):
+                response_mode = "redness_evidence_template"
+                response_text = _build_redness_rosacea_response(
+                    ingredients, products, profile.concerns,
+                )
+            elif products and study_match:
                 response_mode = "verified_study_template"
                 response_text = _build_verified_study_response(message, study_match)
             elif products:
                 response_text = await _build_llm_response(message, ingredients, products, system_prompt)
             else:
-                response_text = _build_no_product_response(ingredients, constraints)
+                response_text = _build_no_product_response(
+                    ingredients, constraints, profile.concerns, message,
+                )
             response_text, hanja_removed = _normalize_response_text(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
@@ -1487,9 +1580,19 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             hanja_removed = False
             response_mode = "generated" if products else "no_products"
             if not products:
-                response_text = _build_no_product_response(ingredients, constraints)
+                response_text = _build_no_product_response(
+                    ingredients, constraints, profile.concerns, message,
+                )
                 chunks.append(response_text)
                 yield _sse("delta", {"text": response_text})
+                gen_total = 0.0
+                spans["generate_ttft"] = 0.0
+                spans["generate_decode"] = 0.0
+            elif _is_redness_rosacea_query(profile.concerns):
+                response_mode = "redness_evidence_template"
+                response_text = _build_redness_rosacea_response(
+                    ingredients, products, profile.concerns,
+                )
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0

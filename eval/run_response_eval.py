@@ -446,7 +446,7 @@ async def run(
             print(f"  [id {case['id']:>2}] overall={overall}  " +
                   " ".join(f"{_abbr[d]}={scores[d]}" for d in DIMS))
         else:
-            print(f"  [id {case['id']:>2}] generated  hard_failures={len(hard_failures)}")
+            print(f"  [id {case['id']:>2}] {rec.response_mode}  hard_failures={len(hard_failures)}")
 
     scored = len(cases) - errors
     metrics = {f"resp_{d}": round(statistics.mean(dim_scores[d]), 3) for d in DIMS if dim_scores[d]}
@@ -474,7 +474,7 @@ async def run(
     metrics["contaminated_cases"] = contaminated
     metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
     for mode in ("generated", "quality_fallback", "grounding_fallback",
-                 "verified_study_template", "no_products"):
+                 "verified_study_template", "redness_evidence_template", "no_products"):
         metrics[f"response_mode_{mode}_count"] = sum(
             row.get("response_mode") == mode for row in results
         )

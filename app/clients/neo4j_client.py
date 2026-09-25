@@ -50,6 +50,7 @@ async def query_products_by_ingredients(
     min_relevance_ratio: float = 0.0,
     min_matched_count: int = 1,
     limit: int = 5,
+    excluded_ingredients: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """고민-관련도가 높은 성분을 가진 제품을 관련도 순으로 반환한다.
 
@@ -60,6 +61,7 @@ async def query_products_by_ingredients(
     appropriate_categories: 허용 카테고리(포맷) — recommend_service에서 concern 기반 결정.
     min_relevance_ratio: 최고 점수 대비 이 비율 미만 제품은 컷(0=컷 없음, 가중 랭킹만).
     min_matched_count: 최소 매칭 성분 수 — 제너럴리스트 성분 1개만 겹치는 목적-불일치 제품 컷(1=컷 없음).
+    excluded_ingredients: 제품의 전체 CONTAINS 성분에 있으면 후보에서 제외할 INCI명.
     """
     if not ingredient_scores:
         return []
@@ -71,12 +73,17 @@ async def query_products_by_ingredients(
         "min_ratio": float(min_relevance_ratio),
         "min_matched": int(min_matched_count),
         "limit": int(limit),
+        "excluded_ingredients": excluded_ingredients or [],
     }
 
     query = """
     UNWIND $ingredient_scores AS isc
     MATCH (i:Ingredient {inci_name: isc.name})<-[:CONTAINS]-(prod:Product)
     WHERE prod.category IN $appropriate_categories
+      AND NOT EXISTS {
+          MATCH (prod)-[:CONTAINS]->(excluded:Ingredient)
+          WHERE excluded.inci_name IN $excluded_ingredients
+      }
     WITH prod,
          COUNT(DISTINCT i.inci_name)   AS matched_count,
          COLLECT(DISTINCT i.inci_name) AS matched_ingredients,
