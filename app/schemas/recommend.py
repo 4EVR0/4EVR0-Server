@@ -38,6 +38,7 @@ class RecommendResponse(BaseModel):
     products: list[ProductResult]
     response_text: str
     model_used: str
+    response_mode: str = "generated"
 
 
 class PathStep(BaseModel):

@@ -165,9 +165,15 @@ GPU_TIMEOUT_SECONDS=60
 
 GEN_TEMPERATURE=0.3                # 추천 응답 생성 온도 (eval 재현 시 0)
 GEN_MAX_TOKENS=1200                # 응답 잘림 방지용 출력 여유
+VERIFIED_STUDY_RESPONSE_ENABLED=true  # 검증 연구의 짧은 설명; false면 기존 생성 경로로 복귀
 ```
 
 > ⚠️ `GPU_MODEL`이 vLLM 실제 서빙 모델과 불일치하면 404 → 규칙 기반 폴백으로 동작한다.
+
+검증 연구 설명이 운영 응답에서 과하면 `VERIFIED_STUDY_RESPONSE_ENABLED=false`로
+설정하고 API 서버를 재시작한다. 이 토글은 연구 템플릿만 끄며 성분명 교정과
+제품 사용 부위 필터는 유지한다. 설정별 캐시 키가 달라 이전 답변이 다시
+노출되지 않는다. 다시 켜려면 `true`로 설정하고 재시작한다.
 
 샘플은 `.env.example` 참고.
 

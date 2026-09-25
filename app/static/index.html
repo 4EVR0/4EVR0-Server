@@ -247,6 +247,7 @@
   .answer-h:first-child { margin-top: 0; }
   .answer-line { line-height: 1.72; }
   .answer-line.bulleted { padding-left: 16px; text-indent: -16px; }
+  .study-link { color: #5f8f13; font-weight: 750; text-decoration: underline; text-underline-offset: 2px; }
   .bullet { color: #9bce26; font-weight: 900; margin-right: 6px; }
   .ing-emph { color: #5f8f13; font-weight: 800; }
   .prod-emph { color: #182010; font-weight: 850; }
@@ -561,6 +562,11 @@
     html = html.replace(/\*([^*\n]+?)\*/g, '<strong class="ing-emph">$1</strong>');
     return html;
   }
+  // 근거 링크는 PubMed PMID만 허용하고 URL을 재구성한다(임의 Markdown/HTML 링크는 렌더링하지 않음).
+  function linkifyVerifiedStudy(html) {
+    return html.replace(/\[연구 보기\]\(https:\/\/pubmed\.ncbi\.nlm\.nih\.gov\/([0-9]+)\/\)/g,
+      (_, pmid) => `<a class="study-link" href="https://pubmed.ncbi.nlm.nih.gov/${pmid}/" target="_blank" rel="noopener noreferrer">연구 보기 ↗</a>`);
+  }
   // 한자 안전망: LLM이 간헐적으로 섞는 한자(漢字)를 한글로 치환하거나 제거.
   // 자주 새는 한국어 한자어를 매핑하고, 매핑에 없는 한자는 앞뒤가 한글이면 삭제(오염 제거).
   const HANJA_MAP = {
@@ -589,7 +595,9 @@
       let bullet = '', content = line;
       const m = content.match(/^\s*[*\-]\s+/);
       if (m) { bullet = '<span class="bullet">•</span>'; content = content.slice(m[0].length); }
-      const body = emphasizeEffects(emphasizeInciKorean(emphasizeIngredients(mdInline(escHtml(content)), ingredients)));
+      const body = linkifyVerifiedStudy(
+        emphasizeEffects(emphasizeInciKorean(emphasizeIngredients(mdInline(escHtml(content)), ingredients)))
+      );
       return `<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`;
     }).join('');
   }

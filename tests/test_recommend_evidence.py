@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+from app.core.config import settings
 from app.domain.enums import Concern, Constraint
 from app.schemas.recommend import IngredientResult, ProductResult
 from app.services.response_integrity import find_response_integrity_issues
@@ -7,6 +9,8 @@ from app.services.recommend_service import (
     _apply_constraint_evidence_guard,
     _build_grounded_product_response,
     _build_no_product_response,
+    _build_verified_study_response,
+    _compose_user_content,
     _evidence_label,
     _has_product_grounding_violation,
     _normalize_consumer_language,
@@ -14,12 +18,57 @@ from app.services.recommend_service import (
     _product_display_name,
     _remove_hanja,
     _rerank_by_review,
+    _verified_study_match,
+    filter_explicit_application_area,
     filter_by_target_concerns,
     filter_purpose_mismatch,
 )
+from eval.run_response_eval import render_evidence_context
 
 
 class EvidenceLabelTest(unittest.TestCase):
+    def test_reviewed_retinol_study_is_limited_to_matching_face_wrinkle_template(self):
+        ingredient = IngredientResult(
+            name="RETINOL", kor_name="레티놀", claim="Anti-aging",
+            eligibility_tier="pubmed_evidence", paper_ref="2",
+        )
+        product = ProductResult(
+            product_id="p1", product_name="주름 세럼", brand="테스트",
+            category="세럼", matched_count=1, matched_ingredients=["RETINOL"],
+        )
+        generated_input = _compose_user_content("입가 잔주름", [ingredient], [product])
+        judge_input = render_evidence_context(
+            [ingredient], [product], include_verified_studies=True,
+        )
+        match = _verified_study_match(
+            "입가 잔주름이 고민이에요.", [Concern.WRINKLES], [ingredient], [product],
+        )
+        self.assertIsNotNone(match)
+        response = _build_verified_study_response("입가 잔주름이 고민이에요.", match)
+
+        for text in (judge_input["verified_studies"], response):
+            self.assertIn("0.1%", text)
+        self.assertIn("입가 주름을 별도로 평가하지 않았고", response)
+        self.assertIn("추천 제품의 효과를 입증한 연구도 아닙니다", response)
+        self.assertIn("입가 주름 고민", response)
+        self.assertIn("[연구 보기](https://pubmed.ncbi.nlm.nih.gov/38564380/)", response)
+        self.assertNotIn("사용 4~12주", response)
+        self.assertNotIn("논문 근거 2건", response)
+        self.assertEqual([], find_response_integrity_issues(response, [ingredient], [product]))
+        self.assertFalse(_has_product_grounding_violation(response, [ingredient], [product]))
+        self.assertIn("https://pubmed.ncbi.nlm.nih.gov/38564380/", judge_input["verified_studies"])
+        self.assertNotIn("0.1%", generated_input)
+        self.assertEqual("(없음)", render_evidence_context([ingredient], [product])["verified_studies"])
+        self.assertIsNone(_verified_study_match("탄력이 떨어져요", [Concern.LOSS_OF_ELASTICITY], [ingredient], [product]))
+        self.assertIsNone(_verified_study_match("목주름이 고민이에요", [Concern.WRINKLES], [ingredient], [product]))
+        with patch.object(settings, "verified_study_response_enabled", False):
+            self.assertIsNone(_verified_study_match(
+                "입가 잔주름이 고민이에요.", [Concern.WRINKLES], [ingredient], [product],
+            ))
+        self.assertNotIn("0.1%", _compose_user_content(
+            "건조해요", [ingredient.model_copy(update={"claim": "Hydrating"})], [product],
+        ))
+
     def test_pubmed_with_count(self):
         self.assertEqual("논문 근거 4건", _evidence_label("pubmed_evidence", "4"))
 
@@ -271,6 +320,27 @@ class DeterministicOutputGuardTest(unittest.TestCase):
 
 
 class ProductPurposeFilterTest(unittest.TestCase):
+    def test_explicit_mouth_request_excludes_neck_and_eye_only_products(self):
+        products = [
+            {"product_name": "레티놀 넥 샷 목주름 세럼"},
+            {"product_name": "눈가 전용 아이크림"},
+            {"product_name": "아이크림 포 페이스"},
+            {"product_name": "일반 주름 세럼"},
+        ]
+        self.assertEqual(
+            products[2:],
+            filter_explicit_application_area(products, "입가 잔주름 관리 제품을 추천해 주세요"),
+        )
+
+    def test_neck_product_remains_for_neck_or_unspecified_area(self):
+        products = [{"product_name": "레티놀 넥 샷 목주름 세럼"}]
+        self.assertEqual(products, filter_explicit_application_area(products, "목주름이 고민이에요"))
+        self.assertEqual(products, filter_explicit_application_area(products, "주름 관리 제품을 추천해 주세요"))
+
+    def test_general_face_request_excludes_eye_only_product(self):
+        products = [{"product_name": "레티놀 아이크림"}, {"product_name": "레티놀 얼굴 크림"}]
+        self.assertEqual(products[1:], filter_explicit_application_area(products, "얼굴 탄력이 고민이에요"))
+
     def test_name_mismatch_is_not_restored_when_all_products_fail(self):
         products = [{"product_name": "기미 잡티 앰플"}]
         self.assertEqual([], filter_purpose_mismatch(products, [Concern.ACNE]))

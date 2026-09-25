@@ -22,6 +22,7 @@ from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 from app.services.product_image_service import build_product_image_url
 from app.services.response_integrity import find_response_integrity_issues
+from app.services.verified_ingredient_studies import verified_study_for
 
 # concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
 _LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
@@ -218,6 +219,27 @@ def filter_by_target_concerns(products: list[dict], concerns: list[Concern]) -> 
     return kept
 
 
+def filter_explicit_application_area(products: list[dict], message: str) -> list[dict]:
+    """요청 부위와 상품명에 명시된 전용 부위가 충돌하는 후보를 제외한다."""
+    query = message.casefold()
+    asks_face = any(term in query for term in ("입가", "팔자", "눈가", "이마", "얼굴", "볼주름"))
+    asks_neck = any(term in query for term in ("목주름", "목 피부", "목 관리", "넥", "neck"))
+    asks_eyes = any(term in query for term in ("눈가", "눈밑", "다크서클"))
+
+    def compatible(product: dict) -> bool:
+        name = str(product.get("product_name") or "").casefold()
+        face_compatible = any(term in name for term in ("페이스", "얼굴", "face"))
+        neck_only = any(term in name for term in ("목주름", "넥 샷", "넥샷", "넥크림", "넥 크림", "neck"))
+        eye_only = any(term in name for term in ("아이크림", "아이 크림", "눈가 전용", "아이세럼"))
+        if asks_face and not asks_neck and neck_only and not face_compatible:
+            return False
+        if asks_face and not asks_eyes and eye_only and not face_compatible:
+            return False
+        return True
+
+    return [product for product in products if compatible(product)]
+
+
 async def select_products(message: str, concerns: list[Concern],
                           ingredient_scores: list[dict]) -> list[dict]:
     """제품 선정 공통 로직(동기·스트리밍 경로 공유).
@@ -236,6 +258,7 @@ async def select_products(message: str, concerns: list[Concern],
         limit=30,
     )
     raw = filter_by_target_concerns(raw, concerns)
+    raw = filter_explicit_application_area(raw, message)
     raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
     if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
         return raw[: settings.product_result_limit]
@@ -486,10 +509,60 @@ def _distinct_evidence_products(products: list[ProductResult]) -> list[ProductRe
     return selected
 
 
+def _verified_study_match(
+    message: str,
+    concerns: list[Concern],
+    ingredients: list[IngredientResult],
+    products: list[ProductResult],
+) -> tuple[IngredientResult, ProductResult, dict] | None:
+    """얼굴 주름 질문에만 검토된 연구와 해당 성분이 매칭된 제품을 연결한다."""
+    if not settings.verified_study_response_enabled or Concern.WRINKLES not in concerns:
+        return None
+    query = message.casefold()
+    if not any(term in query for term in ("입가", "팔자", "눈가", "이마", "얼굴", "볼주름")):
+        return None
+    ingredient_map = {item.name: item for item in ingredients[:10]}
+    for product in products:
+        for name in product.matched_ingredients:
+            ingredient = ingredient_map.get(name)
+            study = verified_study_for(ingredient) if ingredient else None
+            if study:
+                return ingredient, product, study
+    return None
+
+
+def _build_verified_study_response(
+    message: str, match: tuple[IngredientResult, ProductResult, dict],
+) -> str:
+    """별도 검증 연구와 제품 성분 매칭을 구분해 한 후보만 설명한다."""
+    ingredient, product, study = match
+    area = next((part for part in ("입가", "팔자", "눈가", "이마", "얼굴") if part in message), "얼굴")
+    display = ingredient.kor_name or ingredient.name
+    product_name = _product_display_name(product.brand, product.product_name)
+    limitation = (
+        "입가 주름을 별도로 평가하지 않았고, 추천 제품의 효과를 입증한 연구도 아닙니다."
+        if area in ("입가", "팔자") else
+        "추천 제품 자체의 효과를 입증한 연구는 아닙니다."
+    )
+    return "\n".join([
+        "고민 분석",
+        f"{area} 주름 고민에 맞춰 연구 결과와 제품 성분을 따로 살폈습니다.",
+        "",
+        "성분 설명",
+        f"- {display}: {study['brief_summary_ko']} {limitation} "
+        f"[연구 보기]({study['url']})",
+        "",
+        "추천 제품",
+        f"- [{product.category}] {product_name}: 제품 데이터에서 {display}이 "
+        "매칭 성분으로 확인되어 추천 후보로 골랐습니다.",
+    ])
+
+
 def _build_grounded_product_response(
     message: str,
     ingredients: list[IngredientResult],
     products: list[ProductResult],
+    concerns: list[Concern] | None = None,
 ) -> str:
     """생성 본문 검증 실패 시 근거 부분집합으로 유용한 응답을 재구성한다.
 
@@ -522,10 +595,14 @@ def _build_grounded_product_response(
     concern_text, _ = _remove_hanja(message)
     concern_text = _normalize_consumer_language(" ".join(concern_text.split()))
     concern_text = concern_text[:80].rstrip(".!?。！？")
-    concern_prefix = f"말씀하신 “{concern_text}”를 기준으로" if concern_text else "말씀하신 피부 고민을 기준으로"
-    if benefits:
+    wrinkle_area = next((area for area in ("입가", "눈가", "이마", "목") if area in concern_text), None)
+    if Concern.WRINKLES in (concerns or []) and wrinkle_area:
+        analysis = f"{wrinkle_area} 주름 관리에 맞는 성분 근거와 제품 사용 부위를 살폈습니다."
+    elif benefits:
+        concern_prefix = f"말씀하신 “{concern_text}”를 기준으로" if concern_text else "말씀하신 피부 고민을 기준으로"
         analysis = f"{concern_prefix} {_join_korean(benefits)} 근거를 함께 살폈습니다."
     else:
+        concern_prefix = f"말씀하신 “{concern_text}”를 기준으로" if concern_text else "말씀하신 피부 고민을 기준으로"
         analysis = f"{concern_prefix} 제품별 매칭 성분에 따라 추천 후보를 정리했습니다."
 
     lines = [
@@ -1057,7 +1134,12 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
-            if products:
+            response_mode = "generated" if products else "no_products"
+            study_match = _verified_study_match(message, profile.concerns, ingredients, products)
+            if products and study_match:
+                response_mode = "verified_study_template"
+                response_text = _build_verified_study_response(message, study_match)
+            elif products:
                 response_text = await _build_llm_response(message, ingredients, products, system_prompt)
             else:
                 response_text = _build_no_product_response(ingredients, constraints)
@@ -1069,7 +1151,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if products and (integrity_issues or grounding_violation):
                 kind = "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
-                response_text = _build_grounded_product_response(message, ingredients, products)
+                response_mode = kind
+                response_text = _build_grounded_product_response(
+                    message, ingredients, products, profile.concerns,
+                )
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -1078,6 +1163,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 "products": [p.model_dump() for p in products],
                 "response_text": response_text,
                 "model_used": settings.gpu_model,
+                "response_mode": response_mode,
             })
 
         spans["gate_wait"] = get_gate_wait_seconds()
@@ -1095,6 +1181,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             products=products,
             response_text=response_text,
             model_used=settings.gpu_model,
+            response_mode=response_mode,
         )
     except LLMOverCapacityError:
         # 부하 차단으로 거절된 요청은 서버 '에러'가 아니라 의도된 백프레셔 → 별도 status로 집계.
@@ -1301,7 +1388,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             "model_used": conversation_response.model_used,
         })
         yield _sse("delta", {"text": conversation_response.response_text})
-        yield _sse("done", {"finish_reason": "conversation"})
+        yield _sse("done", {"finish_reason": "conversation",
+                            "response_mode": conversation_response.response_mode})
         return
 
     _t = time.perf_counter()
@@ -1318,7 +1406,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
         spans["overhead"] = spans["total"] - spans["cache_lookup"]
         _record_latency(spans, cache="hit")
         await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
-        yield _sse("done", {"finish_reason": "cache"})
+        yield _sse("done", {"finish_reason": "cache",
+                            "response_mode": cached.get("response_mode", "generated")})
         return
     metrics.recommend_cache_total.labels(result="miss").inc()
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
@@ -1342,7 +1431,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
                 _record_latency(spans, cache="coalesced")
                 await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
-                yield _sse("done", {"finish_reason": "cache"})
+                yield _sse("done", {"finish_reason": "cache",
+                                    "response_mode": cached.get("response_mode", "generated")})
                 return
 
             _t = time.perf_counter()
@@ -1393,10 +1483,17 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             # 생성 스트리밍 (TTFT 측정). 제품 0건은 모델을 거치지 않는다.
             chunks: list[str] = []
             hanja_removed = False
+            response_mode = "generated" if products else "no_products"
             if not products:
                 response_text = _build_no_product_response(ingredients, constraints)
                 chunks.append(response_text)
                 yield _sse("delta", {"text": response_text})
+                gen_total = 0.0
+                spans["generate_ttft"] = 0.0
+                spans["generate_decode"] = 0.0
+            elif study_match := _verified_study_match(message, profile.concerns, ingredients, products):
+                response_mode = "verified_study_template"
+                response_text = _build_verified_study_response(message, study_match)
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0
@@ -1437,7 +1534,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if products and (integrity_issues or grounding_violation):
                 kind = "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
-                response_text = _build_grounded_product_response(message, ingredients, products)
+                response_mode = kind
+                response_text = _build_grounded_product_response(
+                    message, ingredients, products, profile.concerns,
+                )
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
@@ -1448,6 +1548,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 "products": [p.model_dump() for p in products],
                 "response_text": response_text,
                 "model_used": settings.gpu_model,
+                "response_mode": response_mode,
             })
 
         spans["gate_wait"] = get_gate_wait_seconds()
@@ -1457,7 +1558,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
         _record_latency(spans, cache="miss")
         metrics.recommend_requests_total.labels(status="ok").inc()
         await _store_turn(session_id, message, products, response_text, profile.concerns)
-        yield _sse("done", {"finish_reason": "stop"})
+        yield _sse("done", {"finish_reason": "stop", "response_mode": response_mode})
     except LLMOverCapacityError:
         # 스트림은 이미 200으로 시작됐을 수 있어 429 대신 error 이벤트로 전달.
         metrics.recommend_requests_total.labels(status="rejected").inc()
