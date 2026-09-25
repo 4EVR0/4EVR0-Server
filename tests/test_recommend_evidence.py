@@ -10,6 +10,7 @@ from app.services.recommend_service import (
     _build_grounded_product_response,
     _build_no_product_response,
     _build_redness_rosacea_response,
+    _build_redness_study_response,
     _build_verified_study_response,
     _compose_user_content,
     _evidence_label,
@@ -19,6 +20,7 @@ from app.services.recommend_service import (
     _product_display_name,
     _remove_hanja,
     _rerank_by_review,
+    _redness_study_match,
     _verified_study_match,
     filter_explicit_application_area,
     filter_by_target_concerns,
@@ -28,6 +30,52 @@ from eval.run_response_eval import render_evidence_context
 
 
 class EvidenceLabelTest(unittest.TestCase):
+    def test_redness_and_rosacea_studies_match_only_the_reviewed_concern(self):
+        ingredients = [
+            IngredientResult(name="TROXERUTIN", kor_name="트록세루틴", claim="Soothing"),
+            IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드", claim="Soothing"),
+        ]
+        product = ProductResult(
+            product_id="p1", product_name="레드 세럼", brand="테스트", category="세럼",
+            matched_count=2, matched_ingredients=["TROXERUTIN", "NIACINAMIDE"],
+        )
+        redness = _redness_study_match([Concern.REDNESS], ingredients, [product])
+        rosacea = _redness_study_match([Concern.ROSACEA_PRONE], ingredients, [product])
+        self.assertEqual("38720512", redness[2]["pmid"])
+        self.assertEqual("16209160", rosacea[2]["pmid"])
+        self.assertEqual("TROXERUTIN", redness[0].name)
+        self.assertEqual("NIACINAMIDE", rosacea[0].name)
+        self.assertIsNone(_redness_study_match([Concern.ACNE], ingredients, [product]))
+        self.assertIsNone(_redness_study_match(
+            [Concern.REDNESS], [ingredients[0].model_copy(update={"claim": "Hydrating"})],
+            [product],
+        ))
+        with patch.object(settings, "verified_study_response_enabled", False):
+            self.assertIsNone(_redness_study_match([Concern.REDNESS], ingredients, [product]))
+
+        for concerns, match in (([Concern.REDNESS], redness), ([Concern.ROSACEA_PRONE], rosacea)):
+            response = _build_redness_study_response(concerns, match)
+            self.assertIn(f"[연구 보기]({match[2]['url']})", response)
+            self.assertIn(match[2]["brief_summary_ko"], response)
+            self.assertIn(match[2]["limitation_ko"], response)
+            self.assertIn("제품 데이터에서", response)
+            self.assertNotIn("혈관 확장", response)
+            self.assertEqual([], find_response_integrity_issues(response, ingredients, [product]))
+            self.assertFalse(_has_product_grounding_violation(response, ingredients, [product]))
+        evidence = render_evidence_context(ingredients, [product], include_verified_studies=True)
+        self.assertIn("https://pubmed.ncbi.nlm.nih.gov/38720512/", evidence["verified_studies"])
+        self.assertIn("https://pubmed.ncbi.nlm.nih.gov/16209160/", evidence["verified_studies"])
+        for concerns, match in (([Concern.REDNESS], redness), ([Concern.ROSACEA_PRONE], rosacea)):
+            response = _build_redness_study_response(concerns, match)
+            evidence = render_evidence_context(
+                ingredients, [product], include_verified_studies=True, response_text=response,
+            )
+            self.assertIn(match[2]["url"], evidence["verified_studies"])
+            other_url = (
+                rosacea[2]["url"] if concerns == [Concern.REDNESS] else redness[2]["url"]
+            )
+            self.assertNotIn(other_url, evidence["verified_studies"])
+
     def test_reviewed_retinol_study_is_limited_to_matching_face_wrinkle_template(self):
         ingredient = IngredientResult(
             name="RETINOL", kor_name="레티놀", claim="Anti-aging",

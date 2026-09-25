@@ -17,13 +17,17 @@ def verified_study_for(ingredient: IngredientResult) -> dict | None:
     return _STUDIES.get((ingredient.name.upper(), (ingredient.claim or "").casefold()))
 
 
-def render_verified_studies(ingredients: list[IngredientResult]) -> str:
+def render_verified_studies(
+    ingredients: list[IngredientResult], response_text: str | None = None,
+) -> str:
     """검증 템플릿 평가자가 동일한 참고 연구 조건·한계를 보도록 조립한다."""
     lines = []
     seen = set()
     for ingredient in ingredients[:10]:
         study = verified_study_for(ingredient)
         if study is None or study["pmid"] in seen:
+            continue
+        if response_text is not None and study["url"] not in response_text:
             continue
         seen.add(study["pmid"])
         lines.append(

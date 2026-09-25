@@ -143,7 +143,9 @@ def build_judge_client(config: JudgeConfig) -> openai.AsyncOpenAI:
     )
 
 
-def render_evidence_context(ingredients, products, *, include_verified_studies=False) -> dict[str, str]:
+def render_evidence_context(
+    ingredients, products, *, include_verified_studies=False, response_text: str | None = None,
+) -> dict[str, str]:
     """채점자에게 보여줄 근거 컨텍스트(제공된 성분·제품)를 문자열로 조립.
 
     심판에게 생성기와 '동일한' 근거 컨텍스트(근거 수준·제품 핵심성분)를 줘야 grounding을
@@ -161,7 +163,8 @@ def render_evidence_context(ingredients, products, *, include_verified_studies=F
 
     prod_lines = _product_evidence_lines(ingredients, products) or "(없음)"
     return {"ingredients": ing_lines, "products": prod_lines,
-            "verified_studies": render_verified_studies(ingredients) if include_verified_studies else "(없음)"}
+            "verified_studies": (render_verified_studies(ingredients, response_text)
+                                 if include_verified_studies else "(없음)")}
 
 
 async def judge_with_evidence(client, model, message, evidence, response, judge_prompt) -> dict:
@@ -208,7 +211,10 @@ async def judge_response(client, model, message, ingredients, products, response
         client, model, message,
         render_evidence_context(
             ingredients, products,
-            include_verified_studies=response_mode == "verified_study_template",
+            include_verified_studies=response_mode in {
+                "verified_study_template", "redness_verified_study_template",
+            },
+            response_text=response,
         ),
         response, judge_prompt,
     )
@@ -426,7 +432,10 @@ async def run(
             # 사람 라벨러가 judge와 같은 근거를 보고 채점할 수 있도록 함께 저장.
             "evidence": render_evidence_context(
                 rec.ingredients, rec.products,
-                include_verified_studies=rec.response_mode == "verified_study_template",
+                include_verified_studies=rec.response_mode in {
+                    "verified_study_template", "redness_verified_study_template",
+                },
+                response_text=rec.response_text,
             ),
             # 결정적 검사 — judge 점수와 독립적으로 집계한다.
             "hanja": find_hanja(rec.response_text),
@@ -474,7 +483,8 @@ async def run(
     metrics["contaminated_cases"] = contaminated
     metrics["contamination_rate"] = round(contaminated / len(cases), 4) if cases else 0.0
     for mode in ("generated", "quality_fallback", "grounding_fallback",
-                 "verified_study_template", "redness_evidence_template", "no_products"):
+                 "verified_study_template", "redness_verified_study_template",
+                 "redness_evidence_template", "no_products"):
         metrics[f"response_mode_{mode}_count"] = sum(
             row.get("response_mode") == mode for row in results
         )
