@@ -8,5 +8,31 @@
     "brief_summary_ko": "0.1% 안정화 레티놀 제형을 비교한 6개 연구를 종합했을 때 얼굴 주름 개선이 관찰됐습니다.",
     "limitation_ko": "이는 연구에 사용된 제형의 결과이며, 추천 제품 자체의 효과를 확인한 것은 아닙니다.",
     "provenance": "independently_reviewed_pubmed_abstract_not_graph_edge_source"
+  },
+  {
+    "inci_name": "TROXERUTIN",
+    "effect_claim": "Soothing",
+    "pmid": "38720512",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/38720512/",
+    "summary_ko": "민감성 피부 여성 35명 중 13명이 참여한 자극 시험에서 0.1% 또는 0.0095% 트록세루틴 로션은 캡사이신으로 생긴 붉은 기의 회복이 대조 로션보다 좋았습니다. 운동 후 홍조나 로사케아는 평가하지 않았습니다.",
+    "brief_summary_ko": "민감성 피부 대상 시험에서 트록세루틴 로션은 캡사이신으로 생긴 붉은 기의 회복을 대조 로션보다 높였습니다.",
+    "product_bridge_ko": "자극 뒤 붉은 기 회복을 측정한 연구를 참고해",
+    "limitation_ko": "운동 후 홍조를 직접 평가한 연구가 아니고, 추천 제품의 트록세루틴 함량과 제형도 확인되지 않았습니다.",
+    "reviewed_concern_codes": ["REDNESS"],
+    "reviewed_fulltext_url": "https://onlinelibrary.wiley.com/doi/10.1111/jocd.16349",
+    "provenance": "independently_reviewed_pubmed_and_publisher_fulltext_not_graph_edge_source"
+  },
+  {
+    "inci_name": "NIACINAMIDE",
+    "effect_claim": "Soothing",
+    "pmid": "16209160",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/16209160/",
+    "summary_ko": "로사케아 참가자 50명이 등록하고 46명이 완료한 4주 연구에서 나이아신아마이드 2% 함유 보습제 사용 후 피부 장벽 지표와 얼굴 붉은 기 평가가 개선됐습니다. 얼굴에는 별도 무처치 대조군이 없었습니다.",
+    "brief_summary_ko": "로사케아 참가자가 나이아신아마이드 2% 함유 보습제를 사용한 4주 연구에서 피부 장벽과 얼굴 붉은 기 평가가 개선됐습니다.",
+    "product_bridge_ko": "로사케아 대상 보습제의 장벽·붉은 기 평가 결과를 참고해",
+    "limitation_ko": "복합 보습제의 결과이고 얼굴 대조군이 없어 나이아신아마이드 단독이나 이 제품의 효과로 단정할 수 없습니다.",
+    "reviewed_concern_codes": ["ROSACEA_PRONE"],
+    "reviewed_fulltext_url": "https://cdn.mdedge.com/files/s3fs-public/Document/September-2017/076020135.pdf",
+    "provenance": "independently_reviewed_pubmed_and_publisher_fulltext_not_graph_edge_source"
   }
 ]
