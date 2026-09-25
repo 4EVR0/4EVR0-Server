@@ -77,7 +77,7 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
             frames = [frame async for frame in recommend_stream(
                 "rosacea-study-stream", "로사케아 경향에 맞는 제품",
             )]
-            with patch.object(settings, "verified_study_response_enabled", False):
+            with patch.object(settings, "redness_verified_study_response_enabled", False):
                 rollback = await recommend("rosacea-study-off", "로사케아 경향에 맞는 제품")
 
         self.assertEqual("redness_verified_study_template", batch.response_mode)

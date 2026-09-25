@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     recommend_cache_ttl_seconds: int = 86400
     # 출처를 확인한 연구의 짧은 설명 템플릿. 운영에서 과하면 false로 이전 생성 경로로 복귀.
     verified_study_response_enabled: bool = True
+    # 홍조·로사케아 연구 설명만 끄고 다른 검증 연구 응답은 유지하는 롤백 스위치.
+    redness_verified_study_response_enabled: bool = True
     # 대화 이력(멀티턴 맥락). Redis LIST(conv:{session_id})에 턴 저장 → 후속 질문이 이전 추천 참조.
     conversation_enabled: bool = True
     conversation_max_turns: int = 8       # 최근 N턴만 유지(LTRIM) — 프롬프트 크기 상한

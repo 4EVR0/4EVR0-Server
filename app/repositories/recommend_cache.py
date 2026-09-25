@@ -54,7 +54,11 @@ def _key(message: str, gen_prompt_name: str | None) -> str:
     # 결과도 다르므로 키에 포함(실험용 프롬프트 교체와 캐시 충돌 방지).
     norm = " ".join(message.strip().split()).lower()
     # 기능을 끄거나 다시 켠 직후에도 반대 설정에서 생성한 24h 캐시를 재사용하지 않는다.
-    raw = f"{gen_prompt_name or 'default'}|verified_study={int(settings.verified_study_response_enabled)}|{norm}"
+    raw = (
+        f"{gen_prompt_name or 'default'}"
+        f"|verified_study={int(settings.verified_study_response_enabled)}"
+        f"|redness_study={int(settings.redness_verified_study_response_enabled)}|{norm}"
+    )
     return _KEY_PREFIX + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
