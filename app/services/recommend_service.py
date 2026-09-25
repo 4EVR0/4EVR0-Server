@@ -539,24 +539,24 @@ def _build_verified_study_response(
     area = next((part for part in ("입가", "팔자", "눈가", "이마", "얼굴") if part in message), "얼굴")
     display = ingredient.kor_name or ingredient.name
     product_name = _product_display_name(product.brand, product.product_name)
-    relevance = (
-        f"얼굴 주름 개선 연구를 {area} 주름 고민에 참고할 수 있지만, "
-        f"{area}에도 같은 결과가 나타나는지는 확인되지 않았습니다."
-        if area in ("입가", "팔자") else
-        "얼굴 주름 개선 연구를 참고했습니다."
+    limitation = (
+        f"이 연구는 {area} 주름을 따로 평가하지 않았고, "
+        if area in ("입가", "팔자") else ""
     )
     return "\n".join([
         "고민 분석",
-        relevance,
+        f"{area} 주름이 신경 쓰이시는군요. 얼굴 주름 개선이 관찰된 "
+        f"{display} 연구를 참고해 제품을 살펴봤습니다.",
         "",
         "성분 설명",
         f"- {display}: {study['brief_summary_ko']} "
         f"[연구 보기]({study['url']})",
         "",
         "추천 제품",
-        f"- [{product.category}] {product_name}: 제품 데이터에서 연구 대상 성분인 "
-        f"{display}이 확인되어 후보로 골랐습니다. 연구에 쓰인 제형·농도와 "
-        "같은지, 이 제품에 같은 효과가 있는지는 확인되지 않았습니다.",
+        f"- [{product.category}] {product_name}: 제품 성분 정보에서 {display}이 "
+        f"확인돼 후보로 골랐습니다. 다만 {limitation}이 제품의 {display} "
+        "함량·배합도 확인되지 않아 연구 결과를 이 제품의 효과로 "
+        "단정할 수는 없습니다.",
     ])
 
 
