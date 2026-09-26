@@ -58,6 +58,27 @@ metadata (when present), numeric metrics, and the source JSON as an artifact.
 `provenance=backfill` distinguishes an import from a live evaluation. The MLflow
 run creation time is the import time, not the historical execution time.
 
+## Retrieval candidate trace
+
+Retrieval reports now store each judged ingredient and product in its original
+order, including product ID/name, matched ingredients, and the per-item 0/1
+judge decision. A wrong-length or non-binary judge response fails that case
+instead of silently producing a precision score. The report records the judge
+prompt hash; it still does not prove that two runs used identical Neo4j data.
+
+To inspect current candidates without calling an external judge or logging a
+misleading precision run to MLflow, capture selected cases locally:
+
+```bash
+python eval/run_retrieval_eval.py \
+  --dataset eval/results/p0-independent-holdout-20260924.jsonl \
+  --case-id 510 --case-id 515 --capture-only \
+  --out eval/results/retrieval-510-515-candidates.json
+```
+
+Capture-only precision values are `null`; a later judged run must have its own
+approval and be compared with both the candidate trace and dataset/code hashes.
+
 ## Profile extraction
 
 The shared dataset contains 50 labeled cases spanning concern groups, constraints,

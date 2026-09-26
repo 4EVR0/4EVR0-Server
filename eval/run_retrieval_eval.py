@@ -22,6 +22,7 @@ reference-free LLM-judge로 "검색된 성분/제품이 이 고민에 관련 있
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -45,6 +46,7 @@ from app.services.recommend_service import (  # noqa: E402
 )
 from app.clients.neo4j_client import (  # noqa: E402
     close_driver,
+    ping,
     query_ingredients_by_effects,
 )
 from eval.eval_utils import bootstrap_mean_ci, file_sha256, git_code_sha, load_dataset  # noqa: E402
@@ -79,6 +81,40 @@ def _parse_json(text: str) -> dict:
     return json.loads(m.group(0) if m else t)
 
 
+def _candidate_snapshots(ingredients: list[dict], products: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Persist the ordered judge inputs so later score changes can be audited."""
+    ingredient_rows = [
+        {
+            "rank": rank,
+            "name": row["name"],
+            "eligibility_tier": row.get("eligibility_tier"),
+            "graph_score": row.get("graph_score"),
+            "judge_relevant": None,
+        }
+        for rank, row in enumerate(ingredients, start=1)
+    ]
+    product_rows = [
+        {
+            "rank": rank,
+            "product_id": row.get("product_id"),
+            "product_name": row.get("product_name"),
+            "category": row.get("category"),
+            "matched_ingredients": row.get("matched_ingredients") or [],
+            "judge_relevant": None,
+        }
+        for rank, row in enumerate(products, start=1)
+    ]
+    return ingredient_rows, product_rows
+
+
+def _validated_flags(verdict: dict, key: str, expected: int) -> list[int]:
+    flags = verdict.get(key)
+    if (not isinstance(flags, list) or len(flags) != expected
+            or any(type(flag) is not int or flag not in (0, 1) for flag in flags)):
+        raise ValueError(f"judge {key}: expected exactly {expected} binary decisions")
+    return flags
+
+
 async def _judge(client, model, timeout, message, concerns, ing_names, products) -> dict:
     ing_lines = "\n".join(f"{i+1}. {n}" for i, n in enumerate(ing_names)) or "(없음)"
     prod_lines = "\n".join(
@@ -94,7 +130,7 @@ async def _judge(client, model, timeout, message, concerns, ing_names, products)
     return _parse_json(resp.choices[0].message.content)
 
 
-async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
+async def eval_case(case, judge_client, judge_model, judge_timeout, *, capture_only=False) -> dict:
     concerns = [Concern(c) for c in case.get("concerns", []) if c in Concern._value2member_map_]
     effects = infer_effects(concerns)
     raw_ings = await query_ingredients_by_effects(
@@ -112,7 +148,9 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
         if code in Constraint._value2member_map_
     ]
     products = _apply_constraint_evidence_guard(products, constraints)
-    ing_names = [r["name"] for r in raw_ings[:_TOP_INGREDIENTS]]
+    judged_ings = raw_ings[:_TOP_INGREDIENTS]
+    ing_names = [r["name"] for r in judged_ings]
+    ingredient_candidates, product_candidates = _candidate_snapshots(judged_ings, products)
 
     # 랭킹 품질: 상위 성분 중 pubmed_evidence 비율
     top = raw_ings[:_TOP_INGREDIENTS]
@@ -126,18 +164,24 @@ async def eval_case(case, judge_client, judge_model, judge_timeout) -> dict:
         "expects_products": bool(concerns) and not bool(constraints),
         "evidence_top_ratio": ev_ratio,
         "ingredient_precision": None, "product_precision": None,
+        "ingredient_candidates": ingredient_candidates,
+        "product_candidates": product_candidates,
     }
-    if not ing_names and not products:
-        return result  # 둘 다 빈손 — judge 스킵
+    if capture_only or (not ing_names and not products):
+        return result  # 캡처 전용 또는 둘 다 빈손 — judge 스킵
 
     verdict = await _judge(judge_client, judge_model, judge_timeout,
                            case["message"], result["concerns"], ing_names, products)
-    ing_flags = [int(x) for x in (verdict.get("ingredients") or [])][:len(ing_names)]
-    prod_flags = [int(x) for x in (verdict.get("products") or [])][:len(products)]
+    ing_flags = _validated_flags(verdict, "ingredients", len(ing_names))
+    prod_flags = _validated_flags(verdict, "products", len(products))
+    for row, flag in zip(ingredient_candidates, ing_flags):
+        row["judge_relevant"] = flag
+    for row, flag in zip(product_candidates, prod_flags):
+        row["judge_relevant"] = flag
     if ing_names:
-        result["ingredient_precision"] = sum(ing_flags) / len(ing_names) if ing_flags else 0.0
+        result["ingredient_precision"] = sum(ing_flags) / len(ing_names)
     if products:
-        result["product_precision"] = sum(prod_flags) / len(products) if prod_flags else 0.0
+        result["product_precision"] = sum(prod_flags) / len(products)
         result["irrelevant_products"] = [products[i].get("product_name")
                                          for i, f in enumerate(prod_flags) if f == 0]
     return result
@@ -162,20 +206,38 @@ def _unexpected_product_zero_rate(cases: list[dict]) -> float:
 async def main_async(args) -> None:
     dataset_path = Path(args.dataset)
     cases = load_dataset(dataset_path)
+    if args.case_id:
+        selected = set(args.case_id)
+        cases = [case for case in cases if str(case["id"]) in selected]
+        missing = selected - {str(case["id"]) for case in cases}
+        if missing:
+            raise ValueError(f"dataset missing case ids: {', '.join(sorted(missing))}")
     if args.limit:
         cases = cases[: args.limit]
 
-    jc = build_judge_config(model=args.judge_model, base_url=None,
-                            api_key_env=args.judge_api_key_env,
-                            timeout_seconds=args.judge_timeout, allow_self_judge=False)
-    client = build_judge_client(jc)
+    # Graph client queries intentionally return [] on connection errors for serving.
+    # Evaluation must fail closed, or an outage is silently reported as zero recall.
+    try:
+        await ping()
+    except Exception as exc:
+        raise RuntimeError("Neo4j unavailable; retrieval report was not created") from exc
+
+    jc = None
+    client = None
+    if not args.capture_only:
+        jc = build_judge_config(model=args.judge_model, base_url=None,
+                                api_key_env=args.judge_api_key_env,
+                                timeout_seconds=args.judge_timeout, allow_self_judge=False)
+        client = build_judge_client(jc)
 
     sem = asyncio.Semaphore(args.concurrency)
 
     async def _run(case):
         async with sem:
             try:
-                r = await eval_case(case, client, jc.model, jc.timeout_seconds)
+                r = await eval_case(case, client, jc.model if jc else None,
+                                    jc.timeout_seconds if jc else None,
+                                    capture_only=args.capture_only)
                 pp = r.get("product_precision")
                 print(f"  [id {r['id']}] ing={r['n_ingredients']} prod={r['n_products']} "
                       f"prod_prec={pp if pp is None else round(pp,2)}", flush=True)
@@ -203,7 +265,9 @@ async def main_async(args) -> None:
         "run": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "code_sha": git_code_sha(),
-            "judge_model": jc.model, "dataset": str(dataset_path),
+            "judge_model": jc.model if jc else None, "judge_mode": "capture_only" if args.capture_only else "judged",
+            "judge_prompt_sha256": hashlib.sha256(_JUDGE_PROMPT.encode("utf-8")).hexdigest(),
+            "candidate_trace_schema": 1, "dataset": str(dataset_path),
             "dataset_sha256": file_sha256(dataset_path), "n_cases": len(cases), "n_scored": n,
             "product_min_relevance_ratio": settings.product_min_relevance_ratio,
             "product_min_matched_count": settings.product_min_matched_count,
@@ -211,6 +275,7 @@ async def main_async(args) -> None:
         },
         "metrics": metrics,
         "cases": ok,
+        "errors": [r for r in results if "error" in r],
     }
     print("\n" + "═" * 60)
     print("  검색(RAG) 품질 eval")
@@ -229,7 +294,7 @@ async def main_async(args) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(f"결과 저장: {out}")
-    if not args.no_mlflow:
+    if not args.no_mlflow and not args.capture_only:
         status, run_id = log_report(out)
         print(f"  MLflow {status}: {run_id}")
 
@@ -238,6 +303,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default=str(_REPO_ROOT / "eval" / "dataset.jsonl"))
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--case-id", action="append", help="특정 ID만 평가 (반복 지정 가능)")
+    ap.add_argument("--capture-only", action="store_true", help="외부 Judge 없이 후보 순서만 로컬에 저장; MLflow 기록 없음")
     ap.add_argument("--judge-model", default=None)
     ap.add_argument("--judge-api-key-env", default="JUDGE_API_KEY")
     ap.add_argument("--judge-timeout", type=float, default=120.0)
