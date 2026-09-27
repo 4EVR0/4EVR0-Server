@@ -20,7 +20,24 @@ def test_multiturn_dataset_is_valid_and_has_planned_coverage():
     scenarios = load_scenarios(Path("eval/multiturn_dataset.jsonl"))
     assert len(scenarios) == 18
     kinds = {turn["kind"] for scenario in scenarios for turn in scenario["turns"]}
-    assert kinds == {"new", "followup", "refine", "contextual_search", "missing_history"}
+    assert kinds == {"new", "followup", "usage_order", "refine", "contextual_search", "missing_history"}
+
+
+def test_usage_order_requires_one_previous_product_per_present_stage_in_order():
+    previous = {"products": [
+        {"product_id": "s", "category": "세럼"},
+        {"product_id": "a", "category": "앰플"},
+        {"product_id": "a2", "category": "앰플"},
+        {"product_id": "c", "category": "크림"},
+    ]}
+    turn = {"kind": "usage_order"}
+    correct = {"products": [previous["products"][1], previous["products"][0], previous["products"][3]],
+               "ingredients": [], "response_text": "추천 제품", "response_mode": "followup_usage_order"}
+    assert evaluate_turn(turn, correct, previous) == []
+    wrong_order = {**correct, "products": list(reversed(correct["products"]))}
+    assert "USAGE_ORDER_STAGE_MISMATCH" in evaluate_turn(turn, wrong_order, previous)
+    invented = {**correct, "products": [{"product_id": "new", "category": "토너"}]}
+    assert "USAGE_ORDER_NEW_PRODUCT" in evaluate_turn(turn, invented, previous)
 
 
 def test_refine_requires_exact_previous_category_subset():
