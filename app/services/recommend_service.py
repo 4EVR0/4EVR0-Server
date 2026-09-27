@@ -1200,12 +1200,32 @@ def _build_usage_order_response(
         return "앞서 추천한 제품 중 사용 순서를 정리할 제형의 제품이 없어요."
     concern_text, _ = _remove_hanja(base_message)
     concern_text = _normalize_consumer_language(" ".join(concern_text.split()))[:80].rstrip(".!?。！？")
-    concern = f"이전 질문 ‘{concern_text}’" if concern_text else "앞서 말씀하신 피부 고민"
+    if "에 맞는" in concern_text:
+        concern = f"앞서 말씀하신 {concern_text.split('에 맞는', 1)[0]} 고민에 맞춰"
+    elif concern_text:
+        concern = f"앞선 요청(“{concern_text}”)을 기준으로"
+    else:
+        concern = "앞서 말씀하신 피부 고민에 맞춰"
     lines = [
-        f"{concern}을 기준으로, 각 제형에서 관련 근거 성분이 가장 우선인 제품을 하나씩 골랐어요.",
-        "",
-        "추천 제품",
+        f"{concern}, 각 제형에서 관련 근거 성분이 가장 우선인 제품을 하나씩 골랐어요.",
     ]
+    shared = choices[0][2] if len(choices) > 1 else None
+    if shared and not all(item and item.name == shared.name for _, _, item in choices):
+        shared = None
+    if shared:
+        name = shared.kor_name or shared.name
+        benefit = _claim_benefit_phrase(shared)
+        source = ("논문 기반 성분 근거" if shared.eligibility_tier == "pubmed_evidence"
+                  else "성분 기능 데이터" if shared.eligibility_tier == "cosing_function"
+                  else "제공된 성분 근거")
+        if benefit:
+            lines.append(
+                f"선택 이유: 아래 {len(choices)}개 제품 모두 {name} 성분이 매칭되며, "
+                f"이 성분은 {source}에서 {benefit} 관련으로 분류됩니다."
+            )
+        else:
+            lines.append(f"선택 이유: 아래 {len(choices)}개 제품 모두 {name} 성분이 매칭됩니다.")
+    lines.extend(["", "추천 제품"])
     for index, (stage, product, ingredient) in enumerate(choices, start=1):
         if ingredient:
             name = ingredient.kor_name or ingredient.name
@@ -1213,12 +1233,12 @@ def _build_usage_order_response(
             source = ("논문 기반 성분 근거" if ingredient.eligibility_tier == "pubmed_evidence"
                       else "성분 기능 데이터" if ingredient.eligibility_tier == "cosing_function"
                       else "제공된 성분 근거")
-            reason = (f"이 제품에서 확인된 매칭 성분 {name}은 {source}에서 "
-                      f"{benefit} 관련으로 분류됩니다." if benefit else
-                      f"이 제품에서 {name} 성분이 앞선 피부 고민과 매칭된 것으로 확인됩니다.")
+            reason = (f"매칭 성분: {name}." if shared else
+                      f"매칭 성분: {name}. {source}에서 {benefit} 관련으로 분류됩니다."
+                      if benefit else f"매칭 성분: {name}. 앞선 고민과의 매칭이 제품 데이터에서 확인됩니다.")
         elif product.matched_ingredients:
-            reason = (f"이 제품에서 {product.matched_ingredients[0]} 성분이 앞선 피부 고민과 "
-                      "매칭된 것으로 확인됩니다. 구체적인 작용 근거는 확인되지 않았습니다.")
+            reason = (f"매칭 성분: {product.matched_ingredients[0]}. "
+                      "구체적인 작용 근거는 저장된 정보에서 확인되지 않습니다.")
         else:
             continue
         lines.append(f"- {index}. {stage}: **{product.product_name}** — {reason}")
