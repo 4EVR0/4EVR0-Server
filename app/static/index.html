@@ -250,6 +250,11 @@
   .answer-h:first-child { margin-top: 0; }
   .answer-line { line-height: 1.72; }
   .answer-line.bulleted { padding-left: 16px; text-indent: -16px; }
+  .answer-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); border-radius: 12px; }
+  .answer-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
+  .answer-table th, .answer-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .answer-table th { background: #f4f8ec; color: #405b2b; font-weight: 800; white-space: nowrap; }
+  .answer-table tr:last-child td { border-bottom: 0; }
   .study-link { color: #5f8f13; font-weight: 750; text-decoration: underline; text-underline-offset: 2px; }
   .bullet { color: #9bce26; font-weight: 900; margin-right: 6px; }
   .ing-emph { color: #5f8f13; font-weight: 800; }
@@ -640,11 +645,34 @@
     return text;
   }
 
+  function tableCells(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+  }
+  function isTableSeparator(line) {
+    return /^\s*\|/.test(line) && tableCells(line).every(cell => /^:?-{3,}:?$/.test(cell));
+  }
   function renderAnswerBody(text, ingredients) {
-    return stripHanja(String(text || '')).split('\n').map(line => {
-      if (!line.trim()) return '';
+    const lines = stripHanja(String(text || '')).split('\n');
+    const rendered = [];
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      if (/^\s*\|/.test(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+        const headers = tableCells(line);
+        const rows = [];
+        index += 2;
+        while (index < lines.length && /^\s*\|/.test(lines[index])) {
+          const cells = tableCells(lines[index]);
+          if (cells.length === headers.length) rows.push(cells);
+          index++;
+        }
+        index--;
+        const cellHtml = cell => mdInline(escHtml(cell));
+        rendered.push(`<div class="answer-table-wrap"><table class="answer-table"><thead><tr>${headers.map(cell => `<th scope="col">${cellHtml(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cellHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+        continue;
+      }
+      if (!line.trim()) continue;
       const title = sectionTitle(line);
-      if (title) return `<div class="answer-h">${escHtml(title)}</div>`;
+      if (title) { rendered.push(`<div class="answer-h">${escHtml(title)}</div>`); continue; }
       // 리스트 불릿(* 또는 - 뒤 공백)을 떼어 성분 *마커*와 충돌 방지, 깔끔한 •로 표시.
       let bullet = '', content = line;
       const m = content.match(/^\s*[*\-]\s+/);
@@ -652,8 +680,9 @@
       const body = linkifyVerifiedStudy(
         emphasizeEffects(emphasizeInciKorean(emphasizeIngredients(mdInline(escHtml(content)), ingredients)))
       );
-      return `<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`;
-    }).join('');
+      rendered.push(`<div class="answer-line${bullet ? ' bulleted' : ''}">${bullet}${body}</div>`);
+    }
+    return rendered.join('');
   }
 
   // 응답을 "고민분석+성분설명"(intro)과 "추천 제품"(제품별 설명 원문)으로 분리.
