@@ -1,12 +1,12 @@
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint, SkinType
+from app.schemas.recommend import RecommendResponse
 import eval.run_response_eval as response_eval
 from eval.check_gate import _check_report_code_sha, _hard_failure_section
 from eval.eval_utils import (
@@ -25,6 +25,18 @@ from eval.run_response_eval import (
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _fake_recommend_response(session_id, response_text, *, ingredients=None, products=None):
+    """Use the same response contract as the serving path in evaluator tests."""
+    return RecommendResponse(
+        session_id=session_id,
+        turn_id="test-turn",
+        ingredients=ingredients or [],
+        products=products or [],
+        response_text=response_text,
+        model_used="test-model",
+    )
 
 
 def test_shared_dataset_has_50_valid_unique_cases():
@@ -222,7 +234,7 @@ def _run_response_eval(dataset, monkeypatch, store, *, session_mode):
     """
     async def fake_recommend(session_id, message, _gen_prompt=None):
         await store.append_turn(session_id, user=message, assistant="응답")
-        return SimpleNamespace(ingredients=[], products=[], response_text="추천 응답")
+        return _fake_recommend_response(session_id, "추천 응답")
 
     async def fake_judge(*_args):
         return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
@@ -237,7 +249,7 @@ def _run_response_eval(dataset, monkeypatch, store, *, session_mode):
         api_key="secret",
         timeout_seconds=30,
     )
-    return asyncio.run(
+    report = asyncio.run(
         response_eval.run(
             dataset,
             None,
@@ -248,6 +260,8 @@ def _run_response_eval(dataset, monkeypatch, store, *, session_mode):
             session_mode=session_mode,
         )
     )
+    assert report["metrics"]["error_rate"] == 0, report["cases"]
+    return report
 
 
 def test_isolated_mode_gives_each_case_a_clean_session(tmp_path, monkeypatch):
@@ -277,7 +291,7 @@ def test_generate_only_keeps_responses_and_hard_checks_without_judge(tmp_path, m
 
     async def fake_recommend(session_id, message, _gen_prompt=None):
         await store.append_turn(session_id, user=message, assistant="응답")
-        return SimpleNamespace(ingredients=[], products=[], response_text="현재 제품 근거가 없습니다.")
+        return _fake_recommend_response(session_id, "현재 제품 근거가 없습니다.")
 
     def unexpected_judge_client(_config):
         raise AssertionError("generate-only must not build an external judge client")
@@ -362,7 +376,7 @@ def test_report_records_hanja_leaks(tmp_path, monkeypatch):
     texts = iter(["피부 수분을牢牢히 잡아줍니다", "순수 한글 응답입니다"])
 
     async def fake_recommend(session_id, message, _gen_prompt=None):
-        return SimpleNamespace(ingredients=[], products=[], response_text=next(texts))
+        return _fake_recommend_response(session_id, next(texts))
 
     async def fake_judge(*_args):
         return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
@@ -409,8 +423,8 @@ def test_report_stores_evidence_context_for_human_labeling(tmp_path, monkeypatch
                             matched_ingredients=["NIACINAMIDE"])
 
     async def fake_recommend(session_id, message, _gen_prompt=None):
-        return SimpleNamespace(ingredients=[ingredient], products=[product],
-                               response_text="추천 응답")
+        return _fake_recommend_response(session_id, "추천 응답",
+                                        ingredients=[ingredient], products=[product])
 
     async def fake_judge(*_args):
         return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
@@ -498,7 +512,7 @@ def test_run_flags_prompt_mismatch_with_service(tmp_path, monkeypatch):
     store = _FakeConversationStore()
 
     async def fake_recommend(session_id, message, _gen_prompt=None):
-        return SimpleNamespace(ingredients=[], products=[], response_text="응답")
+        return _fake_recommend_response(session_id, "응답")
 
     async def fake_judge(*_args):
         return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
@@ -565,11 +579,7 @@ def test_response_run_records_reproducibility_metadata(tmp_path, monkeypatch):
     )
 
     async def fake_recommend(*_args):
-        return SimpleNamespace(
-            ingredients=[],
-            products=[],
-            response_text="추천 응답",
-        )
+        return _fake_recommend_response(_args[0], "추천 응답")
 
     async def fake_judge(*_args):
         return {**{dim: 4 for dim in DIMS}, "comment": "ok"}
