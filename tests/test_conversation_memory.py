@@ -328,7 +328,7 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
     async def test_corrupted_usage_order_followup_uses_safe_response(self):
         active = self._active_state()
         history = [{"user": active["base_message"], "products": active["source_products"]}]
-        corrupted = "**크림 B**의 세포 세포 세포 세포 세포 재생을 위해 먼저 쓰세요."
+        corrupted = "**크림 B**의 세포 세포을 위해 먼저 쓰세요."
         completion = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=corrupted))])
         client = mock.Mock()
         client.chat.completions.create = mock.AsyncMock(return_value=completion)

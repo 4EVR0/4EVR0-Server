@@ -406,6 +406,13 @@ class DeterministicOutputGuardTest(unittest.TestCase):
         fallback = _build_grounded_product_response("피부가 건조해요.", ingredients, products)
         self.assertEqual([], find_response_integrity_issues(fallback, ingredients, products))
 
+    def test_short_duplicate_words_and_particle_suffix_are_detected(self):
+        for text in ("피부 세포 세포 재생", "피부 세포 세포을 구성"):
+            with self.subTest(text=text):
+                codes = [code for code, _ in find_response_integrity_issues(text, [], [])]
+                self.assertIn("DEGENERATE_REPETITION", codes)
+        self.assertEqual([], find_response_integrity_issues("매일 매일 바르세요.", [], []))
+
     def test_known_english_names_and_parenthesized_inci_are_not_corruption(self):
         ingredients = [IngredientResult(name="CERAMIDE NP", kor_name="세라마이드엔피")]
         products = [ProductResult(
