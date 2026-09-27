@@ -13,3 +13,6 @@
 {"id":"day_night","label":"사용 시점","turns":[{"message":"기미와 색소침착이 고민이야","kind":"new"},{"message":"추천한 것들을 아침과 저녁 중 언제 쓰면 돼?","kind":"followup"}]}
 {"id":"ingredient_compare","label":"성분 비교","turns":[{"message":"피부 장벽이 무너진 것 같고 따가워","kind":"new"},{"message":"그 중 핵심 성분 차이를 비교해줘","kind":"followup"}]}
 {"id":"review_compare","label":"리뷰 부연","turns":[{"message":"수부지인데 모공도 신경 쓰여","kind":"new"},{"message":"추천한 제품들을 리뷰는 보조로만 쓰서 비교해줘","kind":"followup"}]}
+{"id":"deictic_toner_refine","label":"이전 카드에서 토너만","turns":[{"message":"건조한 피부에 맞는 제품 추천해줘","kind":"new"},{"message":"그중 토너만 보여줘","kind":"refine","expected_category":"토너"}]}
+{"id":"plain_toner_refine","label":"지시어 없는 제형 좁히기","turns":[{"message":"피부 진정에 좋은 제품 추천해줘","kind":"new"},{"message":"토너만 보여줘","kind":"refine","expected_category":"토너"}]}
+{"id":"contextual_toner_research","label":"이전 고민 유지하고 토너 재검색","turns":[{"message":"건조한 피부에 맞는 제품 추천해줘","kind":"new"},{"message":"토너로 다시 찾아줘","kind":"contextual_search","expected_category":"토너"}]}

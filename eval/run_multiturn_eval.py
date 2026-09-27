@@ -1,8 +1,8 @@
 """Multi-turn functional evaluation for batch and SSE recommendation paths.
 
 The response wording may vary even at temperature 0, so this runner checks observable
-service behavior instead of exact text: follow-up product reuse, expired-history handling,
-Hanja leakage, errors, and batch/SSE product parity.
+service behavior instead of exact text: follow-up product reuse or category refinement,
+contextual re-search, expired-history handling, Hanja leakage, errors, and batch/SSE parity.
 """
 
 from __future__ import annotations
@@ -43,10 +43,12 @@ def load_scenarios(path: Path) -> list[dict]:
         if not isinstance(turns, list) or not turns:
             raise ValueError(f"{scenario_id}: turns must be a non-empty list")
         for turn in turns:
-            if turn.get("kind") not in {"new", "followup", "missing_history"}:
+            if turn.get("kind") not in {"new", "followup", "refine", "contextual_search", "missing_history"}:
                 raise ValueError(f"{scenario_id}: invalid turn kind {turn.get('kind')!r}")
             if not str(turn.get("message") or "").strip():
                 raise ValueError(f"{scenario_id}: empty message")
+            if turn.get("kind") in {"refine", "contextual_search"} and not turn.get("expected_category"):
+                raise ValueError(f"{scenario_id}: expected_category is required")
     return scenarios
 
 
@@ -129,6 +131,29 @@ def evaluate_turn(turn: dict, result: dict, previous: dict | None) -> list[str]:
                 failures.append("NO_PRODUCT_FOLLOWUP_MESSAGE_ABSENT")
         elif current_ids != previous_ids:
             failures.append("FOLLOWUP_PRODUCT_SET_CHANGED")
+    elif kind == "refine":
+        expected_category = turn.get("expected_category")
+        previous_products = (previous or {}).get("products", [])
+        if not previous_products:
+            if current_ids:
+                failures.append("REFINE_WITHOUT_PREVIOUS_PRODUCTS")
+            if "비교할 제품이 없습니다" not in response_text:
+                failures.append("NO_PRODUCT_REFINE_MESSAGE_ABSENT")
+            return failures
+        expected_ids = {str(p.get("product_id")) for p in previous_products
+                        if p.get("category") == expected_category}
+        if not expected_category:
+            failures.append("REFINE_EXPECTED_CATEGORY_MISSING")
+        elif current_ids != expected_ids:
+            failures.append("REFINE_PRODUCT_SET_MISMATCH")
+        if not expected_ids and "새로 찾아볼까요" not in response_text:
+            failures.append("REFINE_NO_MATCH_MESSAGE_ABSENT")
+    elif kind == "contextual_search":
+        expected_category = turn.get("expected_category")
+        if not expected_category:
+            failures.append("CONTEXTUAL_SEARCH_EXPECTED_CATEGORY_MISSING")
+        elif any(p.get("category") != expected_category for p in result.get("products", [])):
+            failures.append("CONTEXTUAL_SEARCH_WRONG_CATEGORY")
     elif kind == "missing_history":
         if current_ids:
             failures.append("MISSING_HISTORY_RETURNED_PRODUCTS")
