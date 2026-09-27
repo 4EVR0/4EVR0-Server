@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -87,6 +88,17 @@ def test_parse_sse_frame():
     event, data = parse_sse_frame('event: delta\ndata: {"text": "안녕"}\n\n')
     assert event == "delta"
     assert data == {"text": "안녕"}
+
+
+def test_stream_report_preserves_response_mode(monkeypatch):
+    async def fake_stream(_session_id, _message):
+        yield 'event: meta\ndata: {"products": [], "ingredients": []}\n\n'
+        yield 'event: delta\ndata: {"text": "안내"}\n\n'
+        yield 'event: done\ndata: {"finish_reason": "conversation", "response_mode": "followup_quality_fallback"}\n\n'
+
+    monkeypatch.setattr(multiturn_eval, "recommend_stream", fake_stream)
+    result = asyncio.run(multiturn_eval.call_stream("session-1", "사용 순서 알려줘"))
+    assert result["response_mode"] == "followup_quality_fallback"
 
 
 def test_compare_transports_ignores_order_but_detects_candidate_difference():

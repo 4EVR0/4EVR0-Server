@@ -89,6 +89,7 @@ async def call_stream(session_id: str, message: str) -> dict:
     meta: dict | None = None
     chunks: list[str] = []
     finish_reason: str | None = None
+    response_mode: str | None = None
     async for frame in recommend_stream(session_id, message):
         event, data = parse_sse_frame(frame)
         if event == "meta":
@@ -97,6 +98,7 @@ async def call_stream(session_id: str, message: str) -> dict:
             chunks.append(str(data.get("text") or ""))
         elif event == "done":
             finish_reason = str(data.get("finish_reason") or "")
+            response_mode = str(data.get("response_mode") or "")
         elif event == "error":
             raise RuntimeError(f"{data.get('error_code')}: {data.get('message')}")
     if meta is None:
@@ -109,6 +111,7 @@ async def call_stream(session_id: str, message: str) -> dict:
         "response_text": "".join(chunks),
         "model_used": meta.get("model_used"),
         "finish_reason": finish_reason,
+        "response_mode": response_mode,
     }
 
 
@@ -182,6 +185,7 @@ async def run_scenario(scenario: dict, transport: str, run_id: str) -> dict:
                     "n_ingredients": len(result.get("ingredients", [])),
                     "response": result.get("response_text"),
                     "finish_reason": result.get("finish_reason"),
+                    "response_mode": result.get("response_mode"),
                     "failures": failures,
                 }
                 previous = result
@@ -194,6 +198,7 @@ async def run_scenario(scenario: dict, transport: str, run_id: str) -> dict:
                     "n_ingredients": 0,
                     "response": "",
                     "finish_reason": None,
+                    "response_mode": None,
                     "failures": ["REQUEST_ERROR"],
                     "error": f"{type(exc).__name__}: {exc}",
                 }
