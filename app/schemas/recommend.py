@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 
 class RecommendRequest(BaseModel):
-    session_id: str
+    session_id: str | None = None
     message: str
     category: str | None = None
 
