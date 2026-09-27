@@ -871,11 +871,13 @@ def _reconstruct_products(slim: list[dict]) -> list[ProductResult]:
 
 
 def _active_recommendation(profile: UserProfile, base_message: str,
-                           products, turn_id: str) -> dict:
+                           products, turn_id: str, ingredients=None) -> dict:
     slim = _slim_products(products)
     return {
         "profile": profile.model_dump(mode="json"),
         "base_message": base_message,
+        "ingredients": [item.model_dump() if isinstance(item, IngredientResult) else item
+                        for item in (ingredients or [])],
         "source_products": slim,
         "visible_products": slim,
         "turn_id": turn_id,
@@ -890,7 +892,7 @@ def _cached_active(cached: dict, message: str, turn_id: str,
         return None
     return _active_recommendation(
         profile, context.base_message if context else message,
-        cached.get("products"), turn_id,
+        cached.get("products"), turn_id, cached.get("ingredients"),
     )
 
 
@@ -1149,24 +1151,85 @@ def _reorder_by_ranking(products: list[ProductResult], ranking: list[str],
     return sorted(products, key=rank_of)  # stable — 미매칭끼리는 원래 순서
 
 
-_FOLLOWUP_USE_ORDER = {"토너": 0, "미스트": 0, "에센스": 1, "세럼": 2,
-                       "앰플": 2, "로션": 3, "크림": 4, "페이스오일": 5}
+_USAGE_ORDER_STAGES = (
+    ("기초(스킨·토너)", frozenset({"스킨", "토너"})),
+    ("앰플", frozenset({"앰플"})),
+    ("세럼", frozenset({"세럼"})),
+    ("크림", frozenset({"크림"})),
+)
+
+
+def _is_usage_order_request(message: str) -> bool:
+    return "순서" in message or "루틴" in message
+
+
+def _usage_order_choices(
+    products: list[ProductResult], ingredients: list[IngredientResult],
+) -> list[tuple[str, ProductResult, IngredientResult | None]]:
+    """Use the original evidence rank, then the previous product rank, per stage."""
+    ranked = {item.name.casefold(): (index, item) for index, item in enumerate(ingredients)}
+    choices = []
+    for label, categories in _USAGE_ORDER_STAGES:
+        candidates = [(index, product) for index, product in enumerate(products)
+                      if product.category.strip() in categories and product.matched_ingredients]
+        if not candidates:
+            continue
+
+        def rank(candidate):
+            index, product = candidate
+            evidence_rank = min(
+                (ranked[name.casefold()][0] for name in product.matched_ingredients
+                 if name.casefold() in ranked),
+                default=len(ingredients),
+            )
+            return evidence_rank, index
+
+        _, chosen = min(candidates, key=rank)
+        matched = [ranked[name.casefold()] for name in chosen.matched_ingredients
+                   if name.casefold() in ranked]
+        best = min(matched, key=lambda row: row[0])[1] if matched else None
+        choices.append((label, chosen, best))
+    return choices
+
+
+def _build_usage_order_response(
+    choices: list[tuple[str, ProductResult, IngredientResult | None]],
+    base_message: str = "",
+) -> str:
+    if not choices:
+        return "앞서 추천한 제품 중 사용 순서를 정리할 제형의 제품이 없어요."
+    concern_text, _ = _remove_hanja(base_message)
+    concern_text = _normalize_consumer_language(" ".join(concern_text.split()))[:80].rstrip(".!?。！？")
+    concern = f"이전 질문 ‘{concern_text}’" if concern_text else "앞서 말씀하신 피부 고민"
+    lines = [
+        f"{concern}을 기준으로, 각 제형에서 관련 근거 성분이 가장 우선인 제품을 하나씩 골랐어요.",
+        "",
+        "추천 제품",
+    ]
+    for index, (stage, product, ingredient) in enumerate(choices, start=1):
+        if ingredient:
+            name = ingredient.kor_name or ingredient.name
+            benefit = _claim_benefit_phrase(ingredient)
+            source = ("논문 기반 성분 근거" if ingredient.eligibility_tier == "pubmed_evidence"
+                      else "성분 기능 데이터" if ingredient.eligibility_tier == "cosing_function"
+                      else "제공된 성분 근거")
+            reason = (f"이 제품에서 확인된 매칭 성분 {name}은 {source}에서 "
+                      f"{benefit} 관련으로 분류됩니다." if benefit else
+                      f"이 제품에서 {name} 성분이 앞선 피부 고민과 매칭된 것으로 확인됩니다.")
+        elif product.matched_ingredients:
+            reason = (f"이 제품에서 {product.matched_ingredients[0]} 성분이 앞선 피부 고민과 "
+                      "매칭된 것으로 확인됩니다. 구체적인 작용 근거는 확인되지 않았습니다.")
+        else:
+            continue
+        lines.append(f"- {index}. {stage}: **{product.product_name}** — {reason}")
+    lines.extend(["", "이 순서는 제품 제형에 따른 안내입니다. 사용 횟수와 시점은 각 제품 안내를 확인해 주세요."])
+    return "\n".join(lines)
 
 
 def _build_safe_followup_response(
     message: str, products: list[ProductResult], ing_kor: dict[str, str],
 ) -> tuple[str, list[ProductResult]]:
     """Replace corrupted follow-up prose without inventing effects or usage claims."""
-    if "순서" in message:
-        ordered = sorted(products, key=lambda p: _FOLLOWUP_USE_ORDER.get(p.category, 99))
-        lines = ["사용 순서", "일반적인 제품 제형 순서로 정리하면 다음과 같습니다."]
-        lines.extend(
-            f"{index}. [{product.category}] **{product.product_name}**"
-            for index, product in enumerate(ordered, start=1)
-        )
-        lines.append("같은 제형끼리의 순서와 실제 사용법은 제품 안내를 확인해 주세요.")
-        return "\n".join(lines), ordered
-
     lines = ["추천 제품", "앞서 보여드린 제품 중 현재 요청에 맞는 제품입니다."]
     for product in products:
         names = list(dict.fromkeys(
@@ -1188,7 +1251,10 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     if _RESTORE_ALL_CUE.search(message) and not _requested_categories(message):
         visible = source
     requested = _requested_categories(message)
-    selected = ([p for p in visible if p.get("category") in requested]
+    if _is_usage_order_request(message) and "기초" in message:
+        requested.add("토너")
+    selected = ([p for p in visible if p.get("category") in requested or
+                 (p.get("category") == "스킨" and "토너" in requested)]
                 if requested else visible)
     if not visible and not source:
         # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
@@ -1221,6 +1287,38 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
             response_text=response_text, model_used=settings.gpu_model,
             response_mode="followup_no_category_match",
+        )
+    if _is_usage_order_request(message):
+        evidence = []
+        for row in (active or {}).get("ingredients") or []:
+            try:
+                evidence.append(IngredientResult.model_validate(row))
+            except (TypeError, ValueError):
+                continue
+        choices = _usage_order_choices(_reconstruct_products(selected), evidence)
+        products = [product for _, product, _ in choices]
+        matched_evidence = []
+        seen_ingredients = set()
+        for _, product, matched in choices:
+            item = matched
+            if item is None and product.matched_ingredients:
+                item = IngredientResult(name=product.matched_ingredients[0])
+            if item and item.name not in seen_ingredients:
+                matched_evidence.append(item)
+                seen_ingredients.add(item.name)
+        response_text = _build_usage_order_response(
+            choices, str((active or {}).get("base_message") or ""),
+        )
+        response_text, _ = _normalize_response_text(response_text, products)
+        next_active = ({**active, "visible_products": _slim_products(products),
+                        "pending_categories": [], "turn_id": turn_id} if active else None)
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, products, response_text,
+                          active_state=next_active)
+        return RecommendResponse(
+            session_id=session_id, turn_id=turn_id, ingredients=matched_evidence,
+            products=products, response_text=response_text,
+            model_used=settings.gpu_model, response_mode="followup_usage_order",
         )
     # Only the selected products are passed to generation and shown as cards.
     inci_all = {i for p in selected for i in (p.get("matched_ingredients") or [])}
@@ -1309,6 +1407,8 @@ async def _resolve_conversation_response(
             profile = None
         if profile and (profile.effects or profile.concerns):
             return ContextualSearch(profile, str(active.get("base_message") or ""), requested)
+    if (active or history) and _is_usage_order_request(message) and not new_concern:
+        return await _handle_followup(session_id, turn_id, message, history, active)
     if (active or history) and requested and not explicit_prior and not _RESEARCH_CUE.search(message) \
             and not any(c in message for c in _CONCERN_CUES):
         return await _handle_followup(session_id, turn_id, message, history, active)
@@ -1505,6 +1605,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             session_id, message, products, response_text, profile.concerns,
             active_state=_active_recommendation(
                 profile, context.base_message if context else message, products, turn_id,
+                ingredients,
             ),
         )
         return RecommendResponse(
@@ -1830,6 +1931,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(
                 profile, context.base_message if context else message, products, turn_id,
+                ingredients,
             )
             await conversation_store.save_active(session_id, active_state)
             yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
