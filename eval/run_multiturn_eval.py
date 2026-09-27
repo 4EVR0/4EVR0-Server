@@ -151,7 +151,8 @@ def evaluate_turn(turn: dict, result: dict, previous: dict | None) -> list[str]:
                              if product.get("category") in categories), None)
 
             expected = [index for index, categories in enumerate(stages)
-                        if any(p.get("category") in categories for p in previous_products)]
+                        if any(p.get("category") in categories and p.get("matched_ingredients")
+                               for p in previous_products)]
             actual = [stage_index(product) for product in current_products]
             if not current_ids.issubset(previous_ids):
                 failures.append("USAGE_ORDER_NEW_PRODUCT")
