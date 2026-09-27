@@ -382,6 +382,9 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("잡티와 칙칙함", response.response_text)
         self.assertIn("트라넥사믹애씨드", response.response_text)
         self.assertIn("피부 톤 개선", response.response_text)
+        self.assertNotIn("트라넥사믹애씨드은", response.response_text)
+        self.assertEqual(1, response.response_text.count("논문 기반 성분 근거"))
+        self.assertEqual(4, response.response_text.count("매칭 성분:"))
         self.assertNotIn("앰플 B", response.response_text)
         self.assertNotIn("로션 F", response.response_text)
         self.assertEqual(["skin", "ampoule-best", "serum", "cream"],
@@ -459,6 +462,23 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(["c"], [p.product_id for p in response.products])
         self.assertNotIn("토너 A", response.response_text)
+
+    async def test_usage_order_shares_repeated_ingredient_reason_once(self):
+        active = self._active_state()
+        active["ingredients"] = [IngredientResult(
+            name="NIACINAMIDE", kor_name="나이아신아마이드", claim="brightening",
+            eligibility_tier="pubmed_evidence",
+        ).model_dump()]
+        active["source_products"][1]["matched_ingredients"] = ["NIACINAMIDE"]
+        with mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "추천 제품 사용 순서", [], active,
+            )
+        self.assertEqual(2, len(response.products))
+        self.assertIn("선택 이유:", response.response_text)
+        self.assertEqual(1, response.response_text.count("논문 기반 성분 근거"))
+        self.assertEqual(2, response.response_text.count("매칭 성분:"))
+        self.assertNotIn("나이아신아마이드은", response.response_text)
 
     async def test_excluded_product_in_filtered_answer_uses_safe_response(self):
         active = self._active_state()
