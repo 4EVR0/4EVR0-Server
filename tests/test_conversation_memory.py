@@ -325,6 +325,46 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
                 prompt = client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
                 self.assertNotIn("크림 B", prompt)
 
+    async def test_corrupted_usage_order_followup_uses_safe_response(self):
+        active = self._active_state()
+        history = [{"user": active["base_message"], "products": active["source_products"]}]
+        corrupted = "**크림 B**의 세포 세포을 위해 먼저 쓰세요."
+        completion = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=corrupted))])
+        client = mock.Mock()
+        client.chat.completions.create = mock.AsyncMock(return_value=completion)
+        with mock.patch.object(recommend_service, "get_async_llm_client", return_value=client), \
+                mock.patch.object(recommend_service, "query_ingredient_kor_names", mock.AsyncMock(return_value={})), \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "추천한 제품들을 어떤 순서로 써야 해?", history, active,
+            )
+        self.assertEqual("followup_quality_fallback", response.response_mode)
+        self.assertEqual(["t", "c"], [p.product_id for p in response.products])
+        self.assertIn("일반적인 제품 제형 순서", response.response_text)
+        self.assertNotIn("세포 세포", response.response_text)
+        self.assertNotIn("재생", response.response_text)
+        self.assertEqual([], recommend_service.find_response_integrity_issues(
+            response.response_text, response.ingredients, response.products,
+        ))
+
+    async def test_excluded_product_in_filtered_answer_uses_safe_response(self):
+        active = self._active_state()
+        history = [{"user": active["base_message"], "products": active["source_products"]}]
+        completion = SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content="**크림 B**를 먼저 쓰고 **토너 A**를 쓰세요."),
+        )])
+        client = mock.Mock()
+        client.chat.completions.create = mock.AsyncMock(return_value=completion)
+        with mock.patch.object(recommend_service, "get_async_llm_client", return_value=client), \
+                mock.patch.object(recommend_service, "query_ingredient_kor_names", mock.AsyncMock(return_value={})), \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "그중 토너만 보여줘", history, active,
+            )
+        self.assertEqual("followup_quality_fallback", response.response_mode)
+        self.assertEqual(["t"], [p.product_id for p in response.products])
+        self.assertNotIn("크림 B", response.response_text)
+
     async def test_missing_category_asks_before_new_search_and_confirmation_reuses_concern(self):
         active = self._active_state()
         active["visible_products"] = [active["source_products"][1]]

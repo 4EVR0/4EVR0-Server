@@ -6,8 +6,14 @@ import re
 from typing import Any, Mapping, Sequence
 
 
-# Four adjacent repetitions are unlikely to be intentional consumer-facing prose.
-_REPEATED_KOREAN_WORD = re.compile(r"(?<![가-힣])([가-힣]{2,})(?:\s+\1){3,}(?![가-힣])")
+# Even one duplicated content word can be visibly broken prose ("세포 세포을").
+# Allow common intentional reduplications while catching a Korean case particle
+# appended to the second occurrence.
+_REPEATED_KOREAN_WORD = re.compile(
+    r"(?<![가-힣])([가-힣]{2,})(?:\s+\1)+"
+    r"(?=$|[^가-힣]|[은는이가을를의도만와과에로](?=$|[^가-힣]))"
+)
+_ALLOWED_REDUPLICATIONS = {"매일", "조금", "서로", "자꾸"}
 _LONG_UPPERCASE_TOKEN = re.compile(r"(?<![A-Za-z])[A-Z]{6,}(?![A-Za-z])")
 _PARENTHETICAL = re.compile(r"\([^()]*\)")
 
@@ -29,7 +35,11 @@ def find_response_integrity_issues(
     This intentionally favors precision over catching every English intrusion.
     """
     issues: list[tuple[str, str]] = []
-    repeated = _REPEATED_KOREAN_WORD.search(text)
+    repeated = next(
+        (match for match in _REPEATED_KOREAN_WORD.finditer(text)
+         if match.group(1) not in _ALLOWED_REDUPLICATIONS),
+        None,
+    )
     if repeated:
         issues.append(("DEGENERATE_REPETITION", f"연속 단어 반복: {repeated.group(0)[:80]}"))
 

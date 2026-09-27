@@ -1149,6 +1149,35 @@ def _reorder_by_ranking(products: list[ProductResult], ranking: list[str],
     return sorted(products, key=rank_of)  # stable — 미매칭끼리는 원래 순서
 
 
+_FOLLOWUP_USE_ORDER = {"토너": 0, "미스트": 0, "에센스": 1, "세럼": 2,
+                       "앰플": 2, "로션": 3, "크림": 4, "페이스오일": 5}
+
+
+def _build_safe_followup_response(
+    message: str, products: list[ProductResult], ing_kor: dict[str, str],
+) -> tuple[str, list[ProductResult]]:
+    """Replace corrupted follow-up prose without inventing effects or usage claims."""
+    if "순서" in message:
+        ordered = sorted(products, key=lambda p: _FOLLOWUP_USE_ORDER.get(p.category, 99))
+        lines = ["사용 순서", "일반적인 제품 제형 순서로 정리하면 다음과 같습니다."]
+        lines.extend(
+            f"{index}. [{product.category}] **{product.product_name}**"
+            for index, product in enumerate(ordered, start=1)
+        )
+        lines.append("같은 제형끼리의 순서와 실제 사용법은 제품 안내를 확인해 주세요.")
+        return "\n".join(lines), ordered
+
+    lines = ["추천 제품", "앞서 보여드린 제품 중 현재 요청에 맞는 제품입니다."]
+    for product in products:
+        names = list(dict.fromkeys(
+            ing_kor[name] for name in product.matched_ingredients if ing_kor.get(name)
+        ))[:3]
+        matched = f" 확인된 매칭 성분: {', '.join(names)}." if names else ""
+        lines.append(f"- [{product.category}] **{product.product_name}**.{matched}")
+    lines.append("제품별 효과나 우열은 이 정보만으로 단정할 수 없습니다.")
+    return "\n".join(lines), products
+
+
 async def _handle_followup(session_id: str, turn_id: str, message: str,
                            history: list[dict], active: dict | None = None) -> RecommendResponse:
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
@@ -1226,24 +1255,30 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     products = _reorder_by_ranking(_reconstruct_products(selected),
                                    ranking, response_text)
     response_text, hanja_removed = _normalize_response_text(response_text, products)
+    ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     excluded_names = {
         p.get("name") for p in source if p.get("name")
     } - {p.get("name") for p in selected if p.get("name")}
-    if any(name in response_text for name in excluded_names):
-        names = ", ".join(p.product_name for p in products)
-        response_text = f"앞서 추천한 제품 중 요청하신 조건에 맞는 제품은 {names}입니다."
+    integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+    excluded_mentioned = any(name in response_text for name in excluded_names)
+    response_mode = "followup_filtered" if requested else "followup"
+    if not response_text.strip() or integrity_issues or excluded_mentioned:
+        products = _reconstruct_products(selected)  # discard ranking from corrupted prose
+        response_text, products = _build_safe_followup_response(message, products, ing_kor)
+        response_text, _ = _normalize_response_text(response_text, products)
+        response_mode = "followup_quality_fallback"
+        metrics.recommend_output_guard_total.labels(kind="followup_quality_fallback").inc()
     if hanja_removed:
         metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
     metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
-    ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     next_active = ({**active, "visible_products": _slim_products(products),
                     "pending_categories": [], "turn_id": turn_id} if active else None)
     await _store_turn(session_id, message, products, response_text, active_state=next_active)
     return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients,
                              products=products, response_text=response_text,
                              model_used=settings.gpu_model,
-                             response_mode="followup_filtered" if requested else "followup")
+                             response_mode=response_mode)
 
 
 async def _resolve_conversation_response(
