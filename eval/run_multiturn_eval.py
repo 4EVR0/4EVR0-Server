@@ -43,7 +43,7 @@ def load_scenarios(path: Path) -> list[dict]:
         if not isinstance(turns, list) or not turns:
             raise ValueError(f"{scenario_id}: turns must be a non-empty list")
         for turn in turns:
-            if turn.get("kind") not in {"new", "followup", "refine", "contextual_search", "missing_history"}:
+            if turn.get("kind") not in {"new", "followup", "usage_order", "refine", "contextual_search", "missing_history"}:
                 raise ValueError(f"{scenario_id}: invalid turn kind {turn.get('kind')!r}")
             if not str(turn.get("message") or "").strip():
                 raise ValueError(f"{scenario_id}: empty message")
@@ -134,6 +134,32 @@ def evaluate_turn(turn: dict, result: dict, previous: dict | None) -> list[str]:
                 failures.append("NO_PRODUCT_FOLLOWUP_MESSAGE_ABSENT")
         elif current_ids != previous_ids:
             failures.append("FOLLOWUP_PRODUCT_SET_CHANGED")
+    elif kind == "usage_order":
+        previous_products = (previous or {}).get("products", [])
+        current_products = result.get("products", [])
+        previous_ids = set(product_ids(previous or {}))
+        if not previous_products:
+            if current_products:
+                failures.append("USAGE_ORDER_WITHOUT_PREVIOUS_PRODUCTS")
+            if "비교할 제품이 없습니다" not in response_text:
+                failures.append("NO_PRODUCT_FOLLOWUP_MESSAGE_ABSENT")
+        else:
+            stages = ({"스킨", "토너"}, {"앰플"}, {"세럼"}, {"크림"})
+
+            def stage_index(product):
+                return next((index for index, categories in enumerate(stages)
+                             if product.get("category") in categories), None)
+
+            expected = [index for index, categories in enumerate(stages)
+                        if any(p.get("category") in categories and p.get("matched_ingredients")
+                               for p in previous_products)]
+            actual = [stage_index(product) for product in current_products]
+            if not current_ids.issubset(previous_ids):
+                failures.append("USAGE_ORDER_NEW_PRODUCT")
+            if actual != expected or len(current_ids) != len(current_products):
+                failures.append("USAGE_ORDER_STAGE_MISMATCH")
+            if result.get("response_mode") != "followup_usage_order":
+                failures.append("USAGE_ORDER_MODE_MISMATCH")
     elif kind == "refine":
         expected_category = turn.get("expected_category")
         previous_products = (previous or {}).get("products", [])

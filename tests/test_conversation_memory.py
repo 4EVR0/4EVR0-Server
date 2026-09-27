@@ -325,27 +325,140 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
                 prompt = client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
                 self.assertNotIn("크림 B", prompt)
 
-    async def test_corrupted_usage_order_followup_uses_safe_response(self):
+    async def test_usage_order_followup_is_deterministic_without_gpu(self):
         active = self._active_state()
         history = [{"user": active["base_message"], "products": active["source_products"]}]
-        corrupted = "**크림 B**의 세포 세포을 위해 먼저 쓰세요."
-        completion = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=corrupted))])
-        client = mock.Mock()
-        client.chat.completions.create = mock.AsyncMock(return_value=completion)
-        with mock.patch.object(recommend_service, "get_async_llm_client", return_value=client), \
-                mock.patch.object(recommend_service, "query_ingredient_kor_names", mock.AsyncMock(return_value={})), \
+        with mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "query_ingredient_kor_names") as graph, \
                 mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
             response = await recommend_service._handle_followup(
                 "session-1", "turn-2", "추천한 제품들을 어떤 순서로 써야 해?", history, active,
             )
-        self.assertEqual("followup_quality_fallback", response.response_mode)
+        client.assert_not_called()
+        graph.assert_not_called()
+        self.assertEqual("followup_usage_order", response.response_mode)
         self.assertEqual(["t", "c"], [p.product_id for p in response.products])
-        self.assertIn("일반적인 제품 제형 순서", response.response_text)
-        self.assertNotIn("세포 세포", response.response_text)
-        self.assertNotIn("재생", response.response_text)
+        self.assertIn("기초(스킨·토너)", response.response_text)
+        self.assertNotIn("앰플:", response.response_text)
+        self.assertNotIn("세럼:", response.response_text)
         self.assertEqual([], recommend_service.find_response_integrity_issues(
             response.response_text, response.ingredients, response.products,
         ))
+
+    async def test_usage_order_keeps_ampoule_and_serum_separate_with_evidence_reason(self):
+        profile = UserProfile(concerns=[Concern.BLEMISHES], effects=[Effect.BRIGHTENING])
+        evidence = [
+            IngredientResult(name="TRANEXAMIC ACID", kor_name="트라넥사믹애씨드",
+                             claim="brightening", eligibility_tier="pubmed_evidence"),
+            IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드",
+                             claim="brightening", eligibility_tier="cosing_function"),
+        ]
+        products = [
+            {"product_id": "serum", "product_name": "세럼 A", "brand": "A", "category": "세럼",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+            {"product_id": "ampoule-low", "product_name": "앰플 B", "brand": "B", "category": "앰플",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+            {"product_id": "cream", "product_name": "크림 C", "brand": "C", "category": "크림",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+            {"product_id": "skin", "product_name": "스킨 D", "brand": "D", "category": "스킨",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+            {"product_id": "ampoule-best", "product_name": "앰플 E", "brand": "E", "category": "앰플",
+             "matched_count": 1, "matched_ingredients": ["TRANEXAMIC ACID"]},
+            {"product_id": "lotion", "product_name": "로션 F", "brand": "F", "category": "로션",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+        ]
+        active = recommend_service._active_recommendation(
+            profile, "잡티와 칙칙함에 맞는 제품 추천해줘", products, "turn-1", evidence,
+        )
+        store = mock.AsyncMock()
+        with mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "_store_turn", store):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "추천한 제품들을 어떤 순서로 써야 해?", [], active,
+            )
+        client.assert_not_called()
+        self.assertEqual(["skin", "ampoule-best", "serum", "cream"],
+                         [product.product_id for product in response.products])
+        self.assertIn("잡티와 칙칙함", response.response_text)
+        self.assertIn("트라넥사믹애씨드", response.response_text)
+        self.assertIn("피부 톤 개선", response.response_text)
+        self.assertNotIn("앰플 B", response.response_text)
+        self.assertNotIn("로션 F", response.response_text)
+        self.assertEqual(["skin", "ampoule-best", "serum", "cream"],
+                         [p["product_id"] for p in store.await_args.kwargs["active_state"]["visible_products"]])
+        self.assertFalse(recommend_service._has_product_grounding_violation(
+            response.response_text, response.ingredients, response.products,
+        ))
+
+    async def test_usage_order_omits_missing_stages_without_absence_message(self):
+        active = self._active_state()
+        active["visible_products"] = [active["source_products"][1]]
+        with mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "이 제품을 바르는 순서 알려줘", [], active,
+            )
+        client.assert_not_called()
+        self.assertEqual(["c"], [p.product_id for p in response.products])
+        self.assertIn("크림:", response.response_text)
+        self.assertNotIn("기초(스킨·토너):", response.response_text)
+        self.assertNotIn("앰플:", response.response_text)
+        self.assertNotIn("세럼:", response.response_text)
+        self.assertNotIn("없어요", response.response_text)
+
+    async def test_short_usage_order_question_uses_active_state_without_classifier(self):
+        active = self._active_state()
+        with mock.patch.object(recommend_service.conversation_store, "load_recent", mock.AsyncMock(return_value=[])), \
+                mock.patch.object(recommend_service.conversation_store, "load_active", mock.AsyncMock(return_value=active)), \
+                mock.patch.object(recommend_service, "_llm_classify", mock.AsyncMock()) as classifier, \
+                mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._resolve_conversation_response(
+                "session-1", "turn-2", "사용 순서 알려줘",
+            )
+        classifier.assert_not_awaited()
+        client.assert_not_called()
+        self.assertEqual("followup_usage_order", response.response_mode)
+
+    async def test_usage_order_batch_and_sse_return_same_cards_and_text(self):
+        active = self._active_state()
+        with mock.patch.object(recommend_service.conversation_store, "load_recent", mock.AsyncMock(return_value=[])), \
+                mock.patch.object(recommend_service.conversation_store, "load_active", mock.AsyncMock(return_value=active)), \
+                mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            batch = await recommend_service.recommend("session-1", "추천한 제품 사용 순서 알려줘")
+            frames = [frame async for frame in recommend_service.recommend_stream(
+                "session-1", "추천한 제품 사용 순서 알려줘",
+            )]
+        parsed = [self._parse_frame(frame) for frame in frames]
+        client.assert_not_called()
+        self.assertEqual(batch.response_text, parsed[1][1]["text"])
+        self.assertEqual([product.product_id for product in batch.products],
+                         [product["product_id"] for product in parsed[0][1]["products"]])
+        self.assertEqual("followup_usage_order", parsed[2][1]["response_mode"])
+
+    async def test_basic_stage_in_named_routine_includes_skin_category(self):
+        active = self._active_state()
+        active["source_products"][0]["category"] = "스킨"
+        active["visible_products"][0]["category"] = "스킨"
+        with mock.patch.object(recommend_service, "get_async_llm_client") as client, \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "기초→앰플→세럼→크림 순서로 알려줘", [], active,
+            )
+        client.assert_not_called()
+        self.assertEqual(["t", "c"], [p.product_id for p in response.products])
+        self.assertIn("기초(스킨·토너)", response.response_text)
+
+    async def test_usage_order_does_not_show_unmatched_product(self):
+        active = self._active_state()
+        active["source_products"][0]["matched_ingredients"] = []
+        with mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "추천 제품 사용 순서", [], active,
+            )
+        self.assertEqual(["c"], [p.product_id for p in response.products])
+        self.assertNotIn("토너 A", response.response_text)
 
     async def test_excluded_product_in_filtered_answer_uses_safe_response(self):
         active = self._active_state()

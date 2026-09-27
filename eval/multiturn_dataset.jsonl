@@ -1,7 +1,7 @@
 {"id":"compare_two","label":"제품 비교","turns":[{"message":"건조하고 당기는 피부에 맞는 제품 추천해줘","kind":"new"},{"message":"추천한 제품들 차이를 비교해줘","kind":"followup"}]}
 {"id":"deictic_light","label":"지시적 선택","turns":[{"message":"피지와 번들거림이 고민이야","kind":"new"},{"message":"이 중에서 가장 산뜻한 거 하나만 골라줘","kind":"followup"}]}
 {"id":"pros_cons","label":"장단점","turns":[{"message":"민감하고 붉은 피부에 쓸 제품을 추천해줘","kind":"new"},{"message":"위에 추천한 제품들의 장단점을 알려줘","kind":"followup"}]}
-{"id":"usage_order","label":"사용 순서","turns":[{"message":"잡티와 칙칙함에 맞는 제품을 추천해줘","kind":"new"},{"message":"추천한 제품들을 어떤 순서로 써야 해?","kind":"followup"}]}
+{"id":"usage_order","label":"사용 순서","turns":[{"message":"잡티와 칙칙함에 맞는 제품을 추천해줘","kind":"new"},{"message":"추천한 제품들을 어떤 순서로 써야 해?","kind":"usage_order"}]}
 {"id":"sensitive_pick","label":"조건 추가","turns":[{"message":"모공과 블랙헤드가 고민이야","kind":"new"},{"message":"이 중에서 민감한 피부에 더 무난한 거 골라줘","kind":"followup"}]}
 {"id":"acne_pick","label":"여드름 후속","turns":[{"message":"여드름과 트러블이 계속 생겨","kind":"new"},{"message":"그 중 자극이 적을 것 같은 제품을 골라줘","kind":"followup"}]}
 {"id":"missing_history","label":"이력 만료","turns":[{"message":"방금 추천한 것 중에서 뭐가 더 나아?","kind":"missing_history"}]}
