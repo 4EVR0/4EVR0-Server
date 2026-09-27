@@ -105,7 +105,9 @@
 - 파일: `app/static/index.html` (HTML/CSS/JS 한 파일)
 - 경로: `GET /` → `index.html` 반환, `/static`에 정적 마운트
 - 특징: 연한 초록 챗봇 UI, 마크다운 렌더링, 성분 카드에 `한글명(영어명)` + 근거 tier 표시
-- 호출 API: 같은 서버의 `POST /api/v1/sessions`, `POST /api/v1/recommend`
+- 브라우저 대화는 HttpOnly 쿠키로 2시간 유지한다. 새로고침 시 Redis의 최근 대화(최대 8턴)를 복원하고, **새 대화** 버튼은 이전 세션·맥락을 삭제한다. 만료된 세션의 후속 질문은 자동으로 다른 대화에 붙이지 않는다.
+- 브라우저 호출 API: `POST /api/v1/sessions/browser` → `GET /api/v1/sessions/current` → `POST /api/v1/recommend/stream` (스트리밍 불가 시 일괄 경로)
+- 비브라우저 API 클라이언트는 기존 `POST /api/v1/sessions`의 `session_id` 응답과 추천 요청의 `session_id` 필드를 계속 사용할 수 있다.
 
 ---
 
@@ -118,6 +120,9 @@
 | `GET`  | `/docs` | Swagger UI |
 | `GET`  | `/metrics` | Prometheus 메트릭 |
 | `POST` | `/api/v1/sessions` | 세션 생성 |
+| `POST` | `/api/v1/sessions/browser` | 브라우저 쿠키 세션 생성(본문에 ID 없음) |
+| `GET` | `/api/v1/sessions/current` | 현재 브라우저 세션의 최근 대화 복원 |
+| `DELETE` | `/api/v1/sessions/current` | 현재 세션·대화 맥락 삭제 |
 | `POST` | `/api/v1/recommend` | 추천 (성분 + 제품 + 자연어 응답) |
 | `GET`  | `/api/v1/recommend/path` | 효능→성분→제품 그래프 경로 조회 |
 | `POST` | `/api/v1/profile/extract` | 자연어 → 피부 프로필 추출 |

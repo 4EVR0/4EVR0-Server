@@ -183,6 +183,9 @@
   }
   .chat-head h2 { font-size: 18px; letter-spacing: -0.4px; }
   .chat-head p { margin-top: 5px; color: var(--muted); font-size: 12px; }
+  .chat-actions { display: flex; align-items: center; gap: 10px; }
+  .new-chat { border: 1px solid var(--line); border-radius: 12px; background: white; padding: 9px 12px; color: #405234; cursor: pointer; white-space: nowrap; }
+  .new-chat:disabled { opacity: .5; cursor: not-allowed; }
   .sparkle { width: 42px; height: 42px; display:grid; place-items:center; border-radius: 16px; background: rgba(238, 248, 216, 0.92); border: 1px solid rgba(155,206,38,0.28); }
 
   #chat {
@@ -428,7 +431,7 @@
           <h2>Ingredient Concierge</h2>
           <p>피부 고민, 사용 중인 제품, 원하는 제형을 자연어로 적어보세요.</p>
         </div>
-        <div class="sparkle">✨</div>
+        <div class="chat-actions"><button class="new-chat" id="new-chat" disabled>새 대화</button><div class="sparkle">✨</div></div>
       </div>
 
       <div id="chat">
@@ -459,28 +462,79 @@
   const sendBtn = document.getElementById('send');
   const dot     = document.getElementById('status-dot');
   const badge   = document.getElementById('model-badge');
+  const newChatBtn = document.getElementById('new-chat');
+  const initialChatHtml = chat.innerHTML;
 
-  let sessionId = null;
+  let sessionReady = false;
   let sending   = false;
+
+  async function createSession() {
+    const res = await fetch('/api/v1/sessions/browser', { method: 'POST', cache: 'no-store' });
+    if (!res.ok) throw new Error('session creation failed');
+    document.getElementById('sys-init').textContent =
+      '새 대화가 시작되었습니다. 아래 예시를 누르거나 피부 고민을 직접 입력해보세요.';
+  }
 
   async function initSession() {
     try {
-      const res  = await fetch('/api/v1/sessions', { method: 'POST' });
-      const data = await res.json();
-      sessionId  = data.session_id;
+      const res = await fetch('/api/v1/sessions/current', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.turns.length) {
+          document.getElementById('sys-init').textContent = '최근 대화를 불러왔습니다.';
+          for (const turn of data.turns) {
+            appendUserBubble(turn.user);
+            appendAIBubble(turn.assistant, turn.ingredients, turn.products, null);
+          }
+        } else {
+          document.getElementById('sys-init').textContent = '대화를 이어갈 수 있습니다. 피부 고민을 입력해보세요.';
+        }
+      } else if (res.status === 404) {
+        await createSession();
+      } else {
+        throw new Error('session restore failed');
+      }
 
+      sessionReady = true;
       dot.classList.add('ok');
       dot.title = '연결됨';
-      document.getElementById('sys-init').textContent =
-        '새 세션이 시작되었습니다. 아래 예시를 누르거나 피부 고민을 직접 입력해보세요.';
-
-      msgEl.disabled  = false;
+      msgEl.disabled = false;
       sendBtn.disabled = false;
+      newChatBtn.disabled = false;
       msgEl.focus();
     } catch (e) {
       document.getElementById('sys-init').textContent =
         '서버에 연결할 수 없습니다. 페이지를 새로고침해주세요.';
     }
+  }
+
+  async function startNewChat() {
+    if (sending) return;
+    newChatBtn.disabled = true;
+    msgEl.disabled = true;
+    sendBtn.disabled = true;
+    try {
+      const res = await fetch('/api/v1/sessions/current', { method: 'DELETE' });
+      if (!res.ok) throw new Error('session reset failed');
+      sessionReady = false;
+      chat.innerHTML = initialChatHtml;
+      msgEl.value = '';
+      await createSession();
+      sessionReady = true;
+      msgEl.disabled = false;
+      sendBtn.disabled = false;
+      msgEl.focus();
+    } catch (e) {
+      appendError('새 대화를 시작하지 못했습니다. 페이지를 새로고침해주세요.');
+    } finally {
+      newChatBtn.disabled = !sessionReady;
+    }
+  }
+
+  function markSessionExpired() {
+    sessionReady = false;
+    appendError('대화 시간이 만료되었습니다. 새 대화를 눌러 다시 시작해 주세요.');
+    newChatBtn.disabled = false;
   }
 
   function appendUserBubble(text) {
@@ -768,7 +822,7 @@
     const res = await fetch('/api/v1/recommend/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ session_id: sessionId, message: text }),
+      body: JSON.stringify({ message: text }),
     });
 
     if (!res.ok) {
@@ -867,13 +921,17 @@
     const res = await fetch('/api/v1/recommend', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message: text }),
+      body: JSON.stringify({ message: text }),
     });
 
     removeTyping();
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 401 || res.status === 404) {
+        markSessionExpired();
+        return;
+      }
       appendError(`오류 (${res.status}): ${err.detail || '알 수 없는 오류'}`);
       return;
     }
@@ -882,7 +940,7 @@
   }
 
   async function send() {
-    if (sending || !sessionId) return;
+    if (sending || !sessionReady) return;
     const text = msgEl.value.trim();
     if (!text) return;
 
@@ -891,6 +949,7 @@
     msgEl.style.height = '';
     msgEl.disabled  = true;
     sendBtn.disabled = true;
+    newChatBtn.disabled = true;
 
     appendUserBubble(text);
     appendTyping();
@@ -900,7 +959,8 @@
     } catch (e) {
       if (e && e.status) {
         removeTyping();
-        appendError(`오류 (${e.status}): ${e.detail || '알 수 없는 오류'}`);
+        if (e.status === 401 || e.status === 404) markSessionExpired();
+        else appendError(`오류 (${e.status}): ${e.detail || '알 수 없는 오류'}`);
       } else {
         try {
           await batchRecommend(text);
@@ -911,15 +971,25 @@
       }
     } finally {
       sending = false;
-      msgEl.disabled  = false;
-      sendBtn.disabled = false;
-      msgEl.focus();
+      msgEl.disabled = !sessionReady;
+      sendBtn.disabled = !sessionReady;
+      newChatBtn.disabled = false;
+      if (sessionReady) msgEl.focus();
     }
   }
 
   sendBtn.addEventListener('click', send);
+  newChatBtn.addEventListener('click', startNewChat);
 
   chat.addEventListener('click', e => {
+    const prompt = e.target.closest('.prompt-chip');
+    if (prompt) {
+      if (msgEl.disabled) return;
+      msgEl.value = prompt.dataset.prompt;
+      msgEl.dispatchEvent(new Event('input'));
+      send();
+      return;
+    }
     const card = e.target.closest('.product-card');
     if (!card) return;
     card.classList.toggle('open');
@@ -940,15 +1010,6 @@
   msgEl.addEventListener('input', () => {
     msgEl.style.height = 'auto';
     msgEl.style.height = Math.min(msgEl.scrollHeight, 124) + 'px';
-  });
-
-  document.querySelectorAll('.prompt-chip').forEach(button => {
-    button.addEventListener('click', () => {
-      if (msgEl.disabled) return;
-      msgEl.value = button.dataset.prompt;
-      msgEl.dispatchEvent(new Event('input'));
-      send();
-    });
   });
 
   function scrollBottom() {
