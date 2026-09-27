@@ -15,6 +15,7 @@ from app.clients.neo4j_client import (
     query_cautioned_ingredients,
     query_ingredient_kor_names,
     query_ingredients_by_effects,
+    query_product_ingredient_inventory,
     query_products_by_ingredients,
 )
 from app.core import metrics
@@ -979,6 +980,10 @@ def _has_missing_history_cue(message: str) -> bool:
     return bool(_PRIOR_REPLY_REF.search(message) or _DEICTIC_SET_REF.search(message))
 
 
+def _is_product_comparison_request(message: str) -> bool:
+    return bool(re.search(r"비교|공통점|차이점", message))
+
+
 # 지시적(deictic) 후속 — "이 중에서/그 중에서/이것들 중"처럼 **직전 추천 세트**를 콕 집어
 # 좁히는 요청. 이런 요청에 옛 턴의 대화 맥락(다른 고민)이 섞이면 필터가 오염된다
 # ("건조" 추천 뒤 "이 중에서 지성용" → 옛 '건조' 맥락이 새면 안 됨). 제품 후보는 이미
@@ -994,8 +999,14 @@ def _heuristic_kind(message: str, history: list[dict]) -> str | None:
         return "new"
     if _has_followup_cue(message):
         return "followup"
+    if _is_product_comparison_request(message) and any(
+        _comparison_product_indexes(message, turn.get("products") or []) for turn in history[-3:]
+    ):
+        return "followup"
     if any(c in message for c in _CONCERN_CUES):
         return "new"
+    if _is_product_comparison_request(message) and any(t.get("products") for t in history):
+        return "followup"
     return None
 
 
@@ -1246,6 +1257,139 @@ def _build_usage_order_response(
     return "\n".join(lines)
 
 
+def _comparison_product_indexes(message: str, products: list[dict]) -> list[int]:
+    """Resolve explicit product names, unique brands and numbered cards conservatively."""
+    normalized = " ".join(message.casefold().split())
+    indexes: set[int] = set()
+    brand_counts: dict[str, int] = {}
+    for product in products:
+        brand = str(product.get("brand") or "").strip().casefold()
+        if brand:
+            brand_counts[brand] = brand_counts.get(brand, 0) + 1
+    for index, product in enumerate(products):
+        name = " ".join(str(product.get("name") or "").casefold().split())
+        brand = str(product.get("brand") or "").strip().casefold()
+        if name and name in normalized:
+            indexes.add(index)
+        elif len(brand) >= 2 and brand_counts[brand] == 1 and brand in normalized:
+            indexes.add(index)
+    numbers = re.findall(r"(?<!\d)([1-9])\s*(?:번|번째)(?!\d)", normalized)
+    numbers += re.findall(r"제품\s*([1-9])(?!\d)", normalized)
+    for number in numbers:
+        index = int(number) - 1
+        if index < len(products):
+            indexes.add(index)
+    for ordinal, index in (("첫", 0), ("두", 1), ("세", 2)):
+        if index < len(products) and re.search(fr"{ordinal}\s*(?:번|번째)", normalized):
+            indexes.add(index)
+    return sorted(indexes)
+
+
+def _select_comparison_products(message: str, visible: list[dict]) -> tuple[list[dict], str | None]:
+    """Do not silently choose a subset from a longer recommendation list."""
+    indexes = _comparison_product_indexes(message, visible)
+    if indexes:
+        selected = [visible[i] for i in indexes]
+    else:
+        requested = _requested_categories(message)
+        candidates = [p for p in visible if p.get("category") in requested] if requested else visible
+        count = re.search(r"(?:상위|첫)\s*([23])\s*개", message)
+        selected = candidates[:int(count.group(1))] if count else candidates
+    if len(selected) < 2:
+        return [], "비교할 제품을 2~3개 지정해 주세요. 앞서 보여드린 제품명이나 번호로 알려주시면 됩니다."
+    if len(selected) > 3:
+        return [], "비교할 제품이 3개보다 많아요. 제품명이나 번호로 2~3개를 골라 주세요."
+    if any(not p.get("product_id") for p in selected):
+        return [], "선택한 제품의 식별 정보가 없어 성분을 확인할 수 없습니다. 다른 제품을 골라 주세요."
+    return selected, None
+
+
+def _ingredient_key(name: str) -> str:
+    return " ".join(name.strip().casefold().split())
+
+
+def _comparison_markdown_cell(value: str) -> str:
+    return " ".join(str(value).replace("|", "·").split())
+
+
+def _comparison_ingredient_label(row: dict) -> str:
+    inci = str(row.get("name") or "").strip()
+    kor = str(row.get("kor_name") or "").strip()
+    return f"{kor} ({inci})" if kor and kor.casefold() != inci.casefold() else inci
+
+
+def _build_ingredient_comparison(
+    products: list[ProductResult],
+    inventory: dict[str, list[dict]],
+    evidence: list[IngredientResult],
+) -> tuple[str, list[IngredientResult]] | None:
+    """Compare only graph-confirmed INCI edges; absence of an edge is not absence in formula."""
+    per_product: list[dict[str, str]] = []
+    for product in products:
+        rows = inventory.get(product.product_id) or []
+        names = {
+            _ingredient_key(str(row.get("name") or "")): _comparison_ingredient_label(row)
+            for row in rows if row.get("name")
+        }
+        if not names:
+            return None
+        per_product.append(names)
+    sets = [set(row) for row in per_product]
+    union = set.union(*sets)
+    common = set.intersection(*sets)
+    evidence_by_name = {_ingredient_key(item.name): item for item in evidence}
+    ordered: list[str] = []
+
+    def add(keys):
+        for key in keys:
+            if key in union and key not in ordered and len(ordered) < 12:
+                ordered.append(key)
+
+    add(_ingredient_key(item.name) for item in evidence[:6])
+    add(sorted(common)[:2])
+    for index, own in enumerate(sets):
+        unique = own - set.union(*(other for pos, other in enumerate(sets) if pos != index))
+        add(sorted(unique)[:1])
+    add(sorted(union))
+
+    labels = {key: next((row[key] for row in per_product if key in row), key) for key in ordered}
+    supported = [evidence_by_name[key] for key in ordered if key in evidence_by_name]
+    lines = ["비교"]
+    for index, product in enumerate(products, 1):
+        lines.append(f"제품 {index}: **{product.product_name}** (확인된 성분 {len(sets[index - 1])}개)")
+    lines.extend([
+        "",
+        "| 성분 | " + " | ".join(f"제품 {i}" for i in range(1, len(products) + 1)) + " | 고민 관련 근거 |",
+        "| --- | " + " | ".join("---" for _ in products) + " | --- |",
+    ])
+    for key in ordered:
+        item = evidence_by_name.get(key)
+        benefit = _claim_benefit_phrase(item)
+        tier = item.eligibility_tier if item else None
+        source_label = ("논문 기반 성분 근거" if tier == "pubmed_evidence"
+                        else "성분 기능 데이터" if tier == "cosing_function"
+                        else "성분 근거")
+        source = f"{benefit} · {source_label}" if benefit else "—"
+        marks = ["확인" if key in names else "—" for names in per_product]
+        lines.append("| " + " | ".join([_comparison_markdown_cell(labels[key]), *marks, source]) + " |")
+    common_names = ", ".join(_comparison_markdown_cell(labels[key]) for key in ordered if key in common) or "표시한 성분 중 없음"
+    lines.extend([
+        "",
+        f"공통점: 표시한 성분 중 모든 제품에서 확인된 성분은 {common_names}입니다.",
+    ])
+    for index, own in enumerate(sets, 1):
+        other = set.union(*(row for pos, row in enumerate(sets) if pos != index - 1))
+        unique = [_comparison_markdown_cell(labels[key]) for key in ordered if key in own - other]
+        if unique:
+            lines.append(f"차이점: 제품 {index}에서만 확인된 표시 성분은 {', '.join(unique)}입니다.")
+    lines.append(
+        "표는 그래프에서 INCI로 매핑된 성분 중 최대 12개만 보여줍니다. "
+        "‘—’는 이 데이터에서 확인되지 않았다는 뜻이며, 실제 제품에 없다는 뜻은 아닙니다. "
+        "성분의 함량이나 완제품 효과·자극도도 이 표만으로 판단할 수 없습니다."
+    )
+    return "\n".join(lines), supported
+
+
 def _build_safe_followup_response(
     message: str, products: list[ProductResult], ing_kor: dict[str, str],
 ) -> tuple[str, list[ProductResult]]:
@@ -1293,6 +1437,49 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             products=[],
             response_text=response_text,
             model_used=settings.gpu_model,
+        )
+    if _is_product_comparison_request(message):
+        selected_rows, clarification = _select_comparison_products(message, visible)
+        if clarification:
+            metrics.recommend_requests_total.labels(status="ok").inc()
+            await _store_turn(session_id, message, [], clarification, active_state=active)
+            return RecommendResponse(
+                session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                response_text=clarification, model_used="deterministic",
+                response_mode="followup_comparison_clarification",
+            )
+        products = _reconstruct_products(selected_rows)
+        inventory = await query_product_ingredient_inventory([p.product_id for p in products])
+        evidence = []
+        for row in (active or {}).get("ingredients") or []:
+            try:
+                evidence.append(IngredientResult.model_validate(row))
+            except (TypeError, ValueError):
+                continue
+        comparison = _build_ingredient_comparison(products, inventory, evidence)
+        if comparison is None:
+            response_text = (
+                "선택한 제품 중 성분 데이터가 확인되지 않는 제품이 있어 비교표를 만들 수 없어요. "
+                "다른 제품 2~3개를 골라 주세요."
+            )
+            metrics.recommend_requests_total.labels(status="ok").inc()
+            await _store_turn(session_id, message, [], response_text, active_state=active)
+            return RecommendResponse(
+                session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                response_text=response_text, model_used="deterministic",
+                response_mode="followup_comparison_unavailable",
+            )
+        response_text, matched_evidence = comparison
+        response_text, _ = _normalize_response_text(response_text, products)
+        next_active = ({**active, "visible_products": _slim_products(products),
+                        "pending_categories": [], "turn_id": turn_id} if active else None)
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, products, response_text,
+                          active_state=next_active)
+        return RecommendResponse(
+            session_id=session_id, turn_id=turn_id, ingredients=matched_evidence,
+            products=products, response_text=response_text,
+            model_used="deterministic", response_mode="followup_comparison",
         )
     if not selected:
         categories = ", ".join(sorted(requested))

@@ -106,6 +106,7 @@
 - 경로: `GET /` → `index.html` 반환, `/static`에 정적 마운트
 - 특징: 연한 초록 챗봇 UI, 마크다운 렌더링, 성분 카드에 `한글명(영어명)` + 근거 tier 표시
 - 브라우저 대화는 HttpOnly 쿠키로 2시간 유지한다. 새로고침 시 Redis의 최근 대화(최대 8턴)를 복원하고, **새 대화** 버튼은 이전 세션·맥락을 삭제한다. 만료된 세션의 후속 질문은 자동으로 다른 대화에 붙이지 않는다.
+- 이전 추천 중 2~3개 제품을 지정해 비교하면 그래프에 INCI로 매핑된 성분의 공통점·차이를 Markdown 표로 보여준다. 그래프에서 확인되지 않은 성분은 제품에 없다고 단정하지 않는다. 4개 이상이거나 제품 선택이 모호하면 2~3개를 지정해 달라고 묻는다.
 - 브라우저 호출 API: `POST /api/v1/sessions/browser` → `GET /api/v1/sessions/current` → `POST /api/v1/recommend/stream` (스트리밍 불가 시 일괄 경로)
 - 비브라우저 API 클라이언트는 기존 `POST /api/v1/sessions`의 `session_id` 응답과 추천 요청의 `session_id` 필드를 계속 사용할 수 있다.
 

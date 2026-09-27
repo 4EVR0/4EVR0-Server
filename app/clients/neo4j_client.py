@@ -141,6 +141,36 @@ async def query_products_by_ingredients(
         return []
 
 
+async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str, list[dict[str, str | None]]]:
+    """Return INCI-mapped CONTAINS edges for exact Product IDs.
+
+    This graph is not a guaranteed complete package ingredient list: unmapped
+    ingredients never become CONTAINS edges. Callers must say "not confirmed"
+    rather than "absent" when an edge is missing.
+    """
+    if not product_ids:
+        return {}
+    query = """
+    UNWIND $product_ids AS product_id
+    MATCH (p:Product {product_id: product_id})-[:CONTAINS]->(i:Ingredient)
+    WHERE i.inci_name IS NOT NULL AND i.inci_name <> ''
+    WITH product_id, collect(DISTINCT {name: i.inci_name, kor_name: i.kor_name}) AS ingredients
+    RETURN product_id, ingredients
+    """
+    try:
+        start = time.perf_counter()
+        driver = _get_driver()
+        async with driver.session() as session:
+            result = await session.run(query, product_ids=list(dict.fromkeys(product_ids)))
+            rows = [dict(record) async for record in result]
+        _log_query("query_product_ingredient_inventory", {"count": len(product_ids)},
+                   (time.perf_counter() - start) * 1000, len(rows))
+        return {row["product_id"]: row["ingredients"] for row in rows}
+    except Exception as exc:
+        logger.warning("Neo4j product ingredient inventory query failed: %s", exc)
+        return {}
+
+
 async def query_ingredients_by_effects(
     effects: list[str],
     min_graph_score: float = 0.0,
