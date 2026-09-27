@@ -3,8 +3,12 @@
 import json
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
-from app.repositories.conversation_store import _key
+from app.repositories import conversation_store
+from app.repositories.conversation_store import _active_key, _key
+from app.domain.enums import Concern, Effect
+from app.domain.user import UserProfile
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 from app.services import recommend_service
 from app.services.recommend_service import (
@@ -22,6 +26,36 @@ from app.services.recommend_service import (
 class ConversationKeyTest(unittest.TestCase):
     def test_key_prefix(self):
         self.assertEqual("conv:v1:abc", _key("abc"))
+        self.assertEqual("conv:active:v1:abc", _active_key("abc"))
+
+
+class ActiveStateStoreTest(unittest.IsolatedAsyncioTestCase):
+    async def test_active_state_round_trip_and_clear(self):
+        values = {}
+        client = mock.Mock()
+
+        async def set_value(key, value, ex):
+            values[key] = value
+
+        async def get_value(key):
+            return values.get(key)
+
+        async def delete_values(*keys):
+            for key in keys:
+                values.pop(key, None)
+
+        client.set = mock.AsyncMock(side_effect=set_value)
+        client.get = mock.AsyncMock(side_effect=get_value)
+        client.delete = mock.AsyncMock(side_effect=delete_values)
+        state = {"profile": {"concerns": ["DRY_SKIN"]}, "visible_products": []}
+        with mock.patch.object(conversation_store.settings, "conversation_enabled", True), \
+                mock.patch.object(conversation_store.recommend_cache, "_get_client", return_value=client):
+            await conversation_store.save_active("abc", state)
+            self.assertEqual(state, await conversation_store.load_active("abc"))
+            await conversation_store.clear("abc")
+            self.assertIsNone(await conversation_store.load_active("abc"))
+        self.assertEqual(conversation_store.settings.conversation_ttl_seconds,
+                         client.set.call_args.kwargs["ex"])
 
 
 class SlimProductsTest(unittest.TestCase):
@@ -132,6 +166,16 @@ class DeicticContextTest(unittest.TestCase):
 
 
 class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _active_state():
+        profile = UserProfile(concerns=[Concern.DRY_SKIN], effects=[Effect.HYDRATING])
+        return recommend_service._active_recommendation(profile, "건조한 피부 진정 제품 추천해줘", [
+            {"product_id": "t", "product_name": "토너 A", "brand": "A", "category": "토너",
+             "matched_count": 1, "matched_ingredients": ["NIACINAMIDE"]},
+            {"product_id": "c", "product_name": "크림 B", "brand": "B", "category": "크림",
+             "matched_count": 1, "matched_ingredients": ["CERAMIDE"]},
+        ], "turn-1")
+
     @staticmethod
     def _conversation_response() -> RecommendResponse:
         return RecommendResponse(
@@ -259,6 +303,106 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response)
         self.assertEqual([], response.products)
         self.assertIn("비교할 제품이 없습니다", response.response_text)
+
+    async def test_category_followup_filters_cards_and_generation_context(self):
+        active = self._active_state()
+        history = [{"user": active["base_message"], "assistant": "토너 A와 크림 B를 추천합니다.",
+                    "products": active["source_products"]}]
+        completion = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="**토너 A**를 추천합니다."))])
+        client = mock.Mock()
+        client.chat.completions.create = mock.AsyncMock(return_value=completion)
+        store = mock.AsyncMock()
+        with mock.patch.object(recommend_service, "get_async_llm_client", return_value=client), \
+                mock.patch.object(recommend_service, "query_ingredient_kor_names", mock.AsyncMock(return_value={})), \
+                mock.patch.object(recommend_service, "_store_turn", store):
+            for message in ("그중 토너만", "토너만"):
+                response = await recommend_service._handle_followup(
+                    "session-1", "turn-2", message, history, active,
+                )
+                self.assertEqual(["t"], [p.product_id for p in response.products])
+                self.assertEqual("followup_filtered", response.response_mode)
+                self.assertEqual(["t"], [p["product_id"] for p in store.await_args.kwargs["active_state"]["visible_products"]])
+                prompt = client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
+                self.assertNotIn("크림 B", prompt)
+
+    async def test_missing_category_asks_before_new_search_and_confirmation_reuses_concern(self):
+        active = self._active_state()
+        active["visible_products"] = [active["source_products"][1]]
+        history = [{"user": active["base_message"], "products": active["visible_products"]}]
+        store = mock.AsyncMock()
+        with mock.patch.object(recommend_service, "get_async_llm_client") as llm, \
+                mock.patch.object(recommend_service, "_store_turn", store):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "그중 토너만", history, active,
+            )
+        self.assertEqual([], response.products)
+        self.assertIn("새로 찾아볼까요", response.response_text)
+        self.assertEqual(["토너"], store.await_args.kwargs["active_state"]["pending_categories"])
+        llm.assert_not_called()
+        pending_state = store.await_args.kwargs["active_state"]
+        with mock.patch.object(recommend_service.conversation_store, "load_recent", mock.AsyncMock(return_value=history)), \
+                mock.patch.object(recommend_service.conversation_store, "load_active", mock.AsyncMock(return_value=pending_state)):
+            resolution = await recommend_service._resolve_conversation_response(
+                "session-1", "turn-3", "응 새로 찾아줘",
+            )
+        self.assertIsInstance(resolution, recommend_service.ContextualSearch)
+        self.assertEqual({"토너"}, resolution.categories)
+        self.assertEqual([Concern.DRY_SKIN], resolution.profile.concerns)
+
+    async def test_explicit_new_concern_does_not_reuse_previous_profile(self):
+        active = self._active_state()
+        with mock.patch.object(recommend_service.conversation_store, "load_recent", mock.AsyncMock(return_value=[])), \
+                mock.patch.object(recommend_service.conversation_store, "load_active", mock.AsyncMock(return_value=active)):
+            resolution = await recommend_service._resolve_conversation_response(
+                "session-1", "turn-2", "이번에는 여드름에 좋은 토너로 다시 추천해줘",
+            )
+        self.assertIsNone(resolution)
+
+    async def test_explicit_empty_visible_set_does_not_restore_old_cards(self):
+        active = self._active_state()
+        active["visible_products"] = []
+        history = [{"user": active["base_message"], "products": active["source_products"]}]
+        with mock.patch.object(recommend_service, "get_async_llm_client") as llm, \
+                mock.patch.object(recommend_service, "_store_turn", mock.AsyncMock()):
+            response = await recommend_service._handle_followup(
+                "session-1", "turn-2", "이 중에서 비교해줘", history, active,
+            )
+        self.assertEqual([], response.products)
+        llm.assert_not_called()
+
+    async def test_cache_hit_keeps_profile_for_later_category_search(self):
+        active = self._active_state()
+        cached = {
+            "_profile": active["profile"],
+            "ingredients": [],
+            "products": [{"product_id": "t", "product_name": "토너 A", "brand": "A",
+                          "category": "토너", "matched_count": 1,
+                          "matched_ingredients": ["NIACINAMIDE"]}],
+            "response_text": "토너 A를 추천합니다.",
+            "model_used": "test-model",
+            "response_mode": "generated",
+        }
+        store = mock.AsyncMock()
+        with mock.patch.object(recommend_service, "_resolve_conversation_response", mock.AsyncMock(return_value=None)), \
+                mock.patch.object(recommend_service.recommend_cache, "get", mock.AsyncMock(return_value=cached)), \
+                mock.patch.object(recommend_service, "_store_turn", store):
+            response = await recommend_service.recommend("session-1", "건조한 피부 진정 제품 추천해줘")
+        self.assertEqual(["t"], [p.product_id for p in response.products])
+        saved = store.await_args.kwargs["active_state"]
+        self.assertEqual(active["profile"], saved["profile"])
+        self.assertEqual(["t"], [p["product_id"] for p in saved["visible_products"]])
+
+    async def test_contextual_search_cache_key_includes_saved_concern(self):
+        first = recommend_service.ContextualSearch(
+            UserProfile(concerns=[Concern.DRY_SKIN]), "건조한 피부", {"토너"},
+        )
+        second = recommend_service.ContextualSearch(
+            UserProfile(concerns=[Concern.ACNE]), "여드름 피부", {"토너"},
+        )
+        first_key, first_prompt = recommend_service._contextual_messages("토너로 다시 찾아줘", first)
+        second_key, _ = recommend_service._contextual_messages("토너로 다시 찾아줘", second)
+        self.assertNotEqual(first_key, second_key)
+        self.assertIn("검색할 제품 유형: 토너", first_prompt)
 
 
 class _Prod:

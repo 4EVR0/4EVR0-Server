@@ -17,9 +17,33 @@ def _result(product_ids, response="정상 응답"):
 
 def test_multiturn_dataset_is_valid_and_has_planned_coverage():
     scenarios = load_scenarios(Path("eval/multiturn_dataset.jsonl"))
-    assert len(scenarios) == 15
+    assert len(scenarios) == 18
     kinds = {turn["kind"] for scenario in scenarios for turn in scenario["turns"]}
-    assert kinds == {"new", "followup", "missing_history"}
+    assert kinds == {"new", "followup", "refine", "contextual_search", "missing_history"}
+
+
+def test_refine_requires_exact_previous_category_subset():
+    previous = {"products": [{"product_id": "t", "category": "토너"},
+                             {"product_id": "c", "category": "크림"}]}
+    turn = {"kind": "refine", "expected_category": "토너"}
+    assert evaluate_turn(turn, _result(["t"]), previous) == []
+    assert "REFINE_PRODUCT_SET_MISMATCH" in evaluate_turn(turn, _result(["c"]), previous)
+
+
+def test_refine_no_match_requires_confirmation_and_no_cards():
+    previous = {"products": [{"product_id": "c", "category": "크림"}]}
+    turn = {"kind": "refine", "expected_category": "토너"}
+    assert evaluate_turn(turn, _result([], "앞서 보여드린 제품 중 토너 제품은 없어요. 새로 찾아볼까요?"), previous) == []
+    assert "REFINE_NO_MATCH_MESSAGE_ABSENT" in evaluate_turn(turn, _result([]), previous)
+
+
+def test_contextual_search_uses_only_requested_category():
+    turn = {"kind": "contextual_search", "expected_category": "토너"}
+    assert evaluate_turn(turn, {"products": [{"product_id": "t", "category": "토너"}],
+                                "ingredients": [], "response_text": "추천"}, None) == []
+    assert "CONTEXTUAL_SEARCH_WRONG_CATEGORY" in evaluate_turn(
+        turn, {"products": [{"product_id": "c", "category": "크림"}],
+               "ingredients": [], "response_text": "추천"}, None)
 
 
 def test_followup_requires_same_product_set_but_allows_reordering():

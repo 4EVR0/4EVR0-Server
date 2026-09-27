@@ -22,10 +22,43 @@ from app.repositories import recommend_cache
 logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "conv:v1:"
+_ACTIVE_KEY_PREFIX = "conv:active:v1:"
 
 
 def _key(session_id: str) -> str:
     return _KEY_PREFIX + session_id
+
+
+def _active_key(session_id: str) -> str:
+    return _ACTIVE_KEY_PREFIX + session_id
+
+
+async def save_active(session_id: str, state: dict) -> None:
+    """Keep the current recommendation set separate from prose chat history."""
+    if not settings.conversation_enabled or not session_id:
+        return
+    try:
+        await recommend_cache._get_client().set(
+            _active_key(session_id), json.dumps(state, ensure_ascii=False),
+            ex=settings.conversation_ttl_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 — conversation is best-effort
+        logger.warning("conversation state save failed (session=%s): %s", session_id, exc)
+
+
+async def load_active(session_id: str) -> dict | None:
+    if not settings.conversation_enabled or not session_id:
+        return None
+    try:
+        raw = await recommend_cache._get_client().get(_active_key(session_id))
+        state = json.loads(raw) if raw else None
+        return state if isinstance(state, dict) else None
+    except (ValueError, TypeError) as exc:
+        logger.warning("conversation state decode failed (session=%s): %s", session_id, exc)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("conversation state load failed (session=%s): %s", session_id, exc)
+        return None
 
 
 async def append_turn(
@@ -84,6 +117,6 @@ async def clear(session_id: str) -> None:
     if not session_id:
         return
     try:
-        await recommend_cache._get_client().delete(_key(session_id))
+        await recommend_cache._get_client().delete(_key(session_id), _active_key(session_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("conversation clear failed (session=%s): %s", session_id, exc)

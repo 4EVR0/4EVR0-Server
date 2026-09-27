@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import json
 import logging
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.clients.llm_factory import get_async_llm_client
@@ -17,6 +20,7 @@ from app.clients.neo4j_client import (
 from app.core import metrics
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
+from app.domain.user import UserProfile
 from app.prompts import load_prompt
 from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
@@ -245,14 +249,15 @@ def filter_explicit_application_area(products: list[dict], message: str) -> list
 
 
 async def select_products(message: str, concerns: list[Concern],
-                          ingredient_scores: list[dict]) -> list[dict]:
+                          ingredient_scores: list[dict],
+                          requested_override: set[str] | None = None) -> list[dict]:
     """제품 선정 공통 로직(동기·스트리밍 경로 공유).
 
     1) 메시지가 카테고리를 콕 집으면 그 카테고리로 제한(요청 존중).
     2) 목적필터로 성분만 겹치는 제품 컷.
     3) 명시 요청이 없으면 카테고리 다양성 보장(한 포맷이 상위 독식 방지).
     """
-    requested = _requested_categories(message)
+    requested = requested_override if requested_override is not None else _requested_categories(message)
     cats = _appropriate_categories(concerns, requested)
     # 다양성/요청 존중을 위해 후보 풀을 넉넉히 뽑고(랭킹순), 아래서 다듬는다.
     raw = await query_products_by_ingredients(
@@ -865,7 +870,48 @@ def _reconstruct_products(slim: list[dict]) -> list[ProductResult]:
     return out
 
 
-async def _store_turn(session_id, message, products, response_text, concerns=None) -> None:
+def _active_recommendation(profile: UserProfile, base_message: str,
+                           products, turn_id: str) -> dict:
+    slim = _slim_products(products)
+    return {
+        "profile": profile.model_dump(mode="json"),
+        "base_message": base_message,
+        "source_products": slim,
+        "visible_products": slim,
+        "turn_id": turn_id,
+    }
+
+
+def _cached_active(cached: dict, message: str, turn_id: str,
+                   context: ContextualSearch | None = None) -> dict | None:
+    try:
+        profile = UserProfile.model_validate(cached["_profile"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    return _active_recommendation(
+        profile, context.base_message if context else message,
+        cached.get("products"), turn_id,
+    )
+
+
+def _contextual_messages(message: str, context: ContextualSearch | None) -> tuple[str, str]:
+    """Separate the cache identity and generation prompt from the user's utterance."""
+    if context is None:
+        return message, message
+    cache_message = (
+        f"contextual-search|{context.profile.model_dump_json()}|"
+        f"{','.join(sorted(context.categories))}|{message}"
+    )
+    generation_message = (
+        f"이전 피부 고민(여기에 있던 제품 제형 요청은 무시): {context.base_message}\n"
+        f"현재 요청(제형은 이 요청을 우선): {message}\n"
+        f"검색할 제품 유형: {', '.join(sorted(context.categories))}"
+    )
+    return cache_message, generation_message
+
+
+async def _store_turn(session_id, message, products, response_text, concerns=None,
+                      active_state: dict | None = None) -> None:
     """이 턴을 대화 이력에 저장(best-effort). 캐시 히트/미스 모든 경로에서 호출 —
     캐시는 글로벌이라 히트여도 이 세션 이력엔 남겨야 후속 질문이 맥락을 본다."""
     await conversation_store.append_turn(
@@ -873,6 +919,8 @@ async def _store_turn(session_id, message, products, response_text, concerns=Non
         products=_slim_products(products),
         concerns=[c.value for c in concerns] if concerns else [],
     )
+    if active_state is not None:
+        await conversation_store.save_active(session_id, active_state)
 
 
 # ── 멀티턴: 후속(이전 추천에 대한 질문) 감지 + 처리 (P2) ────────────────────
@@ -900,7 +948,24 @@ _PREVIOUS_RECOMMENDATION_REF = re.compile(
 # 새 추천 신호(피부 고민 어휘) — 있으면 새 요청
 _CONCERN_CUES = ("여드름", "모공", "블랙헤드", "피지", "지성", "건조", "속건조", "수분",
                  "민감", "붉은", "홍조", "자극", "트러블", "기미", "잡티", "미백", "색소",
-                 "칙칙", "주름", "탄력", "노화", "각질", "아토피", "다크서클")
+                 "칙칙", "주름", "탄력", "노화", "각질", "아토피", "다크서클", "진정")
+
+_RESEARCH_CUE = re.compile(
+    r"(?:다시|새로|새롭게|재검색).*(?:추천|찾|검색)"
+    r"|(?:추천|찾|검색).*(?:다시|새로|새롭게)"
+)
+_RESTORE_ALL_CUE = re.compile(r"(?:전체|모두|전부).*(?:보여|추천)|(?:보여|추천).*(?:전체|모두|전부)")
+_SEARCH_CONFIRMATION = re.compile(r"^(?:응|네|예|좋아|그래|그럼|부탁해)[\s,!.]*(?:새로|다시)?[\s,!.]*(?:찾아|검색해|추천해)(?:줘|주세요)?[\s!.]*$")
+_SAME_CONCERN_CUE = re.compile(r"(?:같은|기존|이전)\s*(?:피부\s*)?고민")
+
+
+@dataclass(frozen=True)
+class ContextualSearch:
+    """Re-run retrieval with the saved concern profile and a new product category."""
+
+    profile: UserProfile
+    base_message: str
+    categories: set[str]
 
 
 def _has_followup_cue(message: str) -> bool:
@@ -973,7 +1038,7 @@ async def _is_followup(message: str, history: list[dict]) -> bool:
 
 _FOLLOWUP_SYSTEM = (
     "You are a Korean cosmetics assistant answering a FOLLOW-UP question about products "
-    "you already recommended. Use ONLY the previously recommended products and the prior "
+    "you already recommended. Use ONLY the currently selected products and the prior "
     "conversation provided. NEVER invent products, ingredients, studies, or facts.\n"
     "Write in Hangul Korean ONLY. Do NOT use any Chinese characters (Hanja/漢字); use pure Hangul.\n"
     "Organize the answer with short SECTION HEADINGS, each on its own line, chosen from: "
@@ -999,7 +1064,8 @@ def _fmt_ingredient(inci: str, ing_kor: dict[str, str]) -> str:
     return f"{kor} ({inci})" if kor else inci
 
 
-def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: bool = False) -> str:
+def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: bool = False,
+                      products_override: list[dict] | None = None) -> str:
     """이전 추천 제품 + 최근 대화를 후속 생성용 컨텍스트로 조립. 성분은 '한글 (INCI)'.
 
     deictic=True("이 중에서" 류)면 '이전 대화'를 직전 추천 턴 하나로 한정해, 옛 고민이
@@ -1007,6 +1073,8 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: boo
     """
     lines: list[str] = []
     last = next((t for t in reversed(history) if t.get("products")), None)
+    if products_override is not None:
+        last = {**(last or {}), "products": products_override}
     if last and last.get("products"):
         lines.append("이전에 추천한 제품:")
         for p in last["products"]:
@@ -1024,7 +1092,8 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: boo
     for turn in recent:
         if turn.get("user"):
             lines.append(f"사용자: {turn['user']}")
-        if turn.get("assistant"):
+        # A narrowed set must not leak an excluded product name via the old reply.
+        if products_override is None and turn.get("assistant"):
             lines.append(f"어시스턴트: {turn['assistant'][:200]}")
     return "\n".join(lines)
 
@@ -1081,11 +1150,18 @@ def _reorder_by_ranking(products: list[ProductResult], ranking: list[str],
 
 
 async def _handle_followup(session_id: str, turn_id: str, message: str,
-                           history: list[dict]) -> RecommendResponse:
+                           history: list[dict], active: dict | None = None) -> RecommendResponse:
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
-    # 이전 제품들의 핵심 성분 INCI → 한글명 조회('한글 (INCI)' 표기용).
     last = next((t for t in reversed(history) if t.get("products")), None)
-    if last is None:
+    visible = (active["visible_products"] if active and "visible_products" in active
+               else ((last or {}).get("products") or []))
+    source = (active["source_products"] if active and "source_products" in active else visible)
+    if _RESTORE_ALL_CUE.search(message) and not _requested_categories(message):
+        visible = source
+    requested = _requested_categories(message)
+    selected = ([p for p in visible if p.get("category") in requested]
+                if requested else visible)
+    if not visible and not source:
         # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
         # 넘기지 않는다. 빈 컨텍스트 비교는 제품/성분을 새로 만들기 쉽다.
         response_text = (
@@ -1103,9 +1179,31 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             response_text=response_text,
             model_used=settings.gpu_model,
         )
-    inci_all = {i for p in (last or {}).get("products", []) for i in (p.get("matched_ingredients") or [])}
+    if not selected:
+        categories = ", ".join(sorted(requested))
+        response_text = (
+            f"앞서 보여드린 제품 중 {categories} 제품은 없어요. "
+            f"같은 피부 고민으로 {categories} 제품을 새로 찾아볼까요?"
+        )
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        next_active = {**active, "pending_categories": sorted(requested)} if active else None
+        await _store_turn(session_id, message, [], response_text, active_state=next_active)
+        return RecommendResponse(
+            session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+            response_text=response_text, model_used=settings.gpu_model,
+            response_mode="followup_no_category_match",
+        )
+    # Only the selected products are passed to generation and shown as cards.
+    inci_all = {i for p in selected for i in (p.get("matched_ingredients") or [])}
     ing_kor = await query_ingredient_kor_names(sorted(inci_all))
-    user_content = f"{_followup_context(history, ing_kor, deictic=_is_deictic(message))}\n\n현재 질문: {message}"
+    if active and active.get("base_message"):
+        base_context = f"현재 피부 고민의 원래 질문: {active['base_message']}\n"
+    else:
+        base_context = ""
+    user_content = (
+        f"{base_context}{_followup_context(history, ing_kor, deictic=_is_deictic(message), products_override=selected)}"
+        f"\n\n현재 질문: {message}"
+    )
     try:
         async with llm_slot():
             client = get_async_llm_client()
@@ -1125,36 +1223,67 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         raise
     # LLM이 최종 추천 순위 마커를 냈으면 그 순서로 카드 재정렬(없으면 원래 순서 폴백).
     response_text, ranking = _extract_ranking(response_text)
-    # 논의 중인 이전 추천 제품을 카드로도 다시 보여준다(사진·평점·링크 포함).
-    last = next((t for t in reversed(history) if t.get("products")), None)
-    products = _reorder_by_ranking(_reconstruct_products((last or {}).get("products", [])),
+    products = _reorder_by_ranking(_reconstruct_products(selected),
                                    ranking, response_text)
     response_text, hanja_removed = _normalize_response_text(response_text, products)
+    excluded_names = {
+        p.get("name") for p in source if p.get("name")
+    } - {p.get("name") for p in selected if p.get("name")}
+    if any(name in response_text for name in excluded_names):
+        names = ", ".join(p.product_name for p in products)
+        response_text = f"앞서 추천한 제품 중 요청하신 조건에 맞는 제품은 {names}입니다."
     if hanja_removed:
         metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
     metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
     ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
-    await _store_turn(session_id, message, products, response_text, None)
+    next_active = ({**active, "visible_products": _slim_products(products),
+                    "pending_categories": [], "turn_id": turn_id} if active else None)
+    await _store_turn(session_id, message, products, response_text, active_state=next_active)
     return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients,
                              products=products, response_text=response_text,
-                             model_used=settings.gpu_model)
+                             model_used=settings.gpu_model,
+                             response_mode="followup_filtered" if requested else "followup")
 
 
 async def _resolve_conversation_response(
     session_id: str,
     turn_id: str,
     message: str,
-) -> RecommendResponse | None:
+) -> RecommendResponse | ContextualSearch | None:
     """Batch/SSE가 공통으로 사용하는 대화 분기.
 
     후속 질문이면 이전 추천을 사용하고, 이력이 만료된 후속 표현이면
     두 전송 경로 모두 같은 안내 응답을 반환한다. 신규 요청은 None이다.
     """
     history = await conversation_store.load_recent(session_id)
+    active = await conversation_store.load_active(session_id)
+    requested = _requested_categories(message)
+    explicit_prior = _has_followup_cue(message)
+    pending = set(active.get("pending_categories") or []) if active else set()
+    if pending and _SEARCH_CONFIRMATION.fullmatch(message.strip()):
+        requested = pending
+    contextual_request = bool(requested and (
+        _RESEARCH_CUE.search(message) or (pending and _SEARCH_CONFIRMATION.fullmatch(message.strip()))
+    ))
+    new_concern = any(cue in message for cue in _CONCERN_CUES) and not _SAME_CONCERN_CUE.search(message)
+    if active and contextual_request and not explicit_prior and not new_concern:
+        try:
+            profile = UserProfile.model_validate(active["profile"])
+        except (KeyError, ValueError, TypeError):
+            profile = None
+        if profile and (profile.effects or profile.concerns):
+            return ContextualSearch(profile, str(active.get("base_message") or ""), requested)
+    if (active or history) and requested and not explicit_prior and not _RESEARCH_CUE.search(message) \
+            and not any(c in message for c in _CONCERN_CUES):
+        return await _handle_followup(session_id, turn_id, message, history, active)
+    if (active or history) and explicit_prior:
+        return await _handle_followup(session_id, turn_id, message, history, active)
+    if (active or history) and _RESTORE_ALL_CUE.search(message) and not requested:
+        return await _handle_followup(session_id, turn_id, message, history, active)
     if history and await _is_followup(message, history):
-        return await _handle_followup(session_id, turn_id, message, history)
-    if not history and _has_missing_history_cue(message):
+        return await _handle_followup(session_id, turn_id, message, history, active)
+    if not history and not active and _has_missing_history_cue(message):
         metrics.recommend_requests_total.labels(status="ok").inc()
         text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
                 "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
@@ -1177,13 +1306,15 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     spans: dict[str, float] = {}
 
     # 멀티턴: 후속/이력 만료 분기를 SSE와 공유해 기능 차이를 막는다.
-    conversation_response = await _resolve_conversation_response(session_id, turn_id, message)
-    if conversation_response is not None:
-        return conversation_response
+    resolution = await _resolve_conversation_response(session_id, turn_id, message)
+    if isinstance(resolution, RecommendResponse):
+        return resolution
+    context = resolution if isinstance(resolution, ContextualSearch) else None
+    cache_message, generation_message = _contextual_messages(message, context)
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
-    cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
+    cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
@@ -1192,7 +1323,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         spans["overhead"] = spans["total"] - spans["cache_lookup"]
         _record_latency(spans, cache="hit")
         # session_id·turn_id는 요청마다 새로 부여(캐시는 콘텐츠만 보관).
-        await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
+        await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"),
+                          active_state=_cached_active(cached, message, turn_id, context))
         return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
     metrics.recommend_cache_total.labels(result="miss").inc()
 
@@ -1202,23 +1334,28 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     try:
         # 같은 키 동시 미스는 리더 1건만 GPU 계산(single-flight, 캐시 스탬피드 제거).
         _t = time.perf_counter()
-        async with recommend_cache.single_flight(message, gen_prompt_name):
+        async with recommend_cache.single_flight(cache_message, gen_prompt_name):
             spans["flight_wait"] = time.perf_counter() - _t
 
             # 대기 중 리더가 캐시를 채웠으면 GPU 없이 히트로 처리(coalesced).
-            cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
+            cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
                 metrics.recommend_requests_total.labels(status="ok").inc()
                 spans["total"] = time.perf_counter() - t_req
                 spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
                 _record_latency(spans, cache="coalesced")
-                await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"))
+                await _store_turn(session_id, message, cached.get("products"), cached.get("response_text"),
+                                  active_state=_cached_active(cached, message, turn_id, context))
                 return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
 
             # 1) 프로필 추출 (LLM, 실패 시 규칙 기반 폴백)
             _t = time.perf_counter()
-            profile, extraction_method = await extract_with_fallback(message)
+            if context:
+                profile, extraction_method = context.profile, "context_reuse"
+            else:
+                profile, extraction_method = await extract_with_fallback(message)
+            profile = UserProfile.model_validate(profile, from_attributes=True)
             constraints = list(getattr(profile, "constraints", []))
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
@@ -1247,7 +1384,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
                 for r in raw_ingredients[:10]
             ]
-            raw_products = await select_products(message, profile.concerns, ingredient_scores)
+            raw_products = await select_products(
+                message, profile.concerns, ingredient_scores,
+                requested_override=context.categories if context else None,
+            )
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
@@ -1273,7 +1413,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
             response_mode = "generated" if products else "no_products"
-            study_match = _verified_study_match(message, profile.concerns, ingredients, products)
+            study_match = _verified_study_match(generation_message, profile.concerns, ingredients, products)
             redness_match = _redness_study_match(profile.concerns, ingredients, products)
             if redness_match:
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
@@ -1290,10 +1430,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 response_mode = "verified_study_template"
                 response_text = _build_verified_study_response(message, study_match)
             elif products:
-                response_text = await _build_llm_response(message, ingredients, products, system_prompt)
+                response_text = await _build_llm_response(generation_message, ingredients, products, system_prompt)
             else:
                 response_text = _build_no_product_response(
-                    ingredients, constraints, profile.concerns, message,
+                    ingredients, constraints, profile.concerns, generation_message,
                 )
             response_text, hanja_removed = _normalize_response_text(response_text, products)
             if hanja_removed:
@@ -1305,12 +1445,13 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
                 response_text = _build_grounded_product_response(
-                    message, ingredients, products, profile.concerns,
+                    generation_message, ingredients, products, profile.concerns,
                 )
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
-            await recommend_cache.set(message, gen_prompt_name, {
+            await recommend_cache.set(cache_message, gen_prompt_name, {
+                "_profile": profile.model_dump(mode="json"),
                 "ingredients": [i.model_dump() for i in ingredients],
                 "products": [p.model_dump() for p in products],
                 "response_text": response_text,
@@ -1325,7 +1466,12 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
         _record_latency(spans, cache="miss")
 
         metrics.recommend_requests_total.labels(status="ok").inc()
-        await _store_turn(session_id, message, products, response_text, profile.concerns)
+        await _store_turn(
+            session_id, message, products, response_text, profile.concerns,
+            active_state=_active_recommendation(
+                profile, context.base_message if context else message, products, turn_id,
+            ),
+        )
         return RecommendResponse(
             session_id=session_id,
             turn_id=turn_id,
@@ -1522,7 +1668,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     # 일반 응답과 같은 대화 분기를 탄다. 후속 응답은 아직 토큰 단위로
     # 생성하지 않지만, meta → delta → done 규약으로 전달해 기능을 동일하게 유지한다.
     try:
-        conversation_response = await _resolve_conversation_response(session_id, turn_id, message)
+        resolution = await _resolve_conversation_response(session_id, turn_id, message)
     except LLMOverCapacityError:
         yield _sse("error", {"error_code": "LLM_OVER_CAPACITY", "message": "요청이 많아 잠시 후 다시 시도해 주세요."})
         return
@@ -1531,7 +1677,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
         yield _sse("error", {"error_code": "INTERNAL_ERROR",
                              "message": "일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요."})
         return
-    if conversation_response is not None:
+    if isinstance(resolution, RecommendResponse):
+        conversation_response = resolution
         yield _sse("meta", {
             "session_id": conversation_response.session_id,
             "turn_id": conversation_response.turn_id,
@@ -1544,12 +1691,18 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                             "response_mode": conversation_response.response_mode})
         return
 
+    context = resolution if isinstance(resolution, ContextualSearch) else None
+    cache_message, generation_message = _contextual_messages(message, context)
+
     _t = time.perf_counter()
-    cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
+    cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
         metrics.recommend_requests_total.labels(status="ok").inc()
+        active_state = _cached_active(cached, message, turn_id, context)
+        if active_state is not None:
+            await conversation_store.save_active(session_id, active_state)
         yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
                             "ingredients": cached["ingredients"], "products": cached["products"],
                             "model_used": cached["model_used"]})
@@ -1567,14 +1720,17 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     try:
         # 같은 키 동시 미스는 리더 1건만 GPU 계산(single-flight, 캐시 스탬피드 제거).
         _t = time.perf_counter()
-        async with recommend_cache.single_flight(message, gen_prompt_name):
+        async with recommend_cache.single_flight(cache_message, gen_prompt_name):
             spans["flight_wait"] = time.perf_counter() - _t
 
             # 대기 중 리더가 캐시를 채웠으면 캐시 히트와 같은 프레임으로 서빙(coalesced).
-            cached = _refresh_cached_images(await recommend_cache.get(message, gen_prompt_name))
+            cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
                 metrics.recommend_requests_total.labels(status="ok").inc()
+                active_state = _cached_active(cached, message, turn_id, context)
+                if active_state is not None:
+                    await conversation_store.save_active(session_id, active_state)
                 yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
                                     "ingredients": cached["ingredients"], "products": cached["products"],
                                     "model_used": cached["model_used"]})
@@ -1588,7 +1744,11 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 return
 
             _t = time.perf_counter()
-            profile, extraction_method = await extract_with_fallback(message)
+            if context:
+                profile, extraction_method = context.profile, "context_reuse"
+            else:
+                profile, extraction_method = await extract_with_fallback(message)
+            profile = UserProfile.model_validate(profile, from_attributes=True)
             constraints = list(getattr(profile, "constraints", []))
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
@@ -1608,7 +1768,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
                 for r in raw_ingredients[:10]
             ]
-            raw_products = await select_products(message, profile.concerns, ingredient_scores)
+            raw_products = await select_products(
+                message, profile.concerns, ingredient_scores,
+                requested_override=context.categories if context else None,
+            )
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
@@ -1630,6 +1793,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 products = [redness_match[1]]
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
+            active_state = _active_recommendation(
+                profile, context.base_message if context else message, products, turn_id,
+            )
+            await conversation_store.save_active(session_id, active_state)
             yield _sse("meta", {"session_id": session_id, "turn_id": turn_id,
                                 "ingredients": [i.model_dump() for i in ingredients],
                                 "products": [p.model_dump() for p in products],
@@ -1641,7 +1808,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             response_mode = "generated" if products else "no_products"
             if not products:
                 response_text = _build_no_product_response(
-                    ingredients, constraints, profile.concerns, message,
+                    ingredients, constraints, profile.concerns, generation_message,
                 )
                 chunks.append(response_text)
                 yield _sse("delta", {"text": response_text})
@@ -1662,14 +1829,14 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0
-            elif study_match := _verified_study_match(message, profile.concerns, ingredients, products):
+            elif study_match := _verified_study_match(generation_message, profile.concerns, ingredients, products):
                 response_mode = "verified_study_template"
                 response_text = _build_verified_study_response(message, study_match)
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0
             else:
-                user_content = _compose_user_content(message, ingredients, products)
+                user_content = _compose_user_content(generation_message, ingredients, products)
                 ttft: float | None = None
                 gen_start = time.perf_counter()
                 async with llm_slot():
@@ -1707,14 +1874,15 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
                 response_text = _build_grounded_product_response(
-                    message, ingredients, products, profile.concerns,
+                    generation_message, ingredients, products, profile.concerns,
                 )
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
                 yield _sse("delta", {"text": response_text})
 
-            await recommend_cache.set(message, gen_prompt_name, {
+            await recommend_cache.set(cache_message, gen_prompt_name, {
+                "_profile": profile.model_dump(mode="json"),
                 "ingredients": [i.model_dump() for i in ingredients],
                 "products": [p.model_dump() for p in products],
                 "response_text": response_text,
