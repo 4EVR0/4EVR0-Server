@@ -1,0 +1,47 @@
+name: container-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - 'app/**'
+      - 'scripts/smoke_container.py'
+      - '.github/workflows/container-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - 'app/**'
+      - 'scripts/smoke_container.py'
+      - '.github/workflows/container-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: 4evr0-server:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build Linux AMD64 image
+        run: >-
+          docker buildx build --load --platform linux/amd64
+          --build-arg VCS_REF="$GITHUB_SHA" --tag "$IMAGE" .
+      - name: Smoke test without external services
+        run: >-
+          python3 scripts/smoke_container.py "$IMAGE"
+          --platform linux/amd64 --expected-revision "$GITHUB_SHA"

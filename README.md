@@ -194,11 +194,58 @@ REDNESS_VERIFIED_STUDY_RESPONSE_ENABLED=true  # 홍조·로사케아 연구 설�
 
 ## 실행
 
-### Docker (운영)
+### 배포용 앱 이미지
+
+웹 UI·프롬프트·추천 근거 JSON을 포함한 앱 이미지를 빌드한다. DB와 GPU는 실행 시
+환경변수로 연결한다. `.dockerignore`는 `app/`과 빌드 입력만 허용해 `.env`, 평가
+결과, 로컬 리뷰, Git 이력을 빌드 컨텍스트에서 제외한다.
+
+```bash
+APP_SHA=$(git rev-parse HEAD)
+docker buildx build --load --platform linux/amd64 \
+  --build-arg VCS_REF="$APP_SHA" --tag "4evr0-server:$APP_SHA" .
+python3 scripts/smoke_container.py "4evr0-server:$APP_SHA" \
+  --platform linux/amd64 --expected-revision "$APP_SHA"
+```
+
+- 배포 이미지는 커밋된 소스에서 빌드하고 SHA 태그와 image digest를 기록한다.
+  Python 베이스 이미지는 버전/digest를 고정했으며 업데이트 시 다시 검증한다.
+  직접 의존성은 `requirements.txt`에 고정되어 있지만 전이 의존성 전체 lock은 아직 없다.
+- x86 EC2는 `linux/amd64`, Graviton EC2/Apple Silicon의 네이티브 검증은
+  `linux/arm64`를 사용한다. 두 아키텍처를 로컬에 함께 보관하려면 태그에
+  `-amd64`/`-arm64`를 구분해 붙인다.
+- UID/GID `10001:10001`로 실행하며 Python bytecode 쓰기를 끈다.
+  소스 파일은 이미지에 포함된 읽기 전용 입력으로 사용하고 로그는 stdout으로 출력한다.
+- smoke 검증은 네트워크/호스트 포트 없이, 읽기 전용 파일시스템에서 기동·필수 파일·웹 UI·
+  API 스키마·메트릭·정상 종료를 확인한다. GPU/DB 없이 실행할 수 있으며 추천 품질 평가는 별도다.
+- PR과 main의 관련 변경은 `container-smoke` CI에서 Linux AMD64로 빌드·검증한다.
+
+외부 DB/GPU 연결 값을 준비한 뒤 앱만 실행하는 예:
+
+```bash
+docker run --name 4evr0-app --detach \
+  --env-file /absolute/path/to/runtime.env \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --publish 127.0.0.1:8000:8000 \
+  "4evr0-server:$APP_SHA"
+```
+
+`runtime.env`에는 `.env.example`을 참고해 `POSTGRES_DSN`, `REDIS_URL`, `NEO4J_URI`,
+`NEO4J_USER`, `NEO4J_PASSWORD`, `GPU_SERVER_URL`, `GPU_MODEL` 및 필요한 인증 정보를
+설정한다. 컨테이너의 `localhost`는 컨테이너 자신이므로 DB/GPU의 실제 접근 가능한
+주소를 사용한다. Tailscale 호스트명은 컨테이너에서도 DNS/통신이 되는지 확인해야 한다.
+위 포트는 호스트 내부 확인용이다. 공개 베타에는 HTTPS 프록시·접근 제한·운영 DB 구성과
+별도의 준비 상태 검증을 추가해야 한다. 현재 `/health`는 외부 의존성을 검사하므로
+GPU/DB 없는 이미지 smoke 테스트의 생존 검사로 사용하지 않는다.
+
+### Docker Compose (로컬 개발)
+
 ```bash
 docker compose up
 ```
 앱(8000) + PostgreSQL + Neo4j + Redis + promtail 컨테이너가 함께 뜬다.
+이 Compose의 개발용 비밀번호·호스트 공개 포트·DB 저장 설정은 운영에 그대로 사용하지 않는다.
 
 ### 로컬 개발 (hot reload)
 맥 로컬 PostgreSQL이 5432를 점유하면 Docker PostgreSQL을 5433으로 우회:

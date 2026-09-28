@@ -1,0 +1,17 @@
+# Only runtime inputs belong in the build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!app/
+!app/**
+
+# Also exclude local files accidentally placed under app/.
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*
+**/.git/
+**/.DS_Store
+**/*.pem
+**/*.key
