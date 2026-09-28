@@ -1,0 +1,76 @@
+# Compose >= 2.30 (raw env files). No local-development databases are reused.
+services:
+  app:
+    image: ${APP_IMAGE:?Set APP_IMAGE to an immutable release image}
+    restart: unless-stopped
+    env_file:
+      - path: ${RUNTIME_ENV_FILE:?Set RUNTIME_ENV_FILE}
+        format: raw
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "false"
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --proxy-headers, --forwarded-allow-ips, "${CADDY_IP:-172.30.90.2}"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks:
+      proxy:
+        ipv4_address: ${APP_IP:-172.30.90.3}
+      datastore: {}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/live', timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes", --maxmemory, 256mb, --maxmemory-policy, noeviction]
+    volumes: [redis_data:/data]
+    networks: [datastore]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: *logging
+  caddy:
+    image: caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: unless-stopped
+    env_file:
+      - path: ${PROXY_ENV_FILE:?Set PROXY_ENV_FILE}
+        format: raw
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    security_opt: [no-new-privileges:true]
+    networks:
+      proxy:
+        ipv4_address: ${CADDY_IP:-172.30.90.2}
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: *logging
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: ${PROXY_SUBNET:-172.30.90.0/28}
+  datastore:
+    internal: true
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:
