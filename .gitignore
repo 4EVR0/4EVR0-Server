@@ -25,6 +25,7 @@ mlartifacts/
 logs/
 load/*.log
 scripts/out/
+deploy/*.env
 
 # 로컬 실험/수동 검증 산출물
 llm_query_eval/results/

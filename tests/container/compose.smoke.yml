@@ -1,0 +1,41 @@
+# Used only with compose.beta.yml under a unique, disposable project name.
+services:
+  app:
+    env_file: !reset []
+    environment:
+      PYTHONPATH: /app
+      WARMUP_ENABLED: "false"
+      POSTGRES_DSN: postgresql://smoke:smoke@postgres:5432/smoke
+      NEO4J_URI: bolt://127.0.0.1:1
+      GPU_SERVER_URL: http://127.0.0.1:1
+      GPU_MODEL: smoke
+    volumes:
+      - ./tests/container:/fixtures:ro
+    command: [uvicorn, proxy_fixture:app, --app-dir, /fixtures, --host, 0.0.0.0, --port, "8000", --proxy-headers, --forwarded-allow-ips, "${CADDY_IP}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: smoke
+      POSTGRES_PASSWORD: smoke
+      POSTGRES_DB: smoke
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [datastore]
+    healthcheck:
+      test: [CMD, pg_isready, -U, smoke, -d, smoke]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  caddy:
+    ports: !reset []
+    env_file: !reset []
+    environment:
+      SITE_ADDRESS: beta.localhost
+      BETA_USER: smoke
+      # Public test credential: hiccup. NEVER use outside this isolated fixture.
+      BETA_PASSWORD_HASH: $$2a$$14$$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
+    networks:
+      proxy:
+        aliases: [beta.localhost]

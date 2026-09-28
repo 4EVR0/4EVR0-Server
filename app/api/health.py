@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import APIRouter, Response
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 class DependencyStatus(BaseModel):
@@ -21,53 +23,56 @@ class DependencyStatus(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str  # "healthy" | "degraded" | "unhealthy"
+    status: str  # legacy health or readiness status
     dependencies: DependencyStatus
     version: str
 
 
 async def _check_postgresql() -> str:
+    conn = None
     try:
         conn = await asyncpg.connect(settings.postgres_dsn, timeout=3)
-        await conn.close()
+        await conn.fetchval("SELECT 1")
         return "ok"
     except Exception as e:
-        logger.warning("PostgreSQL ping failed: %s", e)
+        logger.warning("PostgreSQL ping failed: %s", type(e).__name__)
         return "error"
+    finally:
+        if conn is not None:
+            await conn.close(timeout=1)
 
 
 async def _check_neo4j() -> str:
     try:
-        driver = AsyncGraphDatabase.driver(
+        async with AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
-        )
-        async with driver.session() as session:
-            await session.run("RETURN 1")
-        await driver.close()
+            connection_timeout=3,
+            connection_acquisition_timeout=3,
+        ) as driver:
+            async with driver.session() as session:
+                result = await session.run("RETURN 1")
+                await result.consume()
         return "ok"
     except Exception as e:
-        logger.warning("Neo4j ping failed: %s", e)
+        logger.warning("Neo4j ping failed: %s", type(e).__name__)
         return "error"
 
 
 async def _check_redis() -> str:
     try:
-        r = aioredis.from_url(settings.redis_url, socket_timeout=3)
-        await r.ping()
-        await r.aclose()
+        async with aioredis.from_url(
+            settings.redis_url, socket_timeout=3, socket_connect_timeout=3,
+        ) as r:
+            await r.ping()
         return "ok"
     except Exception as e:
-        logger.warning("Redis ping failed: %s", e)
+        logger.warning("Redis ping failed: %s", type(e).__name__)
         return "error"
 
 
 async def _check_llm() -> str:
-    """vLLM readiness 핑 — /v1/models 는 모델 로드 완료 후에만 200을 준다.
-
-    임시 GPU 재프로비저닝 중(모델 로드 수십초~분, 이슈 #36)에는 연결 거부/타임아웃
-    → "error" → /health가 unhealthy(503)를 반환해 LB가 콜드 vLLM으로 라우팅하지 않는다.
-    """
+    """Check the configured model is advertised, without performing inference."""
     url = settings.gpu_server_url.rstrip("/")
     base_url = url if url.endswith("/v1") else f"{url}/v1"
     try:
@@ -76,33 +81,69 @@ async def _check_llm() -> str:
         async with httpx.AsyncClient(timeout=settings.llm_health_timeout_seconds) as client:
             resp = await client.get(f"{base_url}/models", headers=headers)
         if resp.status_code == 200:
-            return "ok"
+            models = resp.json().get("data", [])
+            if isinstance(models, list) and any(
+                isinstance(model, dict) and model.get("id") == settings.gpu_model
+                for model in models
+            ):
+                return "ok"
+            logger.warning("Configured GPU model is absent from /v1/models")
+            return "error"
         logger.warning("vLLM readiness ping returned HTTP %d", resp.status_code)
         return "error"
     except Exception as e:
-        logger.warning("vLLM readiness ping failed: %s", e)
+        logger.warning("vLLM readiness ping failed: %s", type(e).__name__)
         return "error"
+
+
+async def _probe(name, check) -> str:
+    try:
+        return await asyncio.wait_for(check(), timeout=_PROBE_TIMEOUT_SECONDS)
+    except Exception as exc:
+        logger.warning("Dependency probe failed: %s (%s)", name, type(exc).__name__)
+        return "error"
+
+
+async def _dependencies() -> DependencyStatus:
+    checks = {
+        "neo4j": _check_neo4j,
+        "postgresql": _check_postgresql,
+        "redis": _check_redis,
+        "llm": _check_llm,
+    }
+    values = await asyncio.gather(*(_probe(name, check) for name, check in checks.items()))
+    return DependencyStatus(**dict(zip(checks, values)))
+
+
+@router.get("/live")
+async def live(response: Response) -> dict[str, str]:
+    """Process liveness: does not contact databases or the GPU."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "alive"}
+
+
+@router.get("/ready", response_model=HealthResponse)
+async def ready(response: Response) -> HealthResponse:
+    """Recommendation dependencies must all work, including the configured model."""
+    deps = await _dependencies()
+    available = all(value == "ok" for value in deps.model_dump().values())
+    response.status_code = 200 if available else 503
+    response.headers["Cache-Control"] = "no-store"
+    return HealthResponse(
+        status="ready" if available else "not_ready", dependencies=deps, version=settings.app_version,
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(response: Response) -> HealthResponse:
-    neo4j_status = await _check_neo4j()
-    pg_status = await _check_postgresql()
-    redis_status = await _check_redis()
-    llm_status = await _check_llm()
-
-    deps = DependencyStatus(
-        neo4j=neo4j_status,
-        postgresql=pg_status,
-        redis=redis_status,
-        llm=llm_status,
-    )
+    deps = await _dependencies()
+    response.headers["Cache-Control"] = "no-store"
 
     # LLM은 추천 품질의 핵심 의존성 — 콜드/다운이면 unhealthy(503)로 LB 라우팅에서 제외.
     # (추출·생성 모두 폴백이 있어 서비스가 죽진 않지만, 품질 저하 상태로 트래픽을 받지 않는다.)
     # 나머지 의존성 문제는 degraded(200) — 부분 기능으로 동작 가능.
     all_ok = all(v == "ok" for v in deps.model_dump().values())
-    if llm_status != "ok":
+    if deps.llm != "ok":
         status = "unhealthy"
         response.status_code = 503
     else:

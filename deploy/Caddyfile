@@ -1,0 +1,16 @@
+{
+ admin off
+}
+
+{$SITE_ADDRESS} {
+ route {
+  @internal path /metrics* /health* /live* /ready* /docs* /redoc* /openapi.json*
+  respond @internal 404
+  basic_auth {
+   {$BETA_USER} {$BETA_PASSWORD_HASH}
+  }
+  reverse_proxy app:8000 {
+   header_up -Authorization
+  }
+ }
+}
