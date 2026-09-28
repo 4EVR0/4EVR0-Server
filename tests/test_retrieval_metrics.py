@@ -93,6 +93,7 @@ class RetrievalServiceParityTest(unittest.IsolatedAsyncioTestCase):
             case["message"],
             [Concern.IRRITATED_SKIN],
             [{"name": "PANTHENOL", "weight": 0.8}],
+            constraints=[],
         )
         self.assertEqual(1, result["n_products"])
         self.assertEqual(1.0, result["product_precision"])

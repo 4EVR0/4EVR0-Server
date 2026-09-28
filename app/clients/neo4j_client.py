@@ -171,6 +171,27 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
         return {}
 
 
+async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, Any]:
+    """Read product-specific label metadata; old/missing properties stay unknown."""
+    if not product_ids:
+        return {}
+    try:
+        start = time.perf_counter()
+        async with _get_driver().session() as session:
+            result = await session.run(
+                "MATCH (p:Product) WHERE p.product_id IN $ids "
+                "RETURN p.product_id AS product_id, p.fragrance_evidence AS evidence",
+                ids=list(dict.fromkeys(product_ids)),
+            )
+            rows = {row["product_id"]: row["evidence"] async for row in result}
+        _log_query("query_product_fragrance_evidence", {"count": len(product_ids)},
+                   (time.perf_counter() - start) * 1000, len(rows))
+        return rows
+    except Exception as exc:
+        logger.warning("Neo4j fragrance evidence query failed: %s", exc)
+        return {}
+
+
 async def query_ingredients_by_effects(
     effects: list[str],
     min_graph_score: float = 0.0,

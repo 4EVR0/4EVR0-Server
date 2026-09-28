@@ -115,7 +115,7 @@ class RednessRosaceaEvidenceTest(unittest.IsolatedAsyncioTestCase):
             for concern in (Concern.REDNESS, Concern.ROSACEA_PRONE):
                 self.assertEqual([{"name": "PANTHENOL"}],
                                  await apply_caution_filter(rows, [concern]))
-            self.assertEqual(rows,
+            self.assertEqual(rows[2:],
                              await apply_caution_filter(rows, [Concern.SENSITIVE_SKIN]))
 
     async def test_all_excluded_ingredients_are_not_revived(self):

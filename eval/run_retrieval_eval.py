@@ -141,12 +141,12 @@ async def eval_case(case, judge_client, judge_model, judge_timeout, *, capture_o
     scores = [{"name": r["name"], "weight": float(r.get("graph_score") or 1.0)} for r in raw_ings[:10]]
     # 실제 서비스는 기본 query limit(5)이 아니라 30개 후보를 확보한 뒤 목적 필터·리뷰
     # 재정렬·카테고리 다양화를 적용한다. 평가기도 같은 함수를 재사용해 경로 드리프트를 막는다.
-    products = await select_products(case["message"], concerns, scores)
     constraints = [
         Constraint(code)
         for code in case.get("constraints", [])
         if code in Constraint._value2member_map_
     ]
+    products = await select_products(case["message"], concerns, scores, constraints=constraints)
     products = _apply_constraint_evidence_guard(products, constraints)
     judged_ings = raw_ings[:_TOP_INGREDIENTS]
     ing_names = [r["name"] for r in judged_ings]
