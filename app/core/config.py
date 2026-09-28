@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     product_min_matched_count: int = 2
     # 최종 추천 제품 수 — 후보 풀(30)에서 목적필터·카테고리 다양성 적용 후 상위 N개를 노출.
     product_result_limit: int = 6
+    # 무향료 추천에 사용하는 원문/제조사 확인 근거의 재검토 주기.
+    fragrance_evidence_max_age_days: int = 180
     # 성분→효능(AFFECTS) 엣지 graph_score 임계 — 이 미만 엣지 무시(cosing 저품질 엣지 노이즈 컷).
     # retrieval eval(#40)로 A/B해 정한 값. 0=off. (결과 비면 폴백으로 임계 없이 재조회)
     ingredient_min_graph_score: float = 0.0

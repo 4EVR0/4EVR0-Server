@@ -16,6 +16,7 @@ from app.clients.neo4j_client import (
     query_ingredient_kor_names,
     query_ingredients_by_effects,
     query_product_ingredient_inventory,
+    query_product_fragrance_evidence,
     query_products_by_ingredients,
 )
 from app.core import metrics
@@ -28,6 +29,10 @@ from app.schemas.recommend import IngredientResult, ProductResult, RecommendResp
 from app.services.product_image_service import build_product_image_url
 from app.services.response_integrity import find_response_integrity_issues
 from app.services.verified_ingredient_studies import verified_study_for
+from app.services.fragrance_policy import (
+    FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
+    merge_fragrance_constraint, mentions_excluded_rationale, parse_evidence,
+)
 
 # concern별 적합한 제품 카테고리 (leave-on 제품 기준, 씻어내는 클렌징 계열 제외)
 _LEAVE_ON = ["크림", "세럼", "앰플", "에센스", "로션", "토너", "미스트", "올인원"]
@@ -251,7 +256,8 @@ def filter_explicit_application_area(products: list[dict], message: str) -> list
 
 async def select_products(message: str, concerns: list[Concern],
                           ingredient_scores: list[dict],
-                          requested_override: set[str] | None = None) -> list[dict]:
+                          requested_override: set[str] | None = None,
+                          constraints: list[Constraint] | None = None) -> list[dict]:
     """제품 선정 공통 로직(동기·스트리밍 경로 공유).
 
     1) 메시지가 카테고리를 콕 집으면 그 카테고리로 제한(요청 존중).
@@ -271,6 +277,7 @@ async def select_products(message: str, concerns: list[Concern],
     )
     raw = filter_by_target_concerns(raw, concerns)
     raw = filter_explicit_application_area(raw, message)
+    raw = await _filter_products_with_constraints(raw, constraints or [])
     raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
     if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
         return raw[: settings.product_result_limit]
@@ -303,12 +310,12 @@ async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Conce
         return raw_ingredients
     cautioned = await query_cautioned_ingredients(_SENSITIVITY_CONCERN_CODES)
     redness_guard = _is_redness_rosacea_query(concerns)
-    excluded = cautioned | (_REDNESS_ROSACEA_AVOID_INCI if redness_guard else set())
+    excluded = cautioned | FRAGRANCE_RATIONALE_EXCLUSIONS | (_REDNESS_ROSACEA_AVOID_INCI if redness_guard else set())
     if not excluded:
         return raw_ingredients
     kept = [r for r in raw_ingredients if r.get("name") not in excluded]
-    # 홍조·로사케아에서는 부적합 후보를 되살려 0건을 피하지 않는다.
-    return kept if kept or redness_guard else raw_ingredients
+    # 빈 결과를 피하기 위해 차단된 근거를 되살리지 않는다.
+    return kept
 
 
 logger = logging.getLogger(__name__)
@@ -401,16 +408,36 @@ def _apply_constraint_evidence_guard(
     products: list[dict],
     constraints: list[Constraint],
 ) -> list[dict]:
-    """제품 속성 근거가 없으면 제약 충족을 추측하지 않는다.
-
-    현재 검색 데이터는 성분 근거와 제품 매칭만 제공하고, 무향·알코올 프리·
-    비건·저자극·EWG 인증/전성분 근거는 제공하지 않는다. 제약이 있는데도
-    제품을 제시하면 '조건을 만족한다'는 근거 없는 암시가 되므로 보수적으로 빈다.
-    """
-    if products and constraints:
+    """Allow only product-specific verified claims; missing data is not absence."""
+    if any(item != Constraint.FRAGRANCE_FREE for item in constraints):
         metrics.recommend_output_guard_total.labels(kind="unverified_constraints").inc()
         return []
+    if Constraint.FRAGRANCE_FREE in constraints:
+        kept = []
+        for product in products:
+            decision = fragrance_decision(product.get("product_id"), product.get("fragrance_evidence"))
+            if decision == "verified_claim":
+                kept.append(product)
+            else:
+                metrics.recommend_output_guard_total.labels(kind=f"fragrance_{decision}").inc()
+        return kept
     return products
+
+
+async def _filter_products_with_constraints(products: list[dict], constraints: list[Constraint]) -> list[dict]:
+    if not constraints or not products:
+        return products
+    if any(item != Constraint.FRAGRANCE_FREE for item in constraints):
+        return _apply_constraint_evidence_guard(products, constraints)
+    # Re-read even for session products: metadata may change after the first turn.
+    evidence = await query_product_fragrance_evidence([p["product_id"] for p in products if p.get("product_id")])
+    enriched = []
+    for product in products:
+        data = parse_evidence(evidence.get(product.get("product_id")))
+        enriched.append({**product, "fragrance_evidence": data,
+                         "fragrance_free_source_url": (data.get("manufacturer_claim") or {}).get("source_url")
+                         if isinstance(data.get("manufacturer_claim"), dict) else None})
+    return _apply_constraint_evidence_guard(enriched, constraints)
 
 
 def _build_no_product_response(
@@ -422,6 +449,12 @@ def _build_no_product_response(
     """검색 공백에서 제품명을 만들지 않는 결정론적 응답."""
     metrics.recommend_output_guard_total.labels(kind="no_products").inc()
     if constraints:
+        if set(constraints) == {Constraint.FRAGRANCE_FREE}:
+            return (
+                "향료 미포함 조건을 확인할 수 있는 제품을 찾지 못했어요. "
+                "향료 표기가 확인된 제품은 제외하며, 표기에 없더라도 제조사의 무첨가 안내 등 "
+                "확인 근거가 부족한 제품은 무향료 제품으로 추천하지 않습니다."
+            )
         labels = ", ".join(_CONSTRAINT_LABELS[item] for item in constraints)
         return (
             f"요청하신 조건({labels})을 확인할 수 있는 제품 속성 데이터가 없어 "
@@ -845,6 +878,7 @@ def _slim_products(products) -> list[dict]:
             "review_stats": g(p, "review_stats", "review_stats"),
             "matched_count": g(p, "matched_count", "matched_count"),
             "matched_ingredients": g(p, "matched_ingredients", "matched_ingredients") or [],
+            "fragrance_free_source_url": g(p, "fragrance_free_source_url", "fragrance_free_source_url"),
         })
     return out
 
@@ -867,6 +901,7 @@ def _reconstruct_products(slim: list[dict]) -> list[ProductResult]:
             rating=p.get("rating"),
             review_count=p.get("review_count"),
             review_stats=p.get("review_stats"),
+            fragrance_free_source_url=p.get("fragrance_free_source_url"),
         ))
     return out
 
@@ -1412,7 +1447,35 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     visible = (active["visible_products"] if active and "visible_products" in active
                else ((last or {}).get("products") or []))
     source = (active["source_products"] if active and "source_products" in active else visible)
+    profile_data = (active or {}).get("profile") or {}
+    concerns = [Concern(code) for code in profile_data.get("concerns", (last or {}).get("concerns") or [])
+                if code in Concern._value2member_map_]
+    constraints = merge_fragrance_constraint(message, [
+        Constraint(code) for code in profile_data.get("constraints", [])
+        if code in Constraint._value2member_map_
+    ])
+    if _is_sensitivity_query(concerns):
+        # Refresh positive matches from old sessions; inventory facts stay intact.
+        def sanitize(rows):
+            result = []
+            for row in rows:
+                names = [name for name in row.get("matched_ingredients", [])
+                         if name not in FRAGRANCE_RATIONALE_EXCLUSIONS]
+                if row.get("matched_ingredients") and not names:
+                    continue  # No positive recommendation evidence remains.
+                result.append({**row, "matched_ingredients": names, "matched_count": len(names)})
+            return result
+        visible, source = sanitize(visible), sanitize(source)
+    if active or constraints or fragrance_preference(message) is not None:
+        active = {**(active or {}), "profile": {**profile_data,
+                  "concerns": [c.value for c in concerns], "constraints": [c.value for c in constraints]},
+                  "source_products": source, "visible_products": visible,
+                  "ingredients": [row for row in (active or {}).get("ingredients", [])
+                                  if not _is_sensitivity_query(concerns)
+                                  or row.get("name") not in FRAGRANCE_RATIONALE_EXCLUSIONS]}
     if _RESTORE_ALL_CUE.search(message) and not _requested_categories(message):
+        visible = source
+    if fragrance_preference(message) is False and not visible:
         visible = source
     requested = _requested_categories(message)
     if _is_usage_order_request(message) and "기초" in message:
@@ -1429,7 +1492,7 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         )
         metrics.recommend_output_guard_total.labels(kind="followup_without_products").inc()
         metrics.recommend_requests_total.labels(status="ok").inc()
-        await _store_turn(session_id, message, [], response_text, None)
+        await _store_turn(session_id, message, [], response_text, active_state=active)
         return RecommendResponse(
             session_id=session_id,
             turn_id=turn_id,
@@ -1448,7 +1511,15 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
                 response_text=clarification, model_used="deterministic",
                 response_mode="followup_comparison_clarification",
             )
-        products = _reconstruct_products(selected_rows)
+        checked_rows = await _filter_products_with_constraints(selected_rows, constraints)
+        if len(checked_rows) != len(selected_rows):
+            response_text = "선택한 제품 중 요청 조건을 확인할 수 없는 제품이 있어 비교하지 않았어요. " + _build_no_product_response([], constraints)
+            await _store_turn(session_id, message, [], response_text,
+                              active_state={**active, "visible_products": [], "turn_id": turn_id})
+            return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                                     response_text=response_text, model_used="deterministic",
+                                     response_mode="followup_constraints")
+        products = _reconstruct_products(checked_rows)
         inventory = await query_product_ingredient_inventory([p.product_id for p in products])
         evidence = []
         for row in (active or {}).get("ingredients") or []:
@@ -1481,6 +1552,20 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             products=products, response_text=response_text,
             model_used="deterministic", response_mode="followup_comparison",
         )
+    if constraints:
+        selected = await _filter_products_with_constraints(selected, constraints)
+        if not selected or not _is_usage_order_request(message):
+            products = _reconstruct_products(selected)
+            ingredients = [IngredientResult.model_validate(row) for row in (active or {}).get("ingredients", [])]
+            response_text = (_build_grounded_product_response(message, ingredients, products, concerns)
+                             if products else _build_no_product_response(ingredients, constraints, concerns, message))
+            if products:
+                response_text += "\n제조사의 향료 무첨가 안내와 전성분 정보를 기준으로 골랐습니다. 저자극을 보장하는 뜻은 아닙니다."
+            await _store_turn(session_id, message, products, response_text,
+                              active_state={**active, "visible_products": _slim_products(products), "turn_id": turn_id})
+            return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients,
+                                     products=products, response_text=response_text, model_used="deterministic",
+                                     response_mode="followup_constraints")
     if not selected:
         categories = ", ".join(sorted(requested))
         response_text = (
@@ -1567,7 +1652,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
     excluded_mentioned = any(name in response_text for name in excluded_names)
     response_mode = "followup_filtered" if requested else "followup"
-    if not response_text.strip() or integrity_issues or excluded_mentioned:
+    fragrance_violation = _is_sensitivity_query(concerns) and mentions_excluded_rationale(response_text)
+    if not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation:
         products = _reconstruct_products(selected)  # discard ranking from corrupted prose
         response_text, products = _build_safe_followup_response(message, products, ing_kor)
         response_text, _ = _normalize_response_text(response_text, products)
@@ -1607,6 +1693,8 @@ async def _resolve_conversation_response(
         _RESEARCH_CUE.search(message) or (pending and _SEARCH_CONFIRMATION.fullmatch(message.strip()))
     ))
     new_concern = any(cue in message for cue in _CONCERN_CUES) and not _SAME_CONCERN_CUE.search(message)
+    if (active or history) and fragrance_preference(message) is not None and not new_concern and not contextual_request:
+        return await _handle_followup(session_id, turn_id, message, history, active)
     if active and contextual_request and not explicit_prior and not new_concern:
         try:
             profile = UserProfile.model_validate(active["profile"])
@@ -1698,7 +1786,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             else:
                 profile, extraction_method = await extract_with_fallback(message)
             profile = UserProfile.model_validate(profile, from_attributes=True)
-            constraints = list(getattr(profile, "constraints", []))
+            constraints = merge_fragrance_constraint(message, list(profile.constraints))
+            profile = profile.model_copy(update={"constraints": constraints})
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -1729,6 +1818,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
                 requested_override=context.categories if context else None,
+                constraints=constraints,
             )
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
@@ -1748,6 +1838,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                     rating=row.get("rating"),
                     review_count=row.get("review_count"),
                     review_stats=_parse_review_stats(row.get("review_stats")),
+                    fragrance_free_source_url=row.get("fragrance_free_source_url"),
                 )
                 for row in raw_products
             ]
@@ -1782,8 +1873,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
             grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
-            if products and (integrity_issues or grounding_violation):
-                kind = "quality_fallback" if integrity_issues else "grounding_fallback"
+            fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
+            if products and (integrity_issues or grounding_violation or fragrance_violation):
+                kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
                 response_text = _build_grounded_product_response(
@@ -1916,6 +2008,9 @@ def _product_evidence_lines(
     def _product_line(p: ProductResult) -> str:
         base = (f"- [{p.category}] {_product_display_name(p.brand, p.product_name)} "
                 f"(핵심 성분 {p.matched_count}개 포함: {_annotate(p.matched_ingredients)})")
+        if p.fragrance_free_source_url:
+            base += (f"\n  · 검토된 제조사 향료 무첨가 안내: {p.fragrance_free_source_url}. "
+                     "현재 전성분과 대조한 안내이며 무취·저자극·알레르기 안전성을 보장하지 않음.")
         note = _review_note(p)
         return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
 
@@ -2092,7 +2187,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             else:
                 profile, extraction_method = await extract_with_fallback(message)
             profile = UserProfile.model_validate(profile, from_attributes=True)
-            constraints = list(getattr(profile, "constraints", []))
+            constraints = merge_fragrance_constraint(message, list(profile.constraints))
+            profile = profile.model_copy(update={"constraints": constraints})
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -2114,6 +2210,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
                 requested_override=context.categories if context else None,
+                constraints=constraints,
             )
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
@@ -2128,7 +2225,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                               matched_ingredients=row["matched_ingredients"],
                               rating=row.get("rating"),
                               review_count=row.get("review_count"),
-                              review_stats=_parse_review_stats(row.get("review_stats")))
+                              review_stats=_parse_review_stats(row.get("review_stats")),
+                              fragrance_free_source_url=row.get("fragrance_free_source_url"))
                 for row in raw_products
             ]
             redness_match = _redness_study_match(profile.concerns, ingredients, products)
@@ -2213,8 +2311,9 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
             grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
-            if products and (integrity_issues or grounding_violation):
-                kind = "quality_fallback" if integrity_issues else "grounding_fallback"
+            fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
+            if products and (integrity_issues or grounding_violation or fragrance_violation):
+                kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
                 response_text = _build_grounded_product_response(

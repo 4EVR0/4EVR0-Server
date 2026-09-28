@@ -234,7 +234,8 @@ class DeterministicOutputGuardTest(unittest.TestCase):
     def test_unverified_constraint_response_is_explicit(self):
         response = _build_no_product_response([], [Constraint.FRAGRANCE_FREE])
         self.assertIn("향료 미포함", response)
-        self.assertIn("확인할 수 있는 제품 속성 데이터가 없어", response)
+        self.assertIn("표기에 없더라도", response)
+        self.assertIn("무향료 제품으로 추천하지 않습니다", response)
 
     def test_redness_no_product_response_does_not_suggest_retinoids(self):
         ingredients = [IngredientResult(name="RETINOL", kor_name="레티놀")]

@@ -25,7 +25,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v12:"
+_KEY_PREFIX = "reccache:v13:"
 _client: aioredis.Redis | None = None
 
 
@@ -74,7 +74,13 @@ async def get(message: str, gen_prompt_name: str | None) -> dict | None:
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return None
+        # Product evidence can expire/change independently of this cache's TTL.
+        if (payload.get("_profile") or {}).get("constraints"):
+            return None
+        return payload
     except (ValueError, TypeError) as exc:
         logger.warning("recommend cache decode failed: %s", exc)
         return None
@@ -128,7 +134,7 @@ async def single_flight(message: str, gen_prompt_name: str | None):
 
 async def set(message: str, gen_prompt_name: str | None, payload: dict) -> None:
     """추천 콘텐츠(dict)를 TTL과 함께 저장. 장애 시 조용히 무시."""
-    if not settings.recommend_cache_enabled:
+    if not settings.recommend_cache_enabled or payload.get("_profile", {}).get("constraints"):
         return
     try:
         await _get_client().set(
