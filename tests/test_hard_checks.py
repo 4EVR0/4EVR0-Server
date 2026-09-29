@@ -142,3 +142,26 @@ def test_hard_failure_summary_counts_cases_and_codes():
         "hard_failure_rate": 0.6667,
         "hard_failure_counts": {"BANNED_TERM": 1, "HANJA_LEAK": 2},
     }
+
+
+def test_kr_banned_ingredient_fails_by_status_or_sentinel():
+    by_status = _response(ingredients=[{"name": "SOME BANNED", "kr_reg_status": "banned"}])
+    assert _codes({}, by_status) == ["KR_BANNED_INGREDIENT"]
+
+    by_sentinel = _response(ingredients=[{"name": "Azelaic Acid", "kor_name": "아젤라익애씨드"}])
+    assert _codes({}, by_sentinel) == ["KR_BANNED_INGREDIENT"]
+
+    in_product = _response(products=[_product(matched_ingredients=["GLYCERIN", "AZELAIC ACID"])])
+    failures = check_response({}, in_product)
+    assert [f.code for f in failures] == ["KR_BANNED_INGREDIENT"]
+    assert "AZELAIC ACID" in failures[0].detail
+
+
+def test_kr_restricted_or_conditional_and_text_mentions_pass():
+    response = _response(
+        text="아젤라익애씨드는 국내 화장품에 쓸 수 없는 성분이라 제외했어요.",
+        ingredients=[{"name": "SALICYLIC ACID", "kr_reg_status": "restricted"},
+                     {"name": "TALC", "kr_reg_status": "conditional"},
+                     {"name": "POTASSIUM AZELAOYL DIGLYCINATE", "kr_reg_status": "none"}],
+    )
+    assert check_response({}, response) == []
