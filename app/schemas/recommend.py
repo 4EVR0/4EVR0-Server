@@ -13,6 +13,10 @@ class IngredientResult(BaseModel):
     claim: str | None = None
     eligibility_tier: str | None = None
     paper_ref: str | None = None
+    # 식약처 사용제한 원료 기준 국내 규제 상태. banned는 조회 단계에서 제외되므로 응답에는
+    # conditional | restricted | none 만 온다. restricted면 kr_limit_note에 배합한도 문구.
+    kr_reg_status: str | None = None
+    kr_limit_note: str | None = None
 
 
 class ProductIngredientExplanation(BaseModel):

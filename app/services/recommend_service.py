@@ -816,11 +816,13 @@ def _build_grounded_product_response(
             benefit = _claim_benefit_phrase(item)
             evidence = _evidence_label(item.eligibility_tier, item.paper_ref)
             if benefit and evidence != "근거 미상":
-                lines.append(f"- {display}: 확인된 효능은 {benefit}이며, 근거 수준은 {evidence}입니다.")
+                line = f"- {display}: 확인된 효능은 {benefit}이며, 근거 수준은 {evidence}입니다."
             elif benefit:
-                lines.append(f"- {display}: 확인된 효능은 {benefit}이지만, 근거 수준은 확인되지 않습니다.")
+                line = f"- {display}: 확인된 효능은 {benefit}이지만, 근거 수준은 확인되지 않습니다."
             else:
-                lines.append(f"- {display}: 제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다.")
+                line = f"- {display}: 제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다."
+            limit = _kr_limit_phrase(item)
+            lines.append(f"{line} {limit}" if limit else line)
     elif not highlighted_cards:
         lines.append("- 제공된 제품의 매칭 성분만 사용했습니다.")
 
@@ -1848,6 +1850,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                     claim=row.get("claim"),
                     eligibility_tier=row.get("eligibility_tier"),
                     paper_ref=row.get("paper_ref"),
+                    kr_reg_status=row.get("kr_reg_status"),
+                    kr_limit_note=row.get("kr_limit_note"),
                 )
                 for row in raw_ingredients
             ]
@@ -1977,6 +1981,20 @@ def _ingredient_display_name(ingredient: IngredientResult) -> str:
     return ingredient.name
 
 
+_KR_LIMIT_NOTE_MAX = 80
+
+
+def _kr_limit_phrase(ingredient: IngredientResult) -> str:
+    """국내 배합한도(restricted) 안내 한 구절. 한도 없는 성분은 빈 문자열.
+    문구 전체는 API 필드(kr_limit_note)로 내려가고, 응답 문장에는 앞부분만 쓴다."""
+    if ingredient.kr_reg_status != "restricted":
+        return ""
+    note = " ".join((ingredient.kr_limit_note or "").split())
+    if len(note) > _KR_LIMIT_NOTE_MAX:
+        note = note[:_KR_LIMIT_NOTE_MAX].rstrip() + "…"
+    return f"국내 배합한도가 있는 성분입니다({note})." if note else "국내 배합한도가 있는 성분입니다."
+
+
 def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     """근거 종류를 사람이 읽을 수 있는 한국어 라벨로 변환한다.
 
@@ -2077,6 +2095,7 @@ def _compose_user_content(
         ingredient_lines = "\n".join(
             f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
             f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
+            + (f" (국내 배합한도: {i.kr_limit_note})" if i.kr_reg_status == "restricted" and i.kr_limit_note else "")
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -2249,7 +2268,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             raw_ingredients = await apply_caution_filter(raw_ingredients, profile.concerns)
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
-                                 eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"))
+                                 eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
+                                 kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"))
                 for row in raw_ingredients
             ]
             # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
