@@ -231,6 +231,10 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(settings, "product_image_url_mode", "public"),
+            # 실제 Redis의 대화 기록·추천 캐시에 따라 결과가 바뀌지 않도록 격리한다.
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
             patch(
                 "app.services.recommend_service.extract_with_fallback",
                 new=AsyncMock(return_value=(profile, "llm")),
@@ -266,6 +270,10 @@ class RecommendKoreanNameTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(settings, "product_image_url_mode", "public"),
+            # 실제 Redis의 대화 기록·추천 캐시에 따라 결과가 바뀌지 않도록 격리한다.
+            patch.object(settings, "recommend_cache_enabled", False),
+            patch("app.services.recommend_service._resolve_conversation_response", new=AsyncMock(return_value=None)),
+            patch("app.services.recommend_service._store_turn", new=AsyncMock()),
             patch(
                 "app.services.recommend_service.extract_with_fallback",
                 new=AsyncMock(return_value=(profile, "llm")),
