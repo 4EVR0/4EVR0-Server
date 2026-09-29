@@ -19,6 +19,10 @@ from app.services.ingredient_explanations import product_explanations
 
 HANJA_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 BANNED_CONSUMER_TERMS = ("심부", "피장벽", "피분비", "지분")
+# 식약처 사용제한 원료정보 기준 국내 배합금지 성분 중 효능 타깃 후보였던 것.
+# 정본은 Neo4j Ingredient.kr_reg_status(INCI_Pipeline mfds_regulation)이고, 이 목록은
+# 속성 적재 전·필드 없는 응답에서도 회귀를 잡기 위한 최소 보조 목록이다.
+KR_BANNED_SENTINELS = frozenset({"AZELAIC ACID", "HYDROQUINONE"})
 
 
 @dataclass(frozen=True)
@@ -45,7 +49,7 @@ def _as_dict(value: Any) -> dict:
         key: getattr(value, key)
         for key in (
             "product_id", "product_name", "brand", "category", "matched_ingredients",
-            "name", "kor_name",
+            "name", "kor_name", "kr_reg_status",
         )
         if hasattr(value, key)
     }
@@ -158,6 +162,27 @@ def _check_target_mismatch(case: Mapping[str, Any], products: Sequence[Any]) -> 
     )]
 
 
+def _check_kr_banned(ingredients: Sequence[Any], products: Sequence[Any]) -> list[HardFailure]:
+    """국내 배합금지 성분이 추천 성분 또는 제품 매칭 성분으로 노출되면 실패.
+
+    응답 텍스트는 검사하지 않는다. "국내에서는 쓸 수 없는 성분" 같은 안내는 정상이다.
+    """
+    banned = set()
+    for ingredient in ingredients:
+        row = _as_dict(ingredient)
+        name = str(row.get("name") or "").strip()
+        if name and (row.get("kr_reg_status") == "banned" or name.upper() in KR_BANNED_SENTINELS):
+            banned.add(name)
+    for product in products:
+        row = _as_dict(product)
+        for name in row.get("matched_ingredients") or []:
+            if str(name).strip().upper() in KR_BANNED_SENTINELS | {n.upper() for n in banned}:
+                banned.add(str(name).strip())
+    if not banned:
+        return []
+    return [HardFailure("KR_BANNED_INGREDIENT", f"국내 배합금지 성분 추천: {', '.join(sorted(banned))}")]
+
+
 def check_response(case: Mapping[str, Any], response: Any) -> list[HardFailure]:
     """Return every deterministic failure remaining in a final response."""
     text = str(_get(response, "response_text", "") or "")
@@ -213,6 +238,7 @@ def check_response(case: Mapping[str, Any], response: Any) -> list[HardFailure]:
 
     failures.extend(_check_product_grounding(text, ingredients, products))
     failures.extend(_check_target_mismatch(case, products))
+    failures.extend(_check_kr_banned(ingredients, products))
     return failures
 
 
