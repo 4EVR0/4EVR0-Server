@@ -56,6 +56,8 @@ def test_paired_runner_saves_exposure_raw_outputs_and_shared_evidence(tmp_path):
     assert "글리세린" in pair["responses"]["on"]["response_text"]
     assert "글리세린" in pair["evidence"]["on"]["products"]
     assert "GLYCERIN" in pair["generation_context"]["on"]
+    assert pair["generation_system_prompts"]["on"] != pair["generation_system_prompts"]["off"]
+    assert result["run"]["dictionary_policy_sha256"] == pilot.POLICY_SHA256
     assert pair["hard_failures"] == {"off": [], "on": []}
     log.assert_called_once()
 

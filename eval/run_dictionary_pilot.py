@@ -25,7 +25,7 @@ from app.clients.neo4j_client import close_driver
 from app.core.config import settings
 from app.domain.user import UserProfile
 from app.services import recommend_service as service
-from app.services.ingredient_explanations import CARD_SHA256, product_explanations
+from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256, generation_system_prompt, product_explanations
 from eval.hard_checks import check_response
 from eval.mlflow_tracking import default_tracking_uri, log_report
 from eval.run_response_eval import render_evidence_context
@@ -64,6 +64,7 @@ async def run(snapshot_path: Path, output: Path, seed: int):
         "snapshot_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "pilot_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "dictionary_sha256": CARD_SHA256, "system_prompt_sha256": digest(service._SYSTEM_PROMPT),
+        "dictionary_policy_sha256": POLICY_SHA256,
         "model_revision": "unverified; same configured live endpoint for all pairs",
         "gen_temperature": 0, "gen_max_tokens": settings.gen_max_tokens, "seed": seed,
         "scope": "frozen retrieval, live generation; confirmed constituents + dictionary explanations",
@@ -79,7 +80,7 @@ async def run(snapshot_path: Path, output: Path, seed: int):
                 snapshots = {row["function"]: row for row in case["snapshot"]}
                 profile_row, extraction_method = snapshots["extract_with_fallback"]["result"]
                 arm = {"value": "off"}
-                drafts, contexts, inventory_snapshot = {}, {}, {}
+                drafts, contexts, system_prompts, inventory_snapshot = {}, {}, {}, {}
                 original_compose, original_build = service._compose_user_content, service._build_llm_response
                 original_inventory = service.query_product_ingredient_inventory
 
@@ -100,6 +101,7 @@ async def run(snapshot_path: Path, output: Path, seed: int):
                 def compose(message, ingredients, products):
                     content = original_compose(message, ingredients, products)
                     contexts[arm["value"]] = content
+                    system_prompts[arm["value"]] = generation_system_prompt(service._SYSTEM_PROMPT, products)
                     return content
 
                 async def build(*args, **kwargs):
@@ -144,6 +146,7 @@ async def run(snapshot_path: Path, output: Path, seed: int):
                         {"product_ids": list(key), "result": value} for key, value in inventory_snapshot.items()],
                     "matching_cards": exposure, "input_cards": input_cards,
                     "final_card_mentions": final_card_mentions, "generation_context": contexts, "drafts": drafts,
+                    "generation_system_prompts": system_prompts,
                     "responses": responses, "evidence": evidence, "hard_failures": failures,
                     "identical_final": responses["off"]["response_text"] == responses["on"]["response_text"],
                 })

@@ -14,6 +14,18 @@ CARD_SHA256 = hashlib.sha256(_RAW).hexdigest()
 _DOCUMENT = json.loads(_RAW)
 _CARDS = tuple(card for card in _DOCUMENT["cards"] if card["review_status"] == "reviewed_paraphrase")
 
+# 이 추가 근거가 있을 때만 기존 '논문 성분 우선' 지침을 보완한다.
+GENERATION_POLICY = """
+검토된 보습 성분 설명이 제공된 이번 요청에는 다음 근거 사용 규칙을 우선 적용하세요.
+- 제품 함유가 확인된 '일반 성분 역할 근거'도 보습 추천 이유로 사용하세요. 논문 건수나 검색 핵심 성분만으로 설명을 제한하지 마세요.
+- '성분 설명'에 제공된 보습 설명 성분을 최소 하나 포함하고, 무엇을 돕는지와 제공된 작용 이유를 짧게 설명하세요. 구체적인 작용 이유가 제공된 성분을 우선하세요.
+- 추천할 제품에 그 성분이 확인되면, 그 제품의 설명에도 성분의 일반 역할과 사용자의 건조함을 연결한 이유를 한 문장으로 포함하세요.
+- 일반 성분 역할은 논문 임상 결과나 완제품 효과의 입증이 아닙니다. 함량·효과의 크기·우열·시너지·저자극·깊은 침투를 추정하지 마세요.
+- 효능 라벨과 논문 건수만 제공된 다른 성분에는 구체적인 작용기전을 새로 붙이지 마세요. 피부 장벽 손상 등 사용자 상태의 원인도 확정하지 마세요.
+- 소비자에게는 간결한 한국어 설명을 우선하세요. 책 제목·쪽수와 논문 건수는 본문에 반복하지 않아도 됩니다. 제품명·함유 근거·길이 제한은 유지하세요.
+""".strip()
+POLICY_SHA256 = hashlib.sha256(GENERATION_POLICY.encode("utf-8")).hexdigest()
+
 
 def _field(row: Any, name: str, default=None):
     return row.get(name, default) if isinstance(row, Mapping) else getattr(row, name, default)
@@ -59,3 +71,10 @@ def render_product_explanations(product: Any) -> str:
              for card in cards]
     lines.append("  · 건조·보습 추천 이유에 이 일반 역할 설명을 활용하세요. 논문 근거 건수와 구분한 보조 설명이며 제품 임상 효과, 저자극, 알레르기 안전성, 피부 깊은 침투를 입증하지 않습니다. 책 제목·쪽수는 추천 본문에 반복하지 마세요.")
     return "\n".join(lines)
+
+
+def generation_system_prompt(base: str, products: list[Any]) -> str:
+    """카드 미제공/OFF에서는 기존 시스템 프롬프트를 한 글자도 바꾸지 않는다."""
+    if not any(product_explanations(product) for product in products):
+        return base
+    return f"{base}\n\n{GENERATION_POLICY}"

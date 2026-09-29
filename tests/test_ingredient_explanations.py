@@ -10,7 +10,7 @@ from app.domain.enums import Concern
 from app.repositories import recommend_cache
 from app.schemas.recommend import ProductResult
 from app.services import recommend_service as service
-from app.services.ingredient_explanations import cards_for_inventory, product_explanations
+from app.services.ingredient_explanations import GENERATION_POLICY, cards_for_inventory, generation_system_prompt, product_explanations
 from app.services.response_integrity import find_response_integrity_issues
 from eval.hard_checks import check_response
 from eval.run_response_eval import render_evidence_context
@@ -114,6 +114,24 @@ def test_known_dictionary_inci_is_not_stray_english():
     assert find_response_integrity_issues("GLYCERIN 성분을 확인했습니다.", [], [explained()]) == []
 
 
+def test_prompt_policy_is_applied_only_with_reviewed_product_cards():
+    base = "기존 시스템 프롬프트"
+    assert generation_system_prompt(base, []) == base
+    assert generation_system_prompt(base, [product()]) == base
+    row = explained()
+    assert generation_system_prompt(base, [row]) == f"{base}\n\n{GENERATION_POLICY}"
+    row.ingredient_explanations[0].card_version = "unreviewed"
+    assert generation_system_prompt(base, [row]) == base
+
+
+def test_product_context_no_longer_forces_paper_only_rationale_with_cards():
+    off = service._compose_user_content("건조해요", [], [product()])
+    on = service._compose_user_content("건조해요", [], [explained()])
+    assert "성분의 논문 근거가 주된 추천 이유입니다" in off
+    assert "성분의 논문 근거가 주된 추천 이유입니다" not in on
+    assert "검토 보습 설명을 추천 이유에 활용" in on
+
+
 def test_cache_keys_separate_off_on_and_card_changes_without_changing_off_key():
     with patch.object(settings, "dictionary_explanations_enabled", False):
         off = recommend_cache._key("건조해요", None)
@@ -121,7 +139,9 @@ def test_cache_keys_separate_off_on_and_card_changes_without_changing_off_key():
         on = recommend_cache._key("건조해요", None)
         with patch.object(recommend_cache, "CARD_SHA256", "new-version"):
             changed = recommend_cache._key("건조해요", None)
-    assert len({off, on, changed}) == 3
+        with patch.object(recommend_cache, "POLICY_SHA256", "new-policy"):
+            changed_policy = recommend_cache._key("건조해요", None)
+    assert len({off, on, changed, changed_policy}) == 4
     with patch.object(settings, "dictionary_explanations_enabled", False):
         assert recommend_cache._key("건조해요", None) == off
 
@@ -141,12 +161,14 @@ def test_serving_transports_attach_before_generation_and_keep_cards_after_guard(
             "고민 분석\n건조함을 고려했습니다.\n성분 설명\n글리세린은 보습 역할을 합니다.\n"
             "추천 제품\n- 제품 p1: 글리세린이 확인되어 건조함 관리 후보입니다.")
     contents = []
+    system_prompts = []
 
     async def chunks():
         yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=text))])
 
     async def create(**kwargs):
         contents.append(kwargs["messages"][1]["content"])
+        system_prompts.append(kwargs["messages"][0]["content"])
         return chunks() if kwargs.get("stream") else SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
@@ -177,6 +199,7 @@ def test_serving_transports_attach_before_generation_and_keep_cards_after_guard(
         result = asyncio.run(run())
     inventory.assert_awaited_once_with(["p1"])
     assert "수분을 끌어당기고 유지" in contents[0]
+    assert system_prompts[0].endswith(GENERATION_POLICY)
     assert result["products"][0]["ingredient_explanations"][0]["name"] == "GLYCERIN"
     assert result["response_mode"] == ("quality_fallback" if corrupted else "generated")
     assert "글리세린" in result["response_text"]

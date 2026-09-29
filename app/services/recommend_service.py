@@ -29,7 +29,8 @@ from app.schemas.recommend import IngredientResult, ProductResult, RecommendResp
 from app.services.product_image_service import build_product_image_url
 from app.services.response_integrity import find_response_integrity_issues
 from app.services.ingredient_explanations import (
-    cards_for_inventory, product_explanations, render_product_explanations, supports_concerns,
+    cards_for_inventory, generation_system_prompt, product_explanations,
+    render_product_explanations, supports_concerns,
 )
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.fragrance_policy import (
@@ -1659,12 +1660,13 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     await _attach_ingredient_explanations(explained_products, concerns)
     if any(product_explanations(product) for product in explained_products):
         user_content += "\n\n" + _product_evidence_lines([], explained_products)
+    followup_system = generation_system_prompt(_FOLLOWUP_SYSTEM, explained_products)
     try:
         async with llm_slot():
             client = get_async_llm_client()
             resp = await client.chat.completions.create(
                 model=settings.gpu_model,
-                messages=[{"role": "system", "content": _FOLLOWUP_SYSTEM},
+                messages=[{"role": "system", "content": followup_system},
                           {"role": "user", "content": user_content}],
                 temperature=settings.gen_temperature, max_tokens=settings.gen_max_tokens,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
@@ -2085,7 +2087,9 @@ def _compose_user_content(
         product_lines = _product_evidence_lines(ingredients, products)
         sections.append(
             "추천 제품 데이터:\n" + product_lines +
-            "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, "
+            ("\n\n(제품에서 확인된 검토 보습 설명을 추천 이유에 활용하세요. 사용자 리뷰는 보조 참고로만, "
+             if any(product_explanations(product) for product in products) else
+             "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, ") +
             "'리뷰에서는 …라는 평가가 많아요' 식으로 가볍게 덧붙이세요. 리뷰를 근거로 단정하지 마세요.)"
         )
 
@@ -2099,6 +2103,7 @@ async def _build_llm_response(
     system_prompt: str = _SYSTEM_PROMPT,
 ) -> str:
     user_content = _compose_user_content(message, ingredients, products)
+    system_prompt = generation_system_prompt(system_prompt, products)
 
     try:
         client = get_async_llm_client()
@@ -2331,7 +2336,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                     client = get_async_llm_client()
                     stream = await client.chat.completions.create(
                         model=settings.gpu_model,
-                        messages=[{"role": "system", "content": system_prompt},
+                        messages=[{"role": "system", "content": generation_system_prompt(system_prompt, products)},
                                   {"role": "user", "content": user_content}],
                         temperature=settings.gen_temperature,
                         max_tokens=settings.gen_max_tokens,
