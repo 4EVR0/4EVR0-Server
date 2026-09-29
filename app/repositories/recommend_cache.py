@@ -62,6 +62,13 @@ def _key(message: str, gen_prompt_name: str | None) -> str:
     )
     if settings.dictionary_explanations_enabled:
         raw += f"|dictionary={CARD_SHA256}|dictionary_policy={POLICY_SHA256}"
+    if settings.ingredient_selection_enabled:
+        # 추천 성분 개수 규칙을 바꾸면 이전 규칙으로 만든 응답을 재사용하지 않는다.
+        raw += (
+            f"|ingredient_selection={settings.ingredient_candidate_limit},{settings.ingredient_product_pool},"
+            f"{settings.ingredient_final_default},{settings.ingredient_final_max},"
+            f"{settings.ingredient_score_ratio},{settings.ingredient_product_bonus}"
+        )
     return _KEY_PREFIX + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

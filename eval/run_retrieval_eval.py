@@ -38,6 +38,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import settings  # noqa: E402
 from app.domain.enums import Concern, Constraint  # noqa: E402
+from app.services.ingredient_selection import select_recommended_ingredients  # noqa: E402
 from app.services.taxonomy_normalization_service import infer_effects  # noqa: E402
 from app.services.recommend_service import (  # noqa: E402
     _apply_constraint_evidence_guard,
@@ -138,7 +139,8 @@ async def eval_case(case, judge_client, judge_model, judge_timeout, *, capture_o
     # 운영 추천과 동일하게 민감성 계열 요청의 주의 성분을 먼저 제거한다. 이 단계가 빠지면
     # 평가기만 다른 상위 성분·제품을 보게 되어 실제 서비스에는 없는 검색 공백이 생긴다.
     raw_ings = await apply_caution_filter(raw_ings, concerns)
-    scores = [{"name": r["name"], "weight": float(r.get("graph_score") or 1.0)} for r in raw_ings[:10]]
+    scores = [{"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
+              for r in raw_ings[:settings.ingredient_product_pool]]
     # 실제 서비스는 기본 query limit(5)이 아니라 30개 후보를 확보한 뒤 목적 필터·리뷰
     # 재정렬·카테고리 다양화를 적용한다. 평가기도 같은 함수를 재사용해 경로 드리프트를 막는다.
     constraints = [
@@ -148,7 +150,15 @@ async def eval_case(case, judge_client, judge_model, judge_timeout, *, capture_o
     ]
     products = await select_products(case["message"], concerns, scores, constraints=constraints)
     products = _apply_constraint_evidence_guard(products, constraints)
-    judged_ings = raw_ings[:_TOP_INGREDIENTS]
+    # 운영과 같은 최종 선정 성분(6장 규칙)을 채점한다. 비활성이면 이전처럼 후보 상위 N개.
+    if settings.ingredient_selection_enabled:
+        judged_ings = select_recommended_ingredients(
+            raw_ings, products,
+            default_k=settings.ingredient_final_default, max_k=settings.ingredient_final_max,
+            score_ratio=settings.ingredient_score_ratio, product_bonus=settings.ingredient_product_bonus,
+        )
+    else:
+        judged_ings = raw_ings[:_TOP_INGREDIENTS]
     ing_names = [r["name"] for r in judged_ings]
     ingredient_candidates, product_candidates = _candidate_snapshots(judged_ings, products)
 
@@ -158,7 +168,8 @@ async def eval_case(case, judge_client, judge_model, judge_timeout, *, capture_o
 
     result = {
         "id": case.get("id"), "concerns": [c.value for c in concerns],
-        "n_ingredients": len(raw_ings), "n_products": len(products),
+        "n_ingredients": len(raw_ings), "n_selected_ingredients": len(judged_ings),
+        "n_products": len(products),
         # 고민 없음 또는 현재 제품 속성 데이터로 검증할 수 없는 제약 요청은
         # 제품 0건이 안전한 정상 결과다. 회귀 게이트의 검색 공백에서 제외한다.
         "expects_products": bool(concerns) and not bool(constraints),

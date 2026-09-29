@@ -211,7 +211,7 @@ async def query_ingredients_by_effects(
         return []
 
     driver = _get_driver()
-    # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT 20 = distinct 성분 20개 보장
+    # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT = distinct 성분 수 보장
     query = """
     UNWIND $effects AS effect_code
     MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)
@@ -238,16 +238,18 @@ async def query_ingredients_by_effects(
         i.kr_reg_status       AS kr_reg_status,
         i.kr_limit_note       AS kr_limit_note
     ORDER BY best.ev_rank, best.graph_score DESC, i.inci_name
-    LIMIT 20
+    LIMIT $limit
     """
     try:
         start = time.perf_counter()
         async with driver.session() as session:
-            result = await session.run(query, effects=effects, min_score=float(min_graph_score))
+            result = await session.run(query, effects=effects, min_score=float(min_graph_score),
+                                       limit=settings.ingredient_candidate_limit)
             rows = [dict(record) async for record in result]
             # 폴백: 임계가 결과를 비우면 임계 없이 재조회 (희소 효능 보호)
             if not rows and float(min_graph_score) > 0.0:
-                result = await session.run(query, effects=effects, min_score=0.0)
+                result = await session.run(query, effects=effects, min_score=0.0,
+                                           limit=settings.ingredient_candidate_limit)
                 rows = [dict(record) async for record in result]
         _log_query("query_ingredients_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(rows))
         return rows

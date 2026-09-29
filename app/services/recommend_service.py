@@ -33,6 +33,7 @@ from app.services.ingredient_explanations import (
     render_product_explanations, supports_concerns,
 )
 from app.services.verified_ingredient_studies import verified_study_for
+from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import (
     FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
     merge_fragrance_constraint, mentions_excluded_rationale, parse_evidence,
@@ -320,6 +321,23 @@ async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Conce
     kept = [r for r in raw_ingredients if r.get("name") not in excluded]
     # 빈 결과를 피하기 위해 차단된 근거를 되살리지 않는다.
     return kept
+
+
+def _finalize_ingredients(
+    raw_ingredients: list[dict], raw_products: list[dict], candidates: list[IngredientResult],
+) -> list[IngredientResult]:
+    """후보 성분에서 최종 추천 성분을 고른다(6장 규칙). 비활성이면 후보 전체."""
+    if not settings.ingredient_selection_enabled:
+        return candidates
+    picked = select_recommended_ingredients(
+        raw_ingredients, raw_products,
+        default_k=settings.ingredient_final_default,
+        max_k=settings.ingredient_final_max,
+        score_ratio=settings.ingredient_score_ratio,
+        product_bonus=settings.ingredient_product_bonus,
+    )
+    by_name = {item.name: item for item in candidates}
+    return [by_name[row["name"]] for row in picked if row.get("name") in by_name]
 
 
 logger = logging.getLogger(__name__)
@@ -1860,7 +1878,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
             ingredient_scores = [
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
-                for r in raw_ingredients[:10]
+                for r in raw_ingredients[:settings.ingredient_product_pool]
             ]
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
@@ -1870,6 +1888,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
+            # 연구·홍조 템플릿은 기존처럼 필터 통과 후보 전체를 보고, 생성·응답은 최종 선정 성분만 쓴다.
+            candidate_ingredients = ingredients
+            ingredients = _finalize_ingredients(raw_ingredients, raw_products, candidate_ingredients)
 
             products = [
                 ProductResult(
@@ -1893,8 +1914,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
             response_mode = "generated" if products else "no_products"
-            study_match = _verified_study_match(generation_message, profile.concerns, ingredients, products)
-            redness_match = _redness_study_match(profile.concerns, ingredients, products)
+            study_match = _verified_study_match(generation_message, profile.concerns, candidate_ingredients, products)
+            redness_match = _redness_study_match(profile.concerns, candidate_ingredients, products)
             if redness_match:
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
                 products = [redness_match[1]]
@@ -1905,7 +1926,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             elif products and _is_redness_rosacea_query(profile.concerns):
                 response_mode = "redness_evidence_template"
                 response_text = _build_redness_rosacea_response(
-                    ingredients, products, profile.concerns,
+                    candidate_ingredients, products, profile.concerns,
                 )
             elif products and study_match:
                 response_mode = "verified_study_template"
@@ -1926,8 +1947,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
+                # 제품 매칭 성분의 한글명·근거를 찾도록 최종 선정이 아닌 후보 목록을 넘긴다.
                 response_text = _build_grounded_product_response(
-                    generation_message, ingredients, products, profile.concerns,
+                    generation_message, candidate_ingredients, products, profile.concerns,
                 )
             spans["generate"] = time.perf_counter() - _t
 
@@ -2275,7 +2297,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
             ingredient_scores = [
                 {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
-                for r in raw_ingredients[:10]
+                for r in raw_ingredients[:settings.ingredient_product_pool]
             ]
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
@@ -2285,6 +2307,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             raw_products = _apply_constraint_evidence_guard(raw_products, constraints)
             spans["retrieval"] = time.perf_counter() - _t
             metrics.recommend_ingredients_found.observe(len(ingredients))
+            candidate_ingredients = ingredients
+            ingredients = _finalize_ingredients(raw_ingredients, raw_products, candidate_ingredients)
             products = [
                 ProductResult(product_id=row["product_id"], goods_no=row.get("goods_no"),
                               product_name=row["product_name"], brand=row["brand"],
@@ -2299,7 +2323,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                               fragrance_free_source_url=row.get("fragrance_free_source_url"))
                 for row in raw_products
             ]
-            redness_match = _redness_study_match(profile.concerns, ingredients, products)
+            redness_match = _redness_study_match(profile.concerns, candidate_ingredients, products)
             if redness_match:
                 products = [redness_match[1]]
             await _attach_ingredient_explanations(products, profile.concerns)
@@ -2337,12 +2361,12 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             elif _is_redness_rosacea_query(profile.concerns):
                 response_mode = "redness_evidence_template"
                 response_text = _build_redness_rosacea_response(
-                    ingredients, products, profile.concerns,
+                    candidate_ingredients, products, profile.concerns,
                 )
                 gen_total = 0.0
                 spans["generate_ttft"] = 0.0
                 spans["generate_decode"] = 0.0
-            elif study_match := _verified_study_match(generation_message, profile.concerns, ingredients, products):
+            elif study_match := _verified_study_match(generation_message, profile.concerns, candidate_ingredients, products):
                 response_mode = "verified_study_template"
                 response_text = _build_verified_study_response(message, study_match)
                 gen_total = 0.0
@@ -2387,8 +2411,9 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
                 response_mode = kind
+                # 제품 매칭 성분의 한글명·근거를 찾도록 최종 선정이 아닌 후보 목록을 넘긴다.
                 response_text = _build_grounded_product_response(
-                    generation_message, ingredients, products, profile.concerns,
+                    generation_message, candidate_ingredients, products, profile.concerns,
                 )
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.

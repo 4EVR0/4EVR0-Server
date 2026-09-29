@@ -49,6 +49,20 @@ class Settings(BaseSettings):
     # 성분→효능(AFFECTS) 엣지 graph_score 임계 — 이 미만 엣지 무시(cosing 저품질 엣지 노이즈 컷).
     # retrieval eval(#40)로 A/B해 정한 값. 0=off. (결과 비면 폴백으로 임계 없이 재조회)
     ingredient_min_graph_score: float = 0.0
+    # 추천 성분 개수 규칙 (docs/HANDOFF_regulation_and_evidence.md 6장). 값은 여기서만 관리한다.
+    #   후보 N개 조회 → 국내 금지·CAUTION 필터 → 상위 pool개로 제품 선정 → 재정렬 → 최종 선정.
+    #   최종 선정 결과가 API 응답 ingredients와 생성 LLM의 "관련 성분"이 된다.
+    ingredient_candidate_limit: int = 20
+    ingredient_product_pool: int = 10
+    # false면 필터 통과 후보 전체를 그대로 쓰는 이전 동작(A/B·롤백용).
+    ingredient_selection_enabled: bool = True
+    ingredient_final_default: int = 3
+    ingredient_final_max: int = 5
+    #   선정 자격: 전체 1위와 같은 근거 등급이면서 1위 점수 × 이 비율 이상.
+    #   GPU A/B(2026-09-29, eval 50문항): 0.6은 절반 가까이 성분 1개만 남아 0.5 채택.
+    ingredient_score_ratio: float = 0.5
+    #   선정된 제품에 실제 매칭된 성분의 점수 가점(0.2 = +20%).
+    ingredient_product_bonus: float = 0.2
 
     gpu_server_url: str = "http://127.0.0.1:18000"
     gpu_model: str = "Qwen/Qwen3-8B-FP8"
