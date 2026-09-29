@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping, Sequence
+from app.services.ingredient_explanations import product_explanations
 
 
 # Even one duplicated content word can be visibly broken prose ("세포 세포을").
@@ -53,6 +54,8 @@ def find_response_integrity_issues(
         for row in rows
         for field in fields
     ]
+    known_names.extend(name for product in products for card in product_explanations(product)
+                       for name in (card.name, card.kor_name))
     for name in sorted((name for name in known_names if name), key=len, reverse=True):
         prose = re.sub(re.escape(name), " ", prose, flags=re.IGNORECASE)
     stray = _LONG_UPPERCASE_TOKEN.search(prose)

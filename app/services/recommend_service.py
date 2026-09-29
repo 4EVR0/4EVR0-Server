@@ -28,6 +28,10 @@ from app.repositories import conversation_store, recommend_cache
 from app.schemas.recommend import IngredientResult, ProductResult, RecommendResponse
 from app.services.product_image_service import build_product_image_url
 from app.services.response_integrity import find_response_integrity_issues
+from app.services.ingredient_explanations import (
+    cards_for_inventory, generation_system_prompt, product_explanations,
+    render_product_explanations, supports_concerns,
+)
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.fragrance_policy import (
     FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
@@ -485,6 +489,17 @@ def _build_no_product_response(
     )
 
 
+async def _attach_ingredient_explanations(products: list[ProductResult], concerns: list[Concern]) -> None:
+    """랭킹 확정 후 CONTAINS를 읽어 설명만 추가. 조회 실패/미확인은 그대로 둔다."""
+    for product in products:
+        product.ingredient_explanations = []
+    if not settings.dictionary_explanations_enabled or not products or not supports_concerns(concerns):
+        return
+    inventory = await query_product_ingredient_inventory([product.product_id for product in products])
+    for product in products:
+        product.ingredient_explanations = cards_for_inventory(inventory.get(product.product_id, []), concerns)
+
+
 def _has_product_grounding_violation(
     response_text: str,
     ingredients: list[IngredientResult],
@@ -492,7 +507,8 @@ def _has_product_grounding_violation(
 ) -> bool:
     """제품 추천 bullet의 제품/성분 연결이 제공 데이터의 부분집합인지 검사."""
     ingredient_aliases: list[tuple[str, tuple[str, ...]]] = []
-    for ingredient in ingredients:
+    explanations = [card for product in products for card in product_explanations(product)]
+    for ingredient in [*ingredients, *explanations]:
         aliases = tuple(
             alias.casefold()
             for alias in (ingredient.name, ingredient.kor_name)
@@ -516,7 +532,7 @@ def _has_product_grounding_violation(
         allowed = {
             name.casefold()
             for product in matched
-            for name in product.matched_ingredients
+            for name in [*product.matched_ingredients, *[card.name for card in product_explanations(product)]]
         }
         # An ingredient-looking token inside the official product name is not a
         # generated ingredient claim. Validate only the explanatory remainder.
@@ -748,8 +764,12 @@ def _build_grounded_product_response(
     """
     ingredient_map = {item.name: item for item in ingredients}
     selected_products = _distinct_evidence_products(products)
+    highlighted_cards = {}
+    for product in selected_products:
+        for card in product_explanations(product):
+            highlighted_cards.setdefault(card.name, card)
     highlighted: list[IngredientResult] = []
-    seen_ingredients: set[str] = set()
+    seen_ingredients: set[str] = set(highlighted_cards)
     # 제품별 첫 번째 성분을 먼저 살펴 한 제품의 성분이 설명 공간을 독점하지 않게 한다.
     for position in range(3):
         for product in selected_products:
@@ -760,11 +780,11 @@ def _build_grounded_product_response(
             if item and item.name not in seen_ingredients:
                 highlighted.append(item)
                 seen_ingredients.add(item.name)
-            if len(highlighted) == 4:
+            if len(highlighted) + len(highlighted_cards) == 4:
                 break
-        if len(highlighted) == 4:
+        if len(highlighted) + len(highlighted_cards) == 4:
             break
-    benefits = []
+    benefits = ["보습"] if highlighted_cards else []
     for item in highlighted:
         benefit = _claim_benefit_phrase(item)
         if benefit and benefit not in benefits:
@@ -788,6 +808,8 @@ def _build_grounded_product_response(
         "",
         "성분 설명",
     ]
+    for card in highlighted_cards.values():
+        lines.append(f"- {card.kor_name}: {card.explanation}")
     if highlighted:
         for item in highlighted:
             display = _ingredient_display_name(item)
@@ -799,11 +821,18 @@ def _build_grounded_product_response(
                 lines.append(f"- {display}: 확인된 효능은 {benefit}이지만, 근거 수준은 확인되지 않습니다.")
             else:
                 lines.append(f"- {display}: 제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다.")
-    else:
+    elif not highlighted_cards:
         lines.append("- 제공된 제품의 매칭 성분만 사용했습니다.")
 
     lines.extend(["", "추천 제품"])
     for product in selected_products:
+        cards = product_explanations(product)
+        if cards:
+            # 완제품 효과를 보장하지 않고 확인된 함유→일반 역할→고민으로 연결한다.
+            card = cards[0]
+            product_name = _product_display_name(product.brand, product.product_name)
+            lines.append(f"- [{product.category}] {product_name}: {card.kor_name} 함유가 확인됩니다. {card.explanation}")
+            continue
         reasons_by_benefit: dict[str, list[str]] = {}
         reason_ingredient_count = 0
         matched_names: list[str] = []
@@ -1435,6 +1464,9 @@ def _build_safe_followup_response(
             ing_kor[name] for name in product.matched_ingredients if ing_kor.get(name)
         ))[:3]
         matched = f" 확인된 매칭 성분: {', '.join(names)}." if names else ""
+        cards = product_explanations(product)
+        if cards:
+            matched += f" {cards[0].kor_name}: {cards[0].explanation}"
         lines.append(f"- [{product.category}] **{product.product_name}**.{matched}")
     lines.append("제품별 효과나 우열은 이 정보만으로 단정할 수 없습니다.")
     return "\n".join(lines), products
@@ -1623,12 +1655,18 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         f"{base_context}{_followup_context(history, ing_kor, deictic=_is_deictic(message), products_override=selected)}"
         f"\n\n현재 질문: {message}"
     )
+    # 세션의 이전 카드에 의존하지 않고 현재 선택 제품에서 다시 확인한다.
+    explained_products = _reconstruct_products(selected)
+    await _attach_ingredient_explanations(explained_products, concerns)
+    if any(product_explanations(product) for product in explained_products):
+        user_content += "\n\n" + _product_evidence_lines([], explained_products)
+    followup_system = generation_system_prompt(_FOLLOWUP_SYSTEM, explained_products)
     try:
         async with llm_slot():
             client = get_async_llm_client()
             resp = await client.chat.completions.create(
                 model=settings.gpu_model,
-                messages=[{"role": "system", "content": _FOLLOWUP_SYSTEM},
+                messages=[{"role": "system", "content": followup_system},
                           {"role": "user", "content": user_content}],
                 temperature=settings.gen_temperature, max_tokens=settings.gen_max_tokens,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
@@ -1644,6 +1682,9 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     response_text, ranking = _extract_ranking(response_text)
     products = _reorder_by_ranking(_reconstruct_products(selected),
                                    ranking, response_text)
+    explanations_by_id = {p.product_id: p.ingredient_explanations for p in explained_products}
+    for product in products:
+        product.ingredient_explanations = explanations_by_id.get(product.product_id, [])
     response_text, hanja_removed = _normalize_response_text(response_text, products)
     ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
     excluded_names = {
@@ -1655,6 +1696,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     fragrance_violation = _is_sensitivity_query(concerns) and mentions_excluded_rationale(response_text)
     if not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation:
         products = _reconstruct_products(selected)  # discard ranking from corrupted prose
+        for product in products:
+            product.ingredient_explanations = explanations_by_id.get(product.product_id, [])
         response_text, products = _build_safe_followup_response(message, products, ing_kor)
         response_text, _ = _normalize_response_text(response_text, products)
         response_mode = "followup_quality_fallback"
@@ -1851,6 +1894,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if redness_match:
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
                 products = [redness_match[1]]
+            await _attach_ingredient_explanations(products, profile.concerns)
             if products and redness_match:
                 response_mode = "redness_verified_study_template"
                 response_text = _build_redness_study_response(profile.concerns, redness_match)
@@ -2011,6 +2055,9 @@ def _product_evidence_lines(
         if p.fragrance_free_source_url:
             base += (f"\n  · 검토된 제조사 향료 무첨가 안내: {p.fragrance_free_source_url}. "
                      "현재 전성분과 대조한 안내이며 무취·저자극·알레르기 안전성을 보장하지 않음.")
+        explanation = render_product_explanations(p)
+        if explanation:
+            base += "\n" + explanation
         note = _review_note(p)
         return f"{base}\n  · 사용자 리뷰(참고): {note}" if note else base
 
@@ -2040,7 +2087,9 @@ def _compose_user_content(
         product_lines = _product_evidence_lines(ingredients, products)
         sections.append(
             "추천 제품 데이터:\n" + product_lines +
-            "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, "
+            ("\n\n(제품에서 확인된 검토 보습 설명을 추천 이유에 활용하세요. 사용자 리뷰는 보조 참고로만, "
+             if any(product_explanations(product) for product in products) else
+             "\n\n(성분의 논문 근거가 주된 추천 이유입니다. 사용자 리뷰는 보조 참고로만, ") +
             "'리뷰에서는 …라는 평가가 많아요' 식으로 가볍게 덧붙이세요. 리뷰를 근거로 단정하지 마세요.)"
         )
 
@@ -2054,6 +2103,7 @@ async def _build_llm_response(
     system_prompt: str = _SYSTEM_PROMPT,
 ) -> str:
     user_content = _compose_user_content(message, ingredients, products)
+    system_prompt = generation_system_prompt(system_prompt, products)
 
     try:
         client = get_async_llm_client()
@@ -2232,6 +2282,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             redness_match = _redness_study_match(profile.concerns, ingredients, products)
             if redness_match:
                 products = [redness_match[1]]
+            await _attach_ingredient_explanations(products, profile.concerns)
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(
@@ -2285,7 +2336,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                     client = get_async_llm_client()
                     stream = await client.chat.completions.create(
                         model=settings.gpu_model,
-                        messages=[{"role": "system", "content": system_prompt},
+                        messages=[{"role": "system", "content": generation_system_prompt(system_prompt, products)},
                                   {"role": "user", "content": user_content}],
                         temperature=settings.gen_temperature,
                         max_tokens=settings.gen_max_tokens,

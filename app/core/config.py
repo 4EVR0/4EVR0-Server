@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     recommend_cache_ttl_seconds: int = 86400
     # 출처를 확인한 연구의 짧은 설명 템플릿. 운영에서 과하면 false로 이전 생성 경로로 복귀.
     verified_study_response_enabled: bool = True
+    # 두 성분의 제품 연결 파일럿. 수동 품질 확인 전에는 기본 비활성.
+    dictionary_explanations_enabled: bool = False
     # 홍조·로사케아 연구 설명만 끄고 다른 검증 연구 응답은 유지하는 롤백 스위치.
     redness_verified_study_response_enabled: bool = True
     # 대화 이력(멀티턴 맥락). Redis LIST(conv:{session_id})에 턴 저장 → 후속 질문이 이전 추천 참조.

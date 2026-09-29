@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RecommendRequest(BaseModel):
@@ -15,6 +15,16 @@ class IngredientResult(BaseModel):
     paper_ref: str | None = None
 
 
+class ProductIngredientExplanation(BaseModel):
+    """순위 산정용 매칭 성분과 구분한, 제품에서 확인된 성분의 검토 설명."""
+    name: str
+    kor_name: str
+    explanation: str
+    source_id: str
+    source_page: int
+    card_version: str
+
+
 class ProductResult(BaseModel):
     product_id: str
     goods_no: str | None = None
@@ -25,6 +35,7 @@ class ProductResult(BaseModel):
     product_url: str | None = None  # 올리브영 상품 상세페이지 링크
     matched_count: int
     matched_ingredients: list[str]
+    ingredient_explanations: list[ProductIngredientExplanation] = Field(default_factory=list)
     fragrance_free_source_url: str | None = None
     # 리뷰(부연): 논문 근거가 메인, 리뷰는 사용자 합의 보조 신호
     rating: float | None = None

@@ -1,0 +1,40 @@
+{
+  "version": "dictionary-pilot-v1",
+  "source": {
+    "id": "isbn:9788966300891",
+    "title": "화장품성분학 사전",
+    "authors": "김기연 외",
+    "publisher": "현문사",
+    "publication_date": "2011-07-28",
+    "bibliography_url": "https://product.kyobobook.co.kr/detail/S000001033370",
+    "edition_status": "제공 스캔의 쇄 정보 미확인"
+  },
+  "cards": [
+    {
+      "name": "GLYCERIN",
+      "kor_name": "글리세린",
+      "explanation": "수분을 끌어당기고 유지하는 보습 역할을 하므로, 건조함을 관리할 때 고려할 수 있는 성분입니다.",
+      "source_id": "isbn:9788966300891",
+      "source_page": 25,
+      "card_version": "dictionary-pilot-v1",
+      "review_status": "reviewed_paraphrase",
+      "allowed_concerns": ["DRY_SKIN", "DEHYDRATED_SKIN"],
+      "scope": "화장품 성분의 일반 역할. 제품 임상 효능·저자극·알레르기 안전성 보장 아님",
+      "scan_sha256": "aa35fb0b7cecdfe9244ee2b3739c6a5d4cc8741b0f577598cc0824154a754015",
+      "scan_pdf_page": 14
+    },
+    {
+      "name": "SODIUM HYALURONATE",
+      "kor_name": "소듐하이알루로네이트",
+      "explanation": "히알루론산의 나트륨염으로 보습 역할을 하므로, 건조함을 관리할 때 고려할 수 있는 성분입니다.",
+      "source_id": "isbn:9788966300891",
+      "source_page": 93,
+      "card_version": "dictionary-pilot-v1",
+      "review_status": "reviewed_paraphrase",
+      "allowed_concerns": ["DRY_SKIN", "DEHYDRATED_SKIN"],
+      "scope": "화장품 성분의 일반 역할. 피부 깊은 침투·세포 작용·제품 임상 효능 보장 아님",
+      "scan_sha256": "f74ea1f65279adb37c01e58c5fa9508fb994797f430499d32867cc015076ed4e",
+      "scan_pdf_page": 4
+    }
+  ]
+}

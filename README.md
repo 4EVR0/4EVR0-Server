@@ -173,6 +173,7 @@ GEN_TEMPERATURE=0.3                # 추천 응답 생성 온도 (eval 재현 �
 GEN_MAX_TOKENS=1200                # 응답 잘림 방지용 출력 여유
 VERIFIED_STUDY_RESPONSE_ENABLED=true  # 검증 연구의 짧은 설명; false면 기존 생성 경로로 복귀
 REDNESS_VERIFIED_STUDY_RESPONSE_ENABLED=true  # 홍조·로사케아 연구 설명만 별도로 켜고 끄기
+DICTIONARY_EXPLANATIONS_ENABLED=false  # 보습 성분 사전 설명 파일럿; 품질 확인 전 기본 OFF
 ```
 
 > ⚠️ `GPU_MODEL`이 vLLM 실제 서빙 모델과 불일치하면 404 → 규칙 기반 폴백으로 동작한다.
@@ -187,6 +188,40 @@ REDNESS_VERIFIED_STUDY_RESPONSE_ENABLED=true  # 홍조·로사케아 연구 설�
 재시작한다. 그러면 이전의 보수적 `redness_evidence_template` 응답으로 돌아가고,
 다른 검증 연구 응답은 유지된다. 이 스위치도 캐시 키에 포함돼 롤백 전
 답변이 재사용되지 않는다. 다시 켜려면 `true`로 설정하고 재시작한다.
+
+성분 사전 설명 파일럿은 `DICTIONARY_EXPLANATIONS_ENABLED=true`로 설정하고
+API 서버를 재시작하면 활성화된다. 건조·수분 부족 고민에서 선정된 제품의
+`CONTAINS` 성분 중 글리세린·소듐하이알루로네이트가 확인될 때만 짧은 일반
+역할 설명을 제공한다. 검색 성분·점수·제품 순위는 바꾸지 않으며, 그래프에
+없는 성분을 '미함유'로 단정하지 않는다. 기본값은 품질 검증 전 `false`다.
+롤백은 `false`로 변경 후 재시작하며, 카드 내용 해시가 캐시 키에 포함되어
+ON/OFF 및 카드 변경 전후 답변이 섞이지 않는다. 후속 질문은 선택 제품의
+함유 근거를 다시 조회하며 세션에 설명 카드를 영구 복제하지 않는다.
+
+카드가 제공된 요청에는 검토된 일반 보습 역할을 추천 이유에 쓰는 추가
+시스템 지침을 적용한다. 카드가 없으면 기존 프롬프트를 유지한다.
+추가 지침의 해시도 ON 캐시 키와 실험 메타데이터에 포함한다.
+
+파일럿 설명 출처: 김기연 외, 《화장품성분학 사전》, 현문사(2011),
+ISBN 9788966300891, 글리세린 p.25·소듐하이알루로네이트 p.93.
+제공 자료의 해당 항목을 검토해 화장품 보습 역할만 짧게 바꿔 썼다.
+원문·스캔은 배포하지 않으며 제품 임상 효과, 저자극, 알레르기 안전성,
+피부 깊은 침투를 보장하는 근거로 사용하지 않는다. 제공 스캔의 쇄는 미확인이다.
+
+사전 설명 A/B는 저장된 검색 스냅샷에 대해 동일 제품·순서를 고정하고
+GPU에서 ON/OFF 응답을 다시 생성한다. 외부 Judge를 호출하거나 그래프를 쓰지 않는다.
+추가 함유 근거와 설명의 결합 효과를 보는 탐색 파일럿이며, 설명만의 효과를
+분리한 실험이나 통계적 유의성 검증은 아니다.
+
+```bash
+python eval/run_dictionary_pilot.py \
+  --snapshot-report eval/results/dictionary-pilot-20260929-results.json \
+  --output eval/results/dictionary-product-pilot-20260929-results.json
+```
+
+추적 파일이 깨끗한 커밋 SHA에서만 실행하며 GPU 준비 실패 시 평가를 시작하지 않는다.
+완료 시 실제 초안·최종 응답·생성/평가 근거·함유 스냅샷·노출 여부·A/B 표시 순서를
+로컬 JSON과 MLflow에 남긴다. 입력/결과 파일은 로컬 평가 산출물이다.
 
 샘플은 `.env.example` 참고.
 

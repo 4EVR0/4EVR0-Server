@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 
 from app.core.config import settings
+from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,8 @@ def _key(message: str, gen_prompt_name: str | None) -> str:
         f"|verified_study={int(settings.verified_study_response_enabled)}"
         f"|redness_study={int(settings.redness_verified_study_response_enabled)}|{norm}"
     )
+    if settings.dictionary_explanations_enabled:
+        raw += f"|dictionary={CARD_SHA256}|dictionary_policy={POLICY_SHA256}"
     return _KEY_PREFIX + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
