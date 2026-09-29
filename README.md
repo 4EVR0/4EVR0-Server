@@ -204,6 +204,21 @@ ISBN 9788966300891, 글리세린 p.25·소듐하이알루로네이트 p.93.
 원문·스캔은 배포하지 않으며 제품 임상 효과, 저자극, 알레르기 안전성,
 피부 깊은 침투를 보장하는 근거로 사용하지 않는다. 제공 스캔의 쇄는 미확인이다.
 
+사전 설명 A/B는 저장된 검색 스냅샷에 대해 동일 제품·순서를 고정하고
+GPU에서 ON/OFF 응답을 다시 생성한다. 외부 Judge를 호출하거나 그래프를 쓰지 않는다.
+추가 함유 근거와 설명의 결합 효과를 보는 탐색 파일럿이며, 설명만의 효과를
+분리한 실험이나 통계적 유의성 검증은 아니다.
+
+```bash
+python eval/run_dictionary_pilot.py \
+  --snapshot-report eval/results/dictionary-pilot-20260929-results.json \
+  --output eval/results/dictionary-product-pilot-20260929-results.json
+```
+
+추적 파일이 깨끗한 커밋 SHA에서만 실행하며 GPU 준비 실패 시 평가를 시작하지 않는다.
+완료 시 실제 초안·최종 응답·생성/평가 근거·함유 스냅샷·노출 여부·A/B 표시 순서를
+로컬 JSON과 MLflow에 남긴다. 입력/결과 파일은 로컬 평가 산출물이다.
+
 샘플은 `.env.example` 참고.
 
 ---
