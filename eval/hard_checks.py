@@ -14,6 +14,7 @@ from typing import Any, Mapping, Sequence
 
 from app.domain.enums import Concern
 from app.services.response_integrity import find_response_integrity_issues
+from app.services.ingredient_explanations import product_explanations
 
 
 HANJA_PATTERN = re.compile(r"[\u4e00-\u9fff]")
@@ -72,7 +73,8 @@ def _check_product_grounding(
     failures: list[HardFailure] = []
     product_rows = [_as_dict(product) for product in products]
     ingredient_aliases: list[tuple[str, tuple[str, ...]]] = []
-    for ingredient in ingredients:
+    explanations = [card for product in products for card in product_explanations(product)]
+    for ingredient in [*ingredients, *explanations]:
         row = _as_dict(ingredient)
         canonical = str(row.get("name") or "").strip()
         if not canonical:
@@ -99,7 +101,8 @@ def _check_product_grounding(
         allowed = {
             str(name).casefold()
             for product in matched
-            for name in (product.get("matched_ingredients") or [])
+            for name in [*(product.get("matched_ingredients") or []),
+                         *[card.name for card in product_explanations(product)]]
         }
         # Product names may legitimately contain an ingredient-like token
         # (e.g. "나이아신아마이드 10 앰플"). It is a name, not an attributed
