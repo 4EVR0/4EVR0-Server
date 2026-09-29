@@ -203,6 +203,9 @@ async def query_ingredients_by_effects(
         evidence_type: "pubmed_evidence"(논문, score 0.1~1.2) > "cosing_function"(성분기능, 0~0.15).
         cosing 엣지(5천+개, 저품질)가 pubmed 부족한 효능에서 노이즈로 상위를 채우는 문제 →
         임계로 약한 엣지를 걷어낸다. 결과가 비면(희소 효능) 임계 없이 폴백.
+
+    국내 배합금지(kr_reg_status='banned', 식약처 사용제한 원료정보) 성분은 LIMIT 전에 제외한다.
+    속성이 없는 노드(적재 전)는 'none'으로 본다. restricted는 kr_limit_note(배합한도)를 함께 반환.
     """
     if not effects:
         return []
@@ -213,6 +216,7 @@ async def query_ingredients_by_effects(
     UNWIND $effects AS effect_code
     MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)
     WHERE r.graph_score >= $min_score
+      AND coalesce(i.kr_reg_status, 'none') <> 'banned'
     WITH i, e, r,
          CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
     ORDER BY ev_rank, r.graph_score DESC
@@ -230,7 +234,9 @@ async def query_ingredients_by_effects(
         best.claim            AS claim,
         best.eligibility_tier AS eligibility_tier,
         best.paper_ref        AS paper_ref,
-        best.graph_score      AS graph_score
+        best.graph_score      AS graph_score,
+        i.kr_reg_status       AS kr_reg_status,
+        i.kr_limit_note       AS kr_limit_note
     ORDER BY best.ev_rank, best.graph_score DESC, i.inci_name
     LIMIT 20
     """
