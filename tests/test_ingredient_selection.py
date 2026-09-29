@@ -116,6 +116,7 @@ class RecommendSelectionTest(unittest.IsolatedAsyncioTestCase):
                    "matched_count": 2, "matched_ingredients": ["NIACINAMIDE", "GLYCERIN"]}
         profile = SimpleNamespace(effects=[], concerns=[], constraints=[])
         with (
+            patch.object(settings, "ingredient_selection_enabled", True),
             patch.object(settings, "recommend_cache_enabled", False),
             patch.object(service, "_resolve_conversation_response", new=AsyncMock(return_value=None)),
             patch.object(service, "_store_turn", new=AsyncMock()),
@@ -143,3 +144,9 @@ def test_cache_key_changes_with_selection_policy():
             assert recommend_cache._key("칙칙해요", None) != base
     with patch.object(settings, "ingredient_selection_enabled", False):
         assert recommend_cache._key("칙칙해요", None) != base
+
+
+def test_selection_is_off_by_default_until_evidence_is_reinforced():
+    from app.core.config import Settings
+
+    assert Settings.model_fields["ingredient_selection_enabled"].default is False

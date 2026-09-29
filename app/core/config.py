@@ -54,8 +54,10 @@ class Settings(BaseSettings):
     #   최종 선정 결과가 API 응답 ingredients와 생성 LLM의 "관련 성분"이 된다.
     ingredient_candidate_limit: int = 20
     ingredient_product_pool: int = 10
-    # false면 필터 통과 후보 전체를 그대로 쓰는 이전 동작(A/B·롤백용).
-    ingredient_selection_enabled: bool = True
+    # false면 필터 통과 후보 전체를 그대로 쓰는 이전 동작.
+    # 기본 꺼 둠(2026-09-29): 현재 AFFECTS 근거 점수가 좁은 범위에 몰려 있고 "진정" 1위가 레티놀인 등
+    # 근거 품질 문제가 확인됨. 성분사전·기능성 고시 근거를 보강한 뒤 GPU A/B로 기준값을 다시 정해 켠다.
+    ingredient_selection_enabled: bool = False
     ingredient_final_default: int = 3
     ingredient_final_max: int = 5
     #   선정 자격: 전체 1위와 같은 근거 등급이면서 1위 점수 × 이 비율 이상.
