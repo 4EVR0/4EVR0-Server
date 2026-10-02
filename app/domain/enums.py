@@ -61,6 +61,8 @@ class Effect(str, Enum):
     # acne_exfoliation group
     KERATOLYTIC = "KERATOLYTIC"
     COMEDOLYTIC = "COMEDOLYTIC"
+    # acne_outcome: 작용 근거 없이 "트러블 개선"만 기재된 근거(참고 도서). 같은 고민 안에서 맨 뒤로 정렬
+    BLEMISH_CARE = "BLEMISH_CARE"
     # repair group
     WOUND_HEALING = "WOUND_HEALING"
     # pigmentation group

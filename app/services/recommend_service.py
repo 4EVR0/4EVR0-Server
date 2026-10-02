@@ -570,6 +570,7 @@ _CLAIM_BENEFIT_PHRASES = {
     "antimicrobial": "항균 관리",
     "antioxidant": "항산화 관리",
     "barrier repair": "피부 장벽 회복",
+    "blemish care": "트러블 개선",
     "brightening": "피부 톤 개선",
     "comedolytic": "모공 막힘 관리",
     "depigmenting": "색소 침착 완화",
