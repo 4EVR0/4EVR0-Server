@@ -1071,13 +1071,14 @@
     return ing ? ingredientName(ing) : escHtml(name);
   }
 
-  // 효능(effect) 영문 → 한글. 15개 effect. claim은 effect_name_en(예: "Barrier repair").
+  // 효능(effect) 영문 → 한글. 16개 effect. claim은 effect_name_en(예: "Barrier repair").
   const EFFECT_KO = {
     'anti-inflammatory': '항염', 'soothing': '진정', 'barrier repair': '장벽 강화',
     'hydrating': '수분 공급', 'moisture retention': '수분 유지', 'sebum regulation': '피지 조절',
     'antimicrobial': '항균', 'keratolytic': '각질 용해', 'comedolytic': '면포 용해',
     'wound healing': '상처 회복', 'depigmenting': '색소 억제', 'brightening': '미백/광채',
     'antioxidant': '항산화', 'photoprotective': '광보호', 'anti-aging': '노화 방지',
+    'blemish care': '트러블 개선',
   };
 
   // "한글 (영문)" 형식. 매핑 없으면 영문만.

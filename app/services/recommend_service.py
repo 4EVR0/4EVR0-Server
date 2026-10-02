@@ -570,6 +570,7 @@ _CLAIM_BENEFIT_PHRASES = {
     "antimicrobial": "항균 관리",
     "antioxidant": "항산화 관리",
     "barrier repair": "피부 장벽 회복",
+    "blemish care": "트러블 개선",
     "brightening": "피부 톤 개선",
     "comedolytic": "모공 막힘 관리",
     "depigmenting": "색소 침착 완화",
@@ -1310,9 +1311,7 @@ def _build_usage_order_response(
     if shared:
         name = shared.kor_name or shared.name
         benefit = _claim_benefit_phrase(shared)
-        source = ("논문 기반 성분 근거" if shared.eligibility_tier == "pubmed_evidence"
-                  else "성분 기능 데이터" if shared.eligibility_tier == "cosing_function"
-                  else "제공된 성분 근거")
+        source = _source_label(shared.eligibility_tier, "제공된 성분 근거")
         if benefit:
             lines.append(
                 f"선택 이유: 아래 {len(choices)}개 제품 모두 {name} 성분이 매칭되며, "
@@ -1325,9 +1324,7 @@ def _build_usage_order_response(
         if ingredient:
             name = ingredient.kor_name or ingredient.name
             benefit = _claim_benefit_phrase(ingredient)
-            source = ("논문 기반 성분 근거" if ingredient.eligibility_tier == "pubmed_evidence"
-                      else "성분 기능 데이터" if ingredient.eligibility_tier == "cosing_function"
-                      else "제공된 성분 근거")
+            source = _source_label(ingredient.eligibility_tier, "제공된 성분 근거")
             reason = (f"매칭 성분: {name}." if shared else
                       f"매칭 성분: {name}. {source}에서 {benefit} 관련으로 분류됩니다."
                       if benefit else f"매칭 성분: {name}. 앞선 고민과의 매칭이 제품 데이터에서 확인됩니다.")
@@ -1450,9 +1447,7 @@ def _build_ingredient_comparison(
         item = evidence_by_name.get(key)
         benefit = _claim_benefit_phrase(item)
         tier = item.eligibility_tier if item else None
-        source_label = ("논문 기반 성분 근거" if tier == "pubmed_evidence"
-                        else "성분 기능 데이터" if tier == "cosing_function"
-                        else "성분 근거")
+        source_label = _source_label(tier, "성분 근거")
         source = f"{benefit} · {source_label}" if benefit else "—"
         marks = ["확인" if key in names else "—" for names in per_product]
         lines.append("| " + " | ".join([_comparison_markdown_cell(labels[key]), *marks, source]) + " |")
@@ -2017,11 +2012,17 @@ def _kr_limit_phrase(ingredient: IngredientResult) -> str:
     return f"국내 배합한도가 있는 성분입니다({note})." if note else "국내 배합한도가 있는 성분입니다."
 
 
+def _source_label(eligibility_tier: str | None, default: str) -> str:
+    """선택 이유·비교표에 쓰는 근거 출처 문구."""
+    return {"pubmed_evidence": "논문 기반 성분 근거", "reference_book": "참고 도서(화장품 성분 사전)",
+            "cosing_function": "성분 기능 데이터"}.get(eligibility_tier or "", default)
+
+
 def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     """근거 종류를 사람이 읽을 수 있는 한국어 라벨로 변환한다.
 
     query_ingredients_by_effects는 eligibility_tier에 evidence_type을 담아 반환한다.
-    pubmed_evidence(논문 근거) > cosing_function(성분 기능 근거).
+    pubmed_evidence(논문 근거) > reference_book(화장품 성분 사전) ≥ cosing_function(성분 기능 근거).
     """
     if eligibility_tier == "pubmed_evidence":
         try:
@@ -2029,6 +2030,8 @@ def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
         except (TypeError, ValueError):
             n = 0
         return f"논문 근거 {n}건" if n > 0 else "논문 근거"
+    if eligibility_tier == "reference_book":
+        return "참고 도서 근거"
     if eligibility_tier == "cosing_function":
         return "성분 기능 근거"
     return "근거 미상"

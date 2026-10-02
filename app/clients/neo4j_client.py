@@ -218,7 +218,9 @@ async def query_ingredients_by_effects(
     WHERE r.graph_score >= $min_score
       AND coalesce(i.kr_reg_status, 'none') <> 'banned'
     WITH i, e, r,
-         CASE r.evidence_type WHEN 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
+         // 작용 근거가 없는 결과 효능(BLEMISH_CARE)은 후보가 부족할 때만 채우도록 맨 뒤
+         CASE WHEN e.effect_code = 'BLEMISH_CARE' THEN 2
+              WHEN r.evidence_type = 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
     ORDER BY ev_rank, r.graph_score DESC
     WITH i,
          head(collect({
