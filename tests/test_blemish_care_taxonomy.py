@@ -23,3 +23,12 @@ def test_irritated_skin_uses_soothing_not_blemish_care():
 def test_query_ranks_blemish_care_after_other_evidence():
     source = inspect.getsource(neo4j_client.query_ingredients_by_effects)
     assert "e.effect_code = 'BLEMISH_CARE' THEN 2" in source
+
+
+def test_reference_book_evidence_labels():
+    from app.services.recommend_service import _evidence_label, _source_label
+
+    assert _evidence_label("reference_book", "0") == "참고 도서 근거"
+    assert _source_label("reference_book", "x") == "참고 도서(화장품 성분 사전)"
+    assert _source_label("cosing_function", "x") == "성분 기능 데이터"
+    assert _source_label(None, "성분 근거") == "성분 근거"
