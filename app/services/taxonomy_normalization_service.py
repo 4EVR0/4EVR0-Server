@@ -112,6 +112,8 @@ _CONCERN_SYNONYMS: dict[str, Concern] = {
     "기미": Concern.HYPERPIGMENTATION,
     "색소": Concern.HYPERPIGMENTATION,
     "색소 침착": Concern.HYPERPIGMENTATION,
+    "미백": Concern.HYPERPIGMENTATION,
+    "화이트닝": Concern.HYPERPIGMENTATION,
     # DULLNESS (피부 톤 저하)
     "칙칙": Concern.DULLNESS,
     "칙칙함": Concern.DULLNESS,

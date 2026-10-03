@@ -64,6 +64,13 @@ _CLOGGED_PORE_SIGNAL = re.compile(
     r"모공.{0,10}(?:막|답답|피지.{0,3}차)|막힌.{0,8}모공"
 )
 _PIGMENT_SIGNAL = re.compile(r"기미|색소|침착|갈색.{0,5}(?:반점|자국)|검버섯")
+# "미백"은 식약처 기능성(미백) 요청이다. 색소 고민 라벨(HYPERPIGMENTATION)로 다룬다(#113).
+_WHITENING_SIGNAL = re.compile(r"미백|화이트닝")
+_WHITENING_NEGATION = re.compile(r"(?:미백|화이트닝).{0,6}?(?:말고|빼고|제외|없어도|필요\s*없|원하지\s*않)")
+_PIGMENTATION_CONCERNS = frozenset({
+    Concern.HYPERPIGMENTATION, Concern.DULLNESS, Concern.UNEVEN_SKIN_TONE,
+    Concern.BLEMISHES, Concern.POST_ACNE_MARKS, Concern.DARK_CIRCLES,
+})
 _DULLNESS_SIGNAL = re.compile(r"칙칙|생기.{0,4}없|안색.{0,6}탁|얼굴빛.{0,6}탁")
 _SPECIFIC_AGING_SIGNALS = (
     (re.compile(r"잔주름|깊은\s*주름|주름(?:이\s*고민|\s*관리|\s*개선)"), Concern.WRINKLES),
@@ -128,6 +135,7 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
     not independent redness. Nearby dryness, pigmentation and pore labels also
     require their own evidence rather than being inferred from a related label.
     """
+    whitening = bool(_WHITENING_SIGNAL.search(message)) and not _WHITENING_NEGATION.search(message)
     normalized: list[Concern] = []
     for concern in concerns:
         if concern == Concern.ENLARGED_PORES and not _ENLARGED_PORE_SIGNAL.search(message):
@@ -146,7 +154,7 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
             continue
         if concern == Concern.PORE_CONGESTION and not _CLOGGED_PORE_SIGNAL.search(message):
             continue
-        if concern == Concern.HYPERPIGMENTATION and not _PIGMENT_SIGNAL.search(message):
+        if concern == Concern.HYPERPIGMENTATION and not (_PIGMENT_SIGNAL.search(message) or whitening):
             if "잡티" in message and Concern.BLEMISHES not in concerns:
                 normalized.append(Concern.BLEMISHES)
             continue
@@ -156,6 +164,11 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
 
     if _SENSITIVE_CONCERN_SIGNAL.search(message) and Concern.SENSITIVE_SKIN not in normalized:
         normalized.append(Concern.SENSITIVE_SKIN)
+
+    # 미백을 명시했는데 색소 계열 라벨이 하나도 남지 않으면(모델이 빠뜨렸거나 위에서 제거됨)
+    # 미백 고민을 복원한다. 복합 고민 질의에서 한쪽 고민이 통째로 사라지는 것을 막는다(#113).
+    if whitening and not _PIGMENTATION_CONCERNS.intersection(normalized):
+        normalized.append(Concern.HYPERPIGMENTATION)
 
     # The model sometimes emits the umbrella aging category despite naming a
     # specific symptom. Replace it only when the text positively names one.
