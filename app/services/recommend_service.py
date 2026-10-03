@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -21,7 +22,14 @@ from app.clients.neo4j_client import (
     query_products_by_ingredients,
 )
 from app.core import metrics
+from app.services.concern_coverage import (
+    concern_ingredient_pool,
+    merge_concern_candidates,
+    order_by_coverage,
+    partial_coverage_note,
+)
 from app.services.concern_summary import build_summary, render_concern_summary, summary_effects
+from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
 from app.domain.user import UserProfile
@@ -286,6 +294,8 @@ async def select_products(message: str, concerns: list[Concern],
     raw = filter_explicit_application_area(raw, message)
     raw = await _filter_products_with_constraints(raw, constraints or [])
     raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
+    # 복합 고민: 요청 고민을 더 많이 충족하는 제품 우선(동률은 위 순서 유지). 단일 고민은 그대로.
+    raw = order_by_coverage(raw, concerns, ingredient_scores)
     if requested:  # 요청 카테고리로 이미 좁혀졌으니 랭킹 상위만
         return raw[: settings.product_result_limit]
     return _diversify(raw, per_category=2, total=settings.product_result_limit)
@@ -323,6 +333,51 @@ async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Conce
     kept = [r for r in raw_ingredients if r.get("name") not in excluded]
     # 빈 결과를 피하기 위해 차단된 근거를 되살리지 않는다.
     return kept
+
+
+async def retrieve_ingredient_candidates(profile: UserProfile) -> tuple[list[dict], list[dict]]:
+    """효능→성분 후보와 제품 조회용 성분 풀을 만든다(동기·스트리밍 경로 공유).
+
+    고민이 둘 이상이면 고민마다 자기 효능으로 성분을 따로 조회하고 번갈아 합쳐,
+    한 고민의 고득점 성분이 다른 고민의 성분을 후보·풀에서 밀어내지 않게 한다(#113).
+    후보 수(ingredient_candidate_limit)와 풀 크기(ingredient_product_pool)는 그대로다.
+    금지 성분은 조회 단계, CAUTION·향료·홍조 정책은 apply_caution_filter에서 기존대로 적용한다.
+    """
+    concerns = list(dict.fromkeys(profile.concerns))
+    effect_set = {e.value for e in profile.effects}
+    effects_by_concern = {
+        concern: [e.value for e in CONCERN_EFFECT_MAP.get(concern, []) if e.value in effect_set]
+        for concern in concerns
+    }
+    effects_by_concern = {c: effects for c, effects in effects_by_concern.items() if effects}
+    if len(effects_by_concern) <= 1:
+        rows = await query_ingredients_by_effects(
+            [e.value for e in profile.effects], min_graph_score=settings.ingredient_min_graph_score)
+        rows = [{**row, "concerns": [c.value for c in effects_by_concern]} for row in rows]
+    else:
+        results = await asyncio.gather(*(
+            query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score)
+            for effects in effects_by_concern.values()
+        ))
+        rows = merge_concern_candidates(dict(zip(effects_by_concern, results)),
+                                        settings.ingredient_candidate_limit)
+    rows = await apply_caution_filter(rows, concerns)
+    pool = concern_ingredient_pool(rows, list(effects_by_concern), settings.ingredient_product_pool)
+    return rows, pool
+
+
+def _coverage_note(products: list[ProductResult], raw_products: list[dict],
+                   concerns: list[Concern]) -> str | None:
+    coverage = {str(row.get("product_id")): row.get("concern_coverage") or [] for row in raw_products}
+    return partial_coverage_note(
+        [(_product_display_name(p.brand, p.product_name), coverage.get(str(p.product_id), []))
+         for p in products],
+        concerns,
+    )
+
+
+def _append_coverage_note(text: str, note: str | None) -> str:
+    return f"{text.rstrip()}\n\n{note}" if note else text
 
 
 def _finalize_ingredients(
@@ -1914,10 +1969,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
 
             # 2) Neo4j 조회 (효능→성분, 성분→제품)
             _t = time.perf_counter()
-            effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(
-                effect_names, min_graph_score=settings.ingredient_min_graph_score)
-            raw_ingredients = await apply_caution_filter(raw_ingredients, profile.concerns)
+            raw_ingredients, ingredient_scores = await retrieve_ingredient_candidates(profile)
 
             ingredients = [
                 IngredientResult(
@@ -1932,12 +1984,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 for row in raw_ingredients
             ]
 
-            # 추천 성분 상위 10개로 제품 조회 (pubmed_evidence 우선, concern 카테고리 필터 적용)
+            # 성분 풀(고민별로 번갈아 채운 상위 ingredient_product_pool개)로 제품 조회.
             # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
-            ingredient_scores = [
-                {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
-                for r in raw_ingredients[:settings.ingredient_product_pool]
-            ]
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
                 requested_override=context.categories if context else None,
@@ -2017,6 +2065,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 )
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
+            if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
+                response_text = _append_coverage_note(
+                    response_text, _coverage_note(products, raw_products, profile.concerns))
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2361,20 +2412,12 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
             _t = time.perf_counter()
-            effect_names = [e.value for e in profile.effects]
-            raw_ingredients = await query_ingredients_by_effects(
-                effect_names, min_graph_score=settings.ingredient_min_graph_score)
-            raw_ingredients = await apply_caution_filter(raw_ingredients, profile.concerns)
+            raw_ingredients, ingredient_scores = await retrieve_ingredient_candidates(profile)
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
                                  kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"))
                 for row in raw_ingredients
-            ]
-            # 성분의 고민-관련도(graph_score)를 제품 랭킹까지 전달 → 성분 개수가 아니라 관련도 가중.
-            ingredient_scores = [
-                {"name": r["name"], "weight": float(r.get("graph_score") or 1.0)}
-                for r in raw_ingredients[:settings.ingredient_product_pool]
             ]
             raw_products = await select_products(
                 message, profile.concerns, ingredient_scores,
@@ -2500,6 +2543,9 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 )
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
+            if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
+                response_text = _append_coverage_note(
+                    response_text, _coverage_note(products, raw_products, profile.concerns))
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
