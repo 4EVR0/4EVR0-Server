@@ -36,6 +36,8 @@ from app.services.ingredient_explanations import (
 )
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
+from app.services.fragrance_policy import eligible_rationale
+from app.services.ingredient_claim_guard import has_ingredient_claim_violation
 from app.services.fragrance_policy import (
     FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
     merge_fragrance_constraint, mentions_excluded_rationale, parse_evidence,
@@ -313,6 +315,7 @@ def _is_sensitivity_query(concerns: list[Concern]) -> bool:
 
 async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Concern]) -> list[dict]:
     """민감성 CAUTION을 적용하고 홍조·로사케아에는 별도 보수적 정책을 적용한다."""
+    raw_ingredients = [r for r in raw_ingredients if eligible_rationale(r.get("name"))]
     if not _is_sensitivity_query(concerns):
         return raw_ingredients
     cautioned = await query_cautioned_ingredients(_SENSITIVITY_CONCERN_CODES)
@@ -1564,25 +1567,24 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         Constraint(code) for code in profile_data.get("constraints", [])
         if code in Constraint._value2member_map_
     ])
-    if _is_sensitivity_query(concerns):
-        # Refresh positive matches from old sessions; inventory facts stay intact.
-        def sanitize(rows):
-            result = []
-            for row in rows:
-                names = [name for name in row.get("matched_ingredients", [])
-                         if name not in FRAGRANCE_RATIONALE_EXCLUSIONS]
-                if row.get("matched_ingredients") and not names:
-                    continue  # No positive recommendation evidence remains.
-                result.append({**row, "matched_ingredients": names, "matched_count": len(names)})
-            return result
-        visible, source = sanitize(visible), sanitize(source)
+    # Refresh positive matches from old sessions, for every concern.
+    # Inventory facts stay intact; stale pre-policy summaries are discarded.
+    def sanitize(rows):
+        result = []
+        for row in rows:
+            names = [name for name in row.get("matched_ingredients", []) if eligible_rationale(name)]
+            if row.get("matched_ingredients") and not names:
+                continue
+            result.append({**row, "matched_ingredients": names, "matched_count": len(names),
+                           "concern_summary": None})
+        return result
+    visible, source = sanitize(visible), sanitize(source)
     if active or constraints or fragrance_preference(message) is not None:
         active = {**(active or {}), "profile": {**profile_data,
                   "concerns": [c.value for c in concerns], "constraints": [c.value for c in constraints]},
                   "source_products": source, "visible_products": visible,
                   "ingredients": [row for row in (active or {}).get("ingredients", [])
-                                  if not _is_sensitivity_query(concerns)
-                                  or row.get("name") not in FRAGRANCE_RATIONALE_EXCLUSIONS]}
+                                  if eligible_rationale(row.get("name"))]}
     if _RESTORE_ALL_CUE.search(message) and not _requested_categories(message):
         visible = source
     if fragrance_preference(message) is False and not visible:
@@ -1772,7 +1774,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     excluded_mentioned = any(name in response_text for name in excluded_names)
     response_mode = "followup_filtered" if requested else "followup"
     fragrance_violation = _is_sensitivity_query(concerns) and mentions_excluded_rationale(response_text)
-    if not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation:
+    claim_violation = has_ingredient_claim_violation(response_text, ingredients, products)
+    if not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation or claim_violation:
         products = _reconstruct_products(selected)  # discard ranking from corrupted prose
         for product in products:
             product.ingredient_explanations = explanations_by_id.get(product.product_id, [])
@@ -2004,9 +2007,12 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if product_section:
                 response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
-            grounding_violation = (products and not product_section
-                                   and _has_product_grounding_violation(response_text, ingredients, products))
-            fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
+            grounding_violation = ((products and not product_section
+                                    and _has_product_grounding_violation(response_text, ingredients, products))
+                                   or (response_mode == "generated" and has_ingredient_claim_violation(
+                                       response_text, ingredients, products)))
+            fragrance_violation = ((_is_sensitivity_query(profile.concerns) or response_mode == "generated")
+                                   and mentions_excluded_rationale(_strip_product_section(response_text)))
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
@@ -2487,9 +2493,12 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if product_section:
                 response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
-            grounding_violation = (products and not product_section
-                                   and _has_product_grounding_violation(response_text, ingredients, products))
-            fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
+            grounding_violation = ((products and not product_section
+                                    and _has_product_grounding_violation(response_text, ingredients, products))
+                                   or (response_mode == "generated" and has_ingredient_claim_violation(
+                                       response_text, ingredients, products)))
+            fragrance_violation = ((_is_sensitivity_query(profile.concerns) or response_mode == "generated")
+                                   and mentions_excluded_rationale(_strip_product_section(response_text)))
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()

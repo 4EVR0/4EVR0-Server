@@ -1,0 +1,73 @@
+"""Bounded ingredient/benefit guard, not a general natural-language entailment judge.
+
+Ambiguous multi-ingredient sentences fail conservatively. Inventory/product titles
+are not parsed as generated claims. This guards benefits, not every mechanism.
+"""
+import re
+from app.services.ingredient_explanations import product_explanations
+
+POLICY_VERSION = "ingredient-claim-guard-v1"
+PATTERNS = {
+    'tone': r'미백|색소|잡티|피부\s*톤|브라이트닝|whiten|brighten|depigment',
+    'aging': r'주름|탄력|노화|리프팅|wrinkle|anti[- ]?aging',
+    'hydrate': r'보습|수분|hydrat|moistur',
+    'soothe': r'진정|항염|염증|sooth|anti[- ]?inflamm',
+    'barrier': r'장벽|barrier',
+    'exfoliate': r'각질|keratol|exfoliat',
+    'antioxidant': r'항산화|antioxid',
+    'sebum': r'피지|sebum',
+    'antimicrobial': r'항균|antimicrob',
+    'pores': r'모공\s*막힘|comedol',
+    'repair': r'상처|피부\s*회복|wound',
+    'uv': r'자외선|photoprotect',
+    'blemish': r'트러블|여드름|blemish|acne',
+}
+SUPERLATIVE = re.compile(r'가장\s*(?:강력|효과|우수|좋|뛰어)|최고의?\s*효과|최강|가장\s*효과적인|most\s+effective|strongest', re.I)
+
+
+def benefits(text):
+    return {key for key, pattern in PATTERNS.items() if re.search(pattern, text, re.I)}
+
+
+def has_ingredient_claim_violation(text, ingredients, products=()):
+    # Product section is server-authored or covered by the separate inclusion guard.
+    prose = re.split(r'(?m)^\s*[#*\d. ]*추천 제품', text, maxsplit=1)[0]
+    if SUPERLATIVE.search(prose):
+        return True
+    allowed = {}
+    aliases = {}
+    for row in ingredients:
+        allowed.setdefault(row.name, set()).update(benefits(row.claim or ''))
+        aliases.setdefault(row.name, set()).update(a.casefold() for a in (row.name, row.kor_name) if a)
+    for product in products:
+        for card in product_explanations(product):
+            allowed.setdefault(card.name, set()).update(benefits(card.explanation))
+            aliases.setdefault(card.name, set()).update(a.casefold() for a in (card.name, card.kor_name) if a)
+    # Each summary key has an explicit graph effect. It is not permission to
+    # transfer another ingredient's effects to this ingredient.
+    for product in products:
+        for item in (getattr(product, 'concern_summary', None) or {}).get('key_ingredients', []):
+            name = item['inci_name']
+            allowed.setdefault(name, set()).update(benefits(str(item.get('effect_code', '')).replace('_', ' ')))
+            aliases.setdefault(name, set()).update(a.casefold() for a in (name, item.get('name')) if a)
+    in_section = False
+    current = []
+    for line in prose.splitlines():
+        if '성분 설명' in line:
+            in_section = True
+            current = []
+            continue
+        folded = line.casefold()
+        mentioned = [name for name, names in aliases.items() if any(
+            re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', folded) for alias in names)]
+        if mentioned:
+            current = mentioned
+        elif line.lstrip().startswith(('-', '*', '•')):
+            current = []
+        claims = benefits(line)
+        subjects = mentioned or (current if in_section else [])
+        if in_section and claims and not subjects:
+            return True
+        if any(not claims <= allowed.get(name, set()) for name in subjects):
+            return True
+    return False

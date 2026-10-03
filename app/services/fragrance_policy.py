@@ -9,9 +9,15 @@ from app.core.config import settings
 from app.domain.enums import Constraint
 from app.services.taxonomy_normalization_service import normalize_constraints
 
-# These ingredients must not be promoted as soothing evidence for irritated skin.
+# These ingredients are not positive recommendation rationales in this service.
 # Their presence in a product's inventory remains factual and can still be shown.
 FRAGRANCE_RATIONALE_EXCLUSIONS = frozenset({"LINALOOL", "FARNESOL", "LIMONENE"})
+
+
+def eligible_rationale(name: str | None) -> bool:
+    """Positive recommendation evidence only; never filters product inventory."""
+    return str(name or "").strip().upper() not in FRAGRANCE_RATIONALE_EXCLUSIONS
+
 _NAMES = re.compile(r"리날룰|파네솔|리모넨|\b(?:linalool|farnesol|limonene)\b", re.I)
 _FREE = re.compile(r"무향(?:료)?|향료(?:가|를|는)?\s*(?:없|없는|미포함|무첨가|제외|빼)|향(?:이)?\s*없는|fragrance[-\s]*free|without\s+(?:fragrance|parfum)", re.I)
 _WITHDRAW = re.compile(r"무향(?:료)?(?:이|가)?\s*(?:아니어도|필요\s*없|상관\s*없)|향료(?:가|는)?\s*(?:있어도|상관\s*없)", re.I)
