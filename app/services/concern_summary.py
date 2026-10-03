@@ -7,6 +7,7 @@
   우선순위: 그 고민의 식약처 고시 기능성 원료 → 논문 근거(점수순) → 참고 도서 근거.
   작용 근거가 없는 트러블 개선(BLEMISH_CARE)과 의약 표현에서 온 근거만 있는 성분은 개수에는 넣되 핵심 성분으로 고르지 않는다.
 - 그래프에 전성분 순서가 없어 함량은 반영하지 못한다. 그래서 "효과가 있다"가 아니라 "관련 근거가 있는 성분"으로 말한다.
+- 향료 rationale 제외 성분은 근거 개수와 핵심 성분 양쪽에서 제외한다. 제품 전성분 사실 표시는 별개다.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import Any
 
 from app.domain.enums import Concern, Effect
 from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP
+from app.services.fragrance_policy import eligible_rationale
 
 COUNT_MIN = 3
 KEY_PER_CONCERN = 2
@@ -83,7 +85,8 @@ def build_summary(concerns: list[Concern], rows: list[dict[str, Any]],
                   functional: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
     """한 제품의 근거 행(성분×효능)으로 요약을 만든다. 근거 성분이 하나도 없으면 None."""
     functional = functional_ingredients() if functional is None else functional
-    rows = [r for r in rows if r.get("evidence_type") in EVIDENCE_TYPES]
+    rows = [r for r in rows if r.get("evidence_type") in EVIDENCE_TYPES
+            and eligible_rationale(r.get("inci_name"))]
     per_concern = []
     for concern in dict.fromkeys(concerns):
         effects = {e.value for e in CONCERN_EFFECT_MAP.get(concern, [])}

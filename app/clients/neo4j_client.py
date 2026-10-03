@@ -5,6 +5,7 @@ from typing import Any
 from neo4j import AsyncGraphDatabase
 
 from app.core.config import settings
+from app.services.fragrance_policy import FRAGRANCE_RATIONALE_EXCLUSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,7 @@ async def query_product_concern_evidence(product_ids: list[str], effect_codes: l
     MATCH (p:Product {product_id: product_id})-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect)
     WHERE e.effect_code IN $effects
       AND r.evidence_type IN ['pubmed_evidence', 'reference_book']
+      AND NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
       AND coalesce(i.kr_reg_status, 'none') <> 'banned'
     RETURN product_id, i.inci_name AS inci_name, i.kor_name AS kor_name, e.effect_code AS effect_code,
            r.evidence_type AS evidence_type, r.graph_score AS graph_score, r.paper_count AS paper_count,
@@ -189,7 +191,7 @@ async def query_product_concern_evidence(product_ids: list[str], effect_codes: l
         start = time.perf_counter()
         async with _get_driver().session() as session:
             result = await session.run(query, product_ids=list(dict.fromkeys(product_ids)),
-                                       effects=list(effect_codes))
+                                       effects=list(effect_codes), rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
             rows = [dict(record) async for record in result]
         _log_query("query_product_concern_evidence", {"count": len(product_ids)},
                    (time.perf_counter() - start) * 1000, len(rows))
@@ -247,6 +249,7 @@ async def query_ingredients_by_effects(
     UNWIND $effects AS effect_code
     MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)
     WHERE r.graph_score >= $min_score
+      AND NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
       AND coalesce(i.kr_reg_status, 'none') <> 'banned'
     WITH i, e, r,
          // 작용 근거가 없는 결과 효능(BLEMISH_CARE)은 후보가 부족할 때만 채우도록 맨 뒤
@@ -277,12 +280,14 @@ async def query_ingredients_by_effects(
         start = time.perf_counter()
         async with driver.session() as session:
             result = await session.run(query, effects=effects, min_score=float(min_graph_score),
-                                       limit=settings.ingredient_candidate_limit)
+                                       limit=settings.ingredient_candidate_limit,
+                                       rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
             rows = [dict(record) async for record in result]
             # 폴백: 임계가 결과를 비우면 임계 없이 재조회 (희소 효능 보호)
             if not rows and float(min_graph_score) > 0.0:
                 result = await session.run(query, effects=effects, min_score=0.0,
-                                           limit=settings.ingredient_candidate_limit)
+                                           limit=settings.ingredient_candidate_limit,
+                                           rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
                 rows = [dict(record) async for record in result]
         _log_query("query_ingredients_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(rows))
         return rows

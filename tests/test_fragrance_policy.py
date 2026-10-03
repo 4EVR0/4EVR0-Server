@@ -117,7 +117,9 @@ class FragranceFlowTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(service, "query_cautioned_ingredients", new=AsyncMock(return_value=set())):
             self.assertEqual(rows[-1:], await service.apply_caution_filter(rows, [Concern.IRRITATED_SKIN]))
             self.assertEqual([], await service.apply_caution_filter(rows[:3], [Concern.SENSITIVE_SKIN]))
-            self.assertEqual(rows, await service.apply_caution_filter(rows, [Concern.ACNE]))
+            # #115: positive fragrance rationales are excluded for acne too;
+            # retinoids are not globally banned by this policy.
+            self.assertEqual(rows[-1:], await service.apply_caution_filter(rows, [Concern.ACNE]))
 
     async def test_followup_constraint_persists_and_restore_rechecks_source(self):
         active = {"profile": {"concerns": [], "constraints": []},
