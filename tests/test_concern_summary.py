@@ -52,3 +52,19 @@ def test_blemish_care_counts_but_is_not_key():
 def test_no_evidence_returns_none_and_effects():
     assert build_summary([Concern.WRINKLES], [_row("X", "엑스", "HYDRATING")], FUNC) is None
     assert "BLEMISH_CARE" in summary_effects([Concern.ACNE])
+
+
+def test_server_written_product_section_replaces_llm_section():
+    from app.schemas.recommend import ProductResult
+    from app.services import recommend_service as rs
+
+    summary = build_summary([Concern.HYPERPIGMENTATION], [
+        _row("NIACINAMIDE", "나이아신아마이드", "DEPIGMENTING", "pubmed_evidence", 0.4, 1),
+        _row("ARBUTIN", "알부틴", "BRIGHTENING"), _row("KOJIC ACID", "코직산", "DEPIGMENTING")], FUNC)
+    product = ProductResult(product_id="p1", product_name="비타 세럼", brand="브랜드", category="세럼",
+                            matched_count=1, matched_ingredients=["NIACINAMIDE"], concern_summary=summary)
+    llm = "고민 분석\n미백을 원하시는군요.\n\n성분 설명\n- 나이아신아마이드: ...\n\n**추천 제품**\n- 엉뚱한 제품: 9가지"
+    out = rs._finalize_with_product_section(llm, [product], [])
+    assert "엉뚱한 제품" not in out and out.count("추천 제품") == 1
+    assert "- [세럼] 브랜드 비타 세럼: 미백 고민과 관련된 근거가 있는 성분 3가지가 들어 있어요." in out
+    assert "나이아신아마이드(식약처 고시 미백 원료, 논문 근거 1건)" in out

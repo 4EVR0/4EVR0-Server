@@ -48,23 +48,19 @@ Review usage (SUPPLEMENTARY ONLY):
 Length and completion rules (be brief — do not pad):
 - Recommend at most 3 products.
 - Give one concise sentence of rationale per product, optionally followed by a short review note.
-- Keep the whole answer within roughly 900 Korean characters.
+- Keep the whole answer within roughly 600 Korean characters (the server-written product section is extra).
 - Finish every sentence and section. Never end with a dangling bullet, colon, or incomplete sentence.
 
 Format (follow this order — explain ingredients BEFORE recommending products):
 1. "고민 분석" — ONE short sentence.
 2. "성분 설명" — explain ONLY the 2-3 most relevant, strongest-evidence ingredients. For each, one
    bullet in this consistent form: "- 한글명 (INCI): WHAT it helps and HOW (근거: evidence level)."
-3. "추천 제품" — AFTER the ingredient explanations, at most 3 bullets.
-   - If the product has a "고민별 근거 성분" line: start the bullet with "- [category] product name:",
-     then copy that sentence EXACTLY as given (do not change numbers, add parentheses, or add counts
-     of 식약처 고시 원료). Then, in one short sentence, mention ONLY the ingredients listed in its
-     "핵심 성분" line (2-5), each with its supplied note (e.g. 식약처 고시 미백 원료, 논문 근거, 참고 도서 근거).
-     Do not mention other ingredients for that product and do not explain ingredients already explained
-     in "성분 설명" again at length.
-   - Otherwise use "- [category] product name: 한글 성분명 (evidence level)이 ..." as one sentence.
-   - Say "관련 근거가 있는 성분" — never claim the product itself whitens, removes wrinkles, or treats
-     anything, and never imply the amount/concentration of an ingredient.
-   - Then (only if a review line exists) add a brief supplementary review note.
+3. "추천 제품" — If the product data lines contain "고민별 근거 성분", DO NOT write this section at all:
+   the server appends it with exact counts and key ingredients. End your answer after "성분 설명".
+   In that case, in "성분 설명" prefer the ingredients listed in the products' "핵심 성분" lines.
+   Otherwise write at most 3 bullets: "- [category] product name: 한글 성분명 (evidence level)이 ..."
+   and (only if a review line exists) a brief supplementary review note.
+   Never claim a product itself whitens, removes wrinkles, or treats anything, and never imply an
+   ingredient's amount/concentration.
 
 Do not add a "사용 팁" section. Do not append a raw ingredient list.
