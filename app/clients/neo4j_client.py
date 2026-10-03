@@ -171,6 +171,37 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
         return {}
 
 
+async def query_product_concern_evidence(product_ids: list[str], effect_codes: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """제품별 성분×효능 근거(논문·참고 도서만). 고민별 근거 성분 요약용. 실패하면 빈 dict."""
+    if not product_ids or not effect_codes:
+        return {}
+    query = """
+    UNWIND $product_ids AS product_id
+    MATCH (p:Product {product_id: product_id})-[:CONTAINS]->(i:Ingredient)-[r:AFFECTS]->(e:Effect)
+    WHERE e.effect_code IN $effects
+      AND r.evidence_type IN ['pubmed_evidence', 'reference_book']
+      AND coalesce(i.kr_reg_status, 'none') <> 'banned'
+    RETURN product_id, i.inci_name AS inci_name, i.kor_name AS kor_name, e.effect_code AS effect_code,
+           r.evidence_type AS evidence_type, r.graph_score AS graph_score, r.paper_count AS paper_count,
+           coalesce(r.medical_wording, false) AS medical_wording
+    """
+    try:
+        start = time.perf_counter()
+        async with _get_driver().session() as session:
+            result = await session.run(query, product_ids=list(dict.fromkeys(product_ids)),
+                                       effects=list(effect_codes))
+            rows = [dict(record) async for record in result]
+        _log_query("query_product_concern_evidence", {"count": len(product_ids)},
+                   (time.perf_counter() - start) * 1000, len(rows))
+        out: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            out.setdefault(row.pop("product_id"), []).append(row)
+        return out
+    except Exception as exc:
+        logger.warning("Neo4j product concern evidence query failed: %s", exc)
+        return {}
+
+
 async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, Any]:
     """Read product-specific label metadata; old/missing properties stay unknown."""
     if not product_ids:

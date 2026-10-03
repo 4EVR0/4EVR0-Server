@@ -15,11 +15,13 @@ from app.clients.neo4j_client import (
     query_cautioned_ingredients,
     query_ingredient_kor_names,
     query_ingredients_by_effects,
+    query_product_concern_evidence,
     query_product_ingredient_inventory,
     query_product_fragrance_evidence,
     query_products_by_ingredients,
 )
 from app.core import metrics
+from app.services.concern_summary import build_summary, render_concern_summary, summary_effects
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
 from app.domain.user import UserProfile
@@ -505,6 +507,67 @@ def _build_no_product_response(
         "현재 제공된 성분과 제품 데이터에서 조건에 맞는 결과를 찾지 못해 "
         "구체적인 제품명을 추천하지 않겠습니다."
     )
+
+
+async def _attach_concern_summaries(products: list[ProductResult], concerns: list[Concern]) -> None:
+    """랭킹 확정 후 제품별 고민 근거 요약을 붙인다. 조회 실패·근거 없음은 None으로 둔다."""
+    for product in products:
+        product.concern_summary = None
+    effects = summary_effects(concerns)
+    if not settings.concern_summary_enabled or not products or not effects:
+        return
+    evidence = await query_product_concern_evidence([p.product_id for p in products], effects)
+    for product in products:
+        product.concern_summary = build_summary(concerns, evidence.get(product.product_id, []))
+
+
+_PRODUCT_SECTION_LIMIT = 3
+
+
+def _uses_concern_product_section(products: list[ProductResult]) -> bool:
+    return settings.concern_summary_enabled and any(p.concern_summary for p in products[:_PRODUCT_SECTION_LIMIT])
+
+
+def _strip_product_section(text: str) -> str:
+    """'추천 제품' 제목부터 끝까지를 떼어 낸다(서버가 그 부분을 직접 만든다)."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().strip("#*0-9. \"'").startswith("추천 제품"):
+            return "\n".join(lines[:index]).rstrip()
+    return text.rstrip()
+
+
+def _render_product_section(products: list[ProductResult], ingredients: list[IngredientResult]) -> str:
+    """추천 제품 bullet을 카드 순서대로 서버가 만든다. 숫자·성분은 그래프 집계 그대로."""
+    by_name = {i.name: i for i in ingredients}
+    lines = ["추천 제품"]
+    for product in products[:_PRODUCT_SECTION_LIMIT]:
+        head = f"- [{product.category}] {_product_display_name(product.brand, product.product_name)}: "
+        summary = product.concern_summary or {}
+        if summary.get("sentence"):
+            body = summary["sentence"]
+            keys = summary.get("key_ingredients") or []
+            if keys:
+                parts = []
+                for item in keys:
+                    notes = ([f"식약처 고시 {item['mfds_functional']} 원료"] if item.get("mfds_functional") else [])
+                    parts.append(f"{item['name']}({', '.join(notes + [item['evidence']])})")
+                body += f" 핵심 성분은 {', '.join(parts)}이에요."
+        else:
+            matched = [by_name[n] for n in product.matched_ingredients[:2] if n in by_name]
+            body = ("매칭 성분: " + ", ".join(
+                f"{_ingredient_display_name(i)}({_evidence_label(i.eligibility_tier, i.paper_ref)})" for i in matched)
+                + ".") if matched else "고민과 매칭되는 성분이 제품 데이터에서 확인돼요."
+        lines.append(head + body)
+        note = _review_note(product)
+        if note:
+            lines.append(f"  · 리뷰 참고: {note}")
+    return "\n".join(lines)
+
+
+def _finalize_with_product_section(text: str, products: list[ProductResult],
+                                   ingredients: list[IngredientResult]) -> str:
+    return f"{_strip_product_section(text)}\n\n{_render_product_section(products, ingredients)}"
 
 
 async def _attach_ingredient_explanations(products: list[ProductResult], concerns: list[Concern]) -> None:
@@ -1915,6 +1978,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
                 products = [redness_match[1]]
             await _attach_ingredient_explanations(products, profile.concerns)
+            await _attach_concern_summaries(products, profile.concerns)
             if products and redness_match:
                 response_mode = "redness_verified_study_template"
                 response_text = _build_redness_study_response(profile.concerns, redness_match)
@@ -1935,8 +1999,13 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             response_text, hanja_removed = _normalize_response_text(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+            # 고민별 요약을 쓰면 LLM은 고민 분석·성분 설명만 쓰고 추천 제품 부분은 서버가 만든다.
+            product_section = response_mode == "generated" and _uses_concern_product_section(products)
+            if product_section:
+                response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
-            grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
+            grounding_violation = (products and not product_section
+                                   and _has_product_grounding_violation(response_text, ingredients, products))
             fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
@@ -1946,6 +2015,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 response_text = _build_grounded_product_response(
                     generation_message, candidate_ingredients, products, profile.concerns,
                 )
+            if product_section:
+                response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2098,6 +2169,9 @@ def _product_evidence_lines(
         if p.fragrance_free_source_url:
             base += (f"\n  · 검토된 제조사 향료 무첨가 안내: {p.fragrance_free_source_url}. "
                      "현재 전성분과 대조한 안내이며 무취·저자극·알레르기 안전성을 보장하지 않음.")
+        summary_block = render_concern_summary(p.concern_summary)
+        if summary_block:
+            base += "\n" + summary_block
         explanation = render_product_explanations(p)
         if explanation:
             base += "\n" + explanation
@@ -2330,6 +2404,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if redness_match:
                 products = [redness_match[1]]
             await _attach_ingredient_explanations(products, profile.concerns)
+            await _attach_concern_summaries(products, profile.concerns)
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(
@@ -2407,8 +2482,13 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 response_text = _normalize_product_names(response_text, products)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+            # 고민별 요약을 쓰면 LLM은 고민 분석·성분 설명만 쓰고 추천 제품 부분은 서버가 만든다.
+            product_section = response_mode == "generated" and _uses_concern_product_section(products)
+            if product_section:
+                response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
-            grounding_violation = products and _has_product_grounding_violation(response_text, ingredients, products)
+            grounding_violation = (products and not product_section
+                                   and _has_product_grounding_violation(response_text, ingredients, products))
             fragrance_violation = _is_sensitivity_query(profile.concerns) and mentions_excluded_rationale(response_text)
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
@@ -2418,6 +2498,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 response_text = _build_grounded_product_response(
                     generation_message, candidate_ingredients, products, profile.concerns,
                 )
+            if product_section:
+                response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
