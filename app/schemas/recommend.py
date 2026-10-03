@@ -41,6 +41,8 @@ class ProductResult(BaseModel):
     matched_ingredients: list[str]
     ingredient_explanations: list[ProductIngredientExplanation] = Field(default_factory=list)
     fragrance_free_source_url: str | None = None
+    # 고민별 근거 성분 개수·핵심 성분(app.services.concern_summary.build_summary). 없으면 None
+    concern_summary: dict | None = None
     # 리뷰(부연): 논문 근거가 메인, 리뷰는 사용자 합의 보조 신호
     rating: float | None = None
     review_count: int | None = None

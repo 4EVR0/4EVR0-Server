@@ -1,0 +1,134 @@
+{
+ "_source": "INCI_Pipeline config/mfds_functional_ingredients.csv (식약처 기능성 고시 원료, match_status=matched만)",
+ "ingredients": {
+  "3-O-ETHYL ASCORBIC ACID": [
+   "whitening"
+  ],
+  "4-METHYLBENZYLIDENE CAMPHOR": [
+   "uv_protection"
+  ],
+  "ADENOSINE": [
+   "anti_wrinkle"
+  ],
+  "ARBUTIN": [
+   "whitening"
+  ],
+  "ASCORBYL GLUCOSIDE": [
+   "whitening"
+  ],
+  "ASCORBYL TETRAISOPALMITATE": [
+   "whitening"
+  ],
+  "BENZOPHENONE-3": [
+   "uv_protection"
+  ],
+  "BENZOPHENONE-4": [
+   "uv_protection"
+  ],
+  "BENZOPHENONE-8": [
+   "uv_protection"
+  ],
+  "BIOTIN": [
+   "hair_loss"
+  ],
+  "BIS-ETHYLHEXYLOXYPHENOL METHOXYPHENYL TRIAZINE": [
+   "uv_protection"
+  ],
+  "BISABOLOL": [
+   "whitening"
+  ],
+  "BUTYL METHOXYDIBENZOYLMETHANE": [
+   "uv_protection"
+  ],
+  "CI 77891": [
+   "uv_protection"
+  ],
+  "CI 77947": [
+   "uv_protection"
+  ],
+  "CINOXATE": [
+   "uv_protection"
+  ],
+  "DIETHYLAMINO HYDROXYBENZOYL HEXYL BENZOATE": [
+   "uv_protection"
+  ],
+  "DIETHYLHEXYL BUTAMIDO TRIAZONE": [
+   "uv_protection"
+  ],
+  "DIGALLOYL TRIOLEATE": [
+   "uv_protection"
+  ],
+  "DISODIUM PHENYL DIBENZIMIDAZOLE TETRASULFONATE": [
+   "uv_protection"
+  ],
+  "DROMETRIZOLE": [
+   "uv_protection"
+  ],
+  "DROMETRIZOLE TRISILOXANE": [
+   "uv_protection"
+  ],
+  "ETHYLHEXYL DIMETHYL PABA": [
+   "uv_protection"
+  ],
+  "ETHYLHEXYL METHOXYCINNAMATE": [
+   "uv_protection"
+  ],
+  "ETHYLHEXYL SALICYLATE": [
+   "uv_protection"
+  ],
+  "ETHYLHEXYL TRIAZONE": [
+   "uv_protection"
+  ],
+  "HOMOSALATE": [
+   "uv_protection"
+  ],
+  "ISOAMYL P-METHOXYCINNAMATE": [
+   "uv_protection"
+  ],
+  "MAGNESIUM ASCORBYL PHOSPHATE": [
+   "whitening"
+  ],
+  "MENTHOL": [
+   "hair_loss"
+  ],
+  "MENTHYL ANTHRANILATE": [
+   "uv_protection"
+  ],
+  "METHYLENE BIS-BENZOTRIAZOLYL TETRAMETHYLBUTYLPHENOL": [
+   "uv_protection"
+  ],
+  "NIACINAMIDE": [
+   "whitening"
+  ],
+  "OCTOCRYLENE": [
+   "uv_protection"
+  ],
+  "PANTHENOL": [
+   "hair_loss"
+  ],
+  "PHENYLBENZIMIDAZOLE SULFONIC ACID": [
+   "uv_protection"
+  ],
+  "POLYETHOXYLATED RETINAMIDE": [
+   "anti_wrinkle"
+  ],
+  "POLYSILICONE-15": [
+   "uv_protection"
+  ],
+  "RETINOL": [
+   "anti_wrinkle"
+  ],
+  "RETINYL PALMITATE": [
+   "anti_wrinkle"
+  ],
+  "SALICYLIC ACID": [
+   "acne"
+  ],
+  "TEREPHTHALYLIDENE DICAMPHOR SULFONIC ACID": [
+   "uv_protection"
+  ],
+  "ZINC PYRITHIONE": [
+   "hair_loss"
+  ]
+ }
+}

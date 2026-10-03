@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     verified_study_response_enabled: bool = True
     # 두 성분의 제품 연결 파일럿. 수동 품질 확인 전에는 기본 비활성.
     dictionary_explanations_enabled: bool = False
+    # 제품별 "고민별 근거 성분 N가지 + 핵심 성분" 요약을 생성 입력에 넣는다. 문제 시 false로 이전 형식 복귀.
+    concern_summary_enabled: bool = True
     # 홍조·로사케아 연구 설명만 끄고 다른 검증 연구 응답은 유지하는 롤백 스위치.
     redness_verified_study_response_enabled: bool = True
     # 대화 이력(멀티턴 맥락). Redis LIST(conv:{session_id})에 턴 저장 → 후속 질문이 이전 추천 참조.
@@ -93,7 +95,7 @@ class Settings(BaseSettings):
     llm_reject_over_capacity: bool = False
     # 생성 프롬프트 버전(app/prompts/<name>.txt). latency/품질 실험용으로 GEN_PROMPT_NAME 로 교체.
     # v6: P3 스윗스팟 — v4 대비 total −30%(출력 토큰↓)이면서 품질 유지(OVERALL 4.52→4.46, grounding 동일).
-    gen_prompt_name: str = "recommend_response.v8"
+    gen_prompt_name: str = "recommend_response.v9"
     # 추천 응답 생성 temperature. 프로덕션 기본 0.3, eval 재현성 위해 GEN_TEMPERATURE=0 로 고정 가능.
     gen_temperature: float = 0.3
     # 간결한 응답을 유도하되 문장 중간 잘림을 막을 수 있는 충분한 출력 여유.

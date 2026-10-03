@@ -15,11 +15,13 @@ from app.clients.neo4j_client import (
     query_cautioned_ingredients,
     query_ingredient_kor_names,
     query_ingredients_by_effects,
+    query_product_concern_evidence,
     query_product_ingredient_inventory,
     query_product_fragrance_evidence,
     query_products_by_ingredients,
 )
 from app.core import metrics
+from app.services.concern_summary import build_summary, render_concern_summary, summary_effects
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
 from app.domain.user import UserProfile
@@ -505,6 +507,18 @@ def _build_no_product_response(
         "현재 제공된 성분과 제품 데이터에서 조건에 맞는 결과를 찾지 못해 "
         "구체적인 제품명을 추천하지 않겠습니다."
     )
+
+
+async def _attach_concern_summaries(products: list[ProductResult], concerns: list[Concern]) -> None:
+    """랭킹 확정 후 제품별 고민 근거 요약을 붙인다. 조회 실패·근거 없음은 None으로 둔다."""
+    for product in products:
+        product.concern_summary = None
+    effects = summary_effects(concerns)
+    if not settings.concern_summary_enabled or not products or not effects:
+        return
+    evidence = await query_product_concern_evidence([p.product_id for p in products], effects)
+    for product in products:
+        product.concern_summary = build_summary(concerns, evidence.get(product.product_id, []))
 
 
 async def _attach_ingredient_explanations(products: list[ProductResult], concerns: list[Concern]) -> None:
@@ -1915,6 +1929,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
                 products = [redness_match[1]]
             await _attach_ingredient_explanations(products, profile.concerns)
+            await _attach_concern_summaries(products, profile.concerns)
             if products and redness_match:
                 response_mode = "redness_verified_study_template"
                 response_text = _build_redness_study_response(profile.concerns, redness_match)
@@ -2098,6 +2113,9 @@ def _product_evidence_lines(
         if p.fragrance_free_source_url:
             base += (f"\n  · 검토된 제조사 향료 무첨가 안내: {p.fragrance_free_source_url}. "
                      "현재 전성분과 대조한 안내이며 무취·저자극·알레르기 안전성을 보장하지 않음.")
+        summary_block = render_concern_summary(p.concern_summary)
+        if summary_block:
+            base += "\n" + summary_block
         explanation = render_product_explanations(p)
         if explanation:
             base += "\n" + explanation
@@ -2330,6 +2348,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if redness_match:
                 products = [redness_match[1]]
             await _attach_ingredient_explanations(products, profile.concerns)
+            await _attach_concern_summaries(products, profile.concerns)
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(
