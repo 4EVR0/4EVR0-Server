@@ -2,6 +2,9 @@
 
 - 개수는 논문(pubmed_evidence)·참고 도서(reference_book) 근거가 있는 성분만 센다. CosIng 기능 표기는 거의 모든
   성분에 붙어 숫자를 부풀리므로 제외한다. 고민 → 효능은 CONCERN_EFFECT_MAP을 따른다.
+- 고민별 논문 근거(pubmed_review, GraphRAG_Pipeline #49) 행은 concern_code가 붙어 있고 그 고민에만 센다.
+  질환이 맞는 사람 대상 연구만 센 근거라 논문 근거보다 앞에 둔다. "논문 근거 N건"의 N은 그 연구 편수다.
+- 민감 피부 주의 표시(sensitive_caution)로 후보에서 빠지는 성분은 요약에서도 뺀다.
 - 개수가 COUNT_MIN(3) 이상이면 숫자로, 그보다 적으면 성분 이름으로 말한다.
 - 핵심 성분은 고민마다 최대 2개를 고르고 전체 KEY_MIN(2)~KEY_MAX(5)개로 맞춘다.
   우선순위: 그 고민의 식약처 고시 기능성 원료 → 논문 근거(점수순) → 참고 도서 근거.
@@ -20,11 +23,13 @@ from typing import Any
 from app.domain.enums import Concern, Effect
 from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP
 from app.services.fragrance_policy import eligible_rationale
+from app.services import sensitive_caution
 
 COUNT_MIN = 3
 KEY_PER_CONCERN = 2
 KEY_MIN, KEY_MAX = 2, 5
-EVIDENCE_TYPES = ("pubmed_evidence", "reference_book")
+EVIDENCE_TYPES = ("pubmed_review", "pubmed_evidence", "reference_book")
+_EVIDENCE_ORDER = {"pubmed_review": 2, "pubmed_evidence": 1}
 
 CONCERN_LABEL_KO: dict[Concern, str] = {
     Concern.ACNE: "트러블", Concern.COMEDONES: "블랙헤드·화이트헤드", Concern.PORE_CONGESTION: "모공 막힘",
@@ -75,7 +80,7 @@ def _display(row: dict[str, Any]) -> str:
 
 
 def _evidence_text(row: dict[str, Any]) -> str:
-    if row["evidence_type"] == "pubmed_evidence":
+    if row["evidence_type"] in ("pubmed_review", "pubmed_evidence"):
         n = int(row.get("paper_count") or 0)
         return f"논문 근거 {n}건" if n else "논문 근거"
     return "참고 도서 근거"
@@ -86,13 +91,15 @@ def build_summary(concerns: list[Concern], rows: list[dict[str, Any]],
     """한 제품의 근거 행(성분×효능)으로 요약을 만든다. 근거 성분이 하나도 없으면 None."""
     functional = functional_ingredients() if functional is None else functional
     rows = [r for r in rows if r.get("evidence_type") in EVIDENCE_TYPES
-            and eligible_rationale(r.get("inci_name"))]
+            and eligible_rationale(r.get("inci_name"))
+            and not sensitive_caution.is_excluded(r, concerns)]
     per_concern = []
     for concern in dict.fromkeys(concerns):
         effects = {e.value for e in CONCERN_EFFECT_MAP.get(concern, [])}
         by_ing: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
-            if row["effect_code"] in effects:
+            matches = (row["concern_code"] == concern.value) if row.get("concern_code") else row["effect_code"] in effects
+            if matches:
                 by_ing.setdefault(row["inci_name"], []).append(row)
         if by_ing:
             per_concern.append((concern, by_ing))
@@ -106,9 +113,9 @@ def build_summary(concerns: list[Concern], rows: list[dict[str, Any]],
             usable = [r for r in ev if r["effect_code"] != Effect.BLEMISH_CARE.value and not r.get("medical_wording")]
             if not usable:
                 continue
-            best = max(usable, key=lambda r: (r["evidence_type"] == "pubmed_evidence", r.get("graph_score") or 0))
+            best = max(usable, key=lambda r: (_EVIDENCE_ORDER.get(r["evidence_type"], 0), r.get("graph_score") or 0))
             is_func = bool(func) and func in functional.get(inci, [])
-            ranked.append(((not is_func, best["evidence_type"] != "pubmed_evidence", -(best.get("graph_score") or 0),
+            ranked.append(((not is_func, -_EVIDENCE_ORDER.get(best["evidence_type"], 0), -(best.get("graph_score") or 0),
                             _display(best)), inci, best, is_func, func))
         return sorted(ranked)
 

@@ -166,6 +166,7 @@ class RetrieveCandidatesTest(unittest.IsolatedAsyncioTestCase):
             candidates, pool = await service.retrieve_ingredient_candidates(_profile([WRK]))
         query.assert_awaited_once()
         self.assertEqual(["ANTI_AGING"], query.await_args.args[0])
+        self.assertEqual("WRINKLES", query.await_args.kwargs["concern"])
         self.assertEqual([r["name"] for r in rows], [r["name"] for r in candidates])
         self.assertEqual([r["name"] for r in rows[:settings.ingredient_product_pool]], [r["name"] for r in pool])
 
@@ -175,18 +176,22 @@ class RetrieveCandidatesTest(unittest.IsolatedAsyncioTestCase):
             ("ANTI_AGING",): [_row(f"AGE{i}", 1.2 - i / 100, "Anti-aging") for i in range(20)],
         }
 
-        async def fake(effects, min_graph_score=0.0):
+        concerns_seen = []
+
+        async def fake(effects, min_graph_score=0.0, concern=None):
+            concerns_seen.append(concern)
             return by_effects[tuple(effects)]
 
         with patch.object(service, "query_ingredients_by_effects", new=AsyncMock(side_effect=fake)):
             candidates, pool = await service.retrieve_ingredient_candidates(_profile([PIG, WRK]))
+        self.assertEqual(["HYPERPIGMENTATION", "WRINKLES"], concerns_seen)
         self.assertEqual(settings.ingredient_candidate_limit, len(candidates))
         self.assertIn("TXA", [r["name"] for r in pool])
         self.assertIn("ARBUTIN", [r["name"] for r in pool])
         self.assertEqual(settings.ingredient_product_pool, len(pool))
 
     async def test_caution_policy_still_applies_to_multi_concern_candidates(self):
-        async def fake(effects, min_graph_score=0.0):
+        async def fake(effects, min_graph_score=0.0, concern=None):
             return [_row("IRRITANT", 0.9, "Soothing"), _row(f"OK{len(effects)}", 0.5, "Soothing")]
 
         with (

@@ -45,6 +45,7 @@ from app.services.ingredient_explanations import (
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import eligible_rationale
+from app.services import sensitive_caution
 from app.services.ingredient_claim_guard import has_ingredient_claim_violation
 from app.services.fragrance_policy import (
     FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
@@ -324,16 +325,27 @@ def _is_sensitivity_query(concerns: list[Concern]) -> bool:
 
 
 async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Concern]) -> list[dict]:
-    """민감성 CAUTION을 적용하고 홍조·로사케아에는 별도 보수적 정책을 적용한다."""
+    """민감성 CAUTION을 적용하고 홍조·로사케아에는 별도 보수적 정책을 적용한다.
+
+    그래프의 민감 피부 주의 표시(sensitive_caution, #49)도 여기서 적용한다.
+    - 민감·홍조·자극·주사 요청이면 exclude 성분을 뺀다.
+    - 함께 요청한 고민이 성분의 완화 고민(sensitive_caution_with)과 겹치면 빼지 않는다.
+      CAUTION 엣지로 걸린 성분도 같다(예: 민감성 피부 + 여드름에서 락틱애씨드).
+    - 남는 주의 성분에는 sensitive_note(안내 문구)를 단다.
+    """
     raw_ingredients = [r for r in raw_ingredients if eligible_rationale(r.get("name"))]
     if not _is_sensitivity_query(concerns):
         return raw_ingredients
     cautioned = await query_cautioned_ingredients(_SENSITIVITY_CONCERN_CODES)
+    cautioned -= {r.get("name") for r in raw_ingredients if sensitive_caution.is_relaxed(r, concerns)}
     redness_guard = _is_redness_rosacea_query(concerns)
     excluded = cautioned | FRAGRANCE_RATIONALE_EXCLUSIONS | (_REDNESS_ROSACEA_AVOID_INCI if redness_guard else set())
-    if not excluded:
-        return raw_ingredients
-    kept = [r for r in raw_ingredients if r.get("name") not in excluded]
+    kept = [r for r in raw_ingredients
+            if r.get("name") not in excluded and not sensitive_caution.is_excluded(r, concerns)]
+    for row in kept:
+        note = sensitive_caution.caution_note(row, concerns)
+        if note:
+            row["sensitive_note"] = note
     # 빈 결과를 피하기 위해 차단된 근거를 되살리지 않는다.
     return kept
 
@@ -353,14 +365,18 @@ async def retrieve_ingredient_candidates(profile: UserProfile) -> tuple[list[dic
         for concern in concerns
     }
     effects_by_concern = {c: effects for c, effects in effects_by_concern.items() if effects}
+    # 고민이 정해지면 그 고민의 논문 근거(EVIDENCE_FOR, #49)를 먼저 본다. 고민 없이 효능만 있으면 효능 기준 그대로.
     if len(effects_by_concern) <= 1:
+        concern = next(iter(effects_by_concern), None)
         rows = await query_ingredients_by_effects(
-            [e.value for e in profile.effects], min_graph_score=settings.ingredient_min_graph_score)
+            [e.value for e in profile.effects], min_graph_score=settings.ingredient_min_graph_score,
+            concern=concern.value if concern else None)
         rows = [{**row, "concerns": [c.value for c in effects_by_concern]} for row in rows]
     else:
         results = await asyncio.gather(*(
-            query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score)
-            for effects in effects_by_concern.values()
+            query_ingredients_by_effects(effects, min_graph_score=settings.ingredient_min_graph_score,
+                                         concern=concern.value)
+            for concern, effects in effects_by_concern.items()
         ))
         rows = merge_concern_candidates(dict(zip(effects_by_concern, results)),
                                         settings.ingredient_candidate_limit)
@@ -574,7 +590,8 @@ async def _attach_concern_summaries(products: list[ProductResult], concerns: lis
     effects = summary_effects(concerns)
     if not settings.concern_summary_enabled or not products or not effects:
         return
-    evidence = await query_product_concern_evidence([p.product_id for p in products], effects)
+    evidence = await query_product_concern_evidence([p.product_id for p in products], effects,
+                                                    [c.value for c in dict.fromkeys(concerns)])
     for product in products:
         product.concern_summary = build_summary(concerns, evidence.get(product.product_id, []))
 
@@ -1983,6 +2000,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                     paper_ref=row.get("paper_ref"),
                     kr_reg_status=row.get("kr_reg_status"),
                     kr_limit_note=row.get("kr_limit_note"),
+                    sensitive_note=row.get("sensitive_note"),
                 )
                 for row in raw_ingredients
             ]
@@ -2142,7 +2160,8 @@ def _kr_limit_phrase(ingredient: IngredientResult) -> str:
 
 def _source_label(eligibility_tier: str | None, default: str) -> str:
     """선택 이유·비교표에 쓰는 근거 출처 문구."""
-    return {"pubmed_evidence": "논문 기반 성분 근거", "reference_book": "참고 도서(화장품 성분 사전)",
+    return {"pubmed_review": "고민 관련 논문 근거", "pubmed_evidence": "논문 기반 성분 근거",
+            "reference_book": "참고 도서(화장품 성분 사전)",
             "cosing_function": "성분 기능 데이터"}.get(eligibility_tier or "", default)
 
 
@@ -2150,9 +2169,10 @@ def _evidence_label(eligibility_tier: str | None, paper_ref: str | None) -> str:
     """근거 종류를 사람이 읽을 수 있는 한국어 라벨로 변환한다.
 
     query_ingredients_by_effects는 eligibility_tier에 evidence_type을 담아 반환한다.
-    pubmed_evidence(논문 근거) > reference_book(화장품 성분 사전) ≥ cosing_function(성분 기능 근거).
+    pubmed_review(고민별 논문 근거, 사람 대상 연구 편수) > pubmed_evidence(논문 근거)
+    > reference_book(화장품 성분 사전) ≥ cosing_function(성분 기능 근거).
     """
-    if eligibility_tier == "pubmed_evidence":
+    if eligibility_tier in ("pubmed_review", "pubmed_evidence"):
         try:
             n = int(float(paper_ref)) if paper_ref not in (None, "", "None") else 0
         except (TypeError, ValueError):
@@ -2252,6 +2272,7 @@ def _compose_user_content(
             f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
             f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
             + (f" (국내 배합한도: {i.kr_limit_note})" if i.kr_reg_status == "restricted" and i.kr_limit_note else "")
+            + (f" (민감 피부 주의: {i.sensitive_note})" if i.sensitive_note else "")
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -2422,7 +2443,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
-                                 kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"))
+                                 kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"),
+                                 sensitive_note=row.get("sensitive_note"))
                 for row in raw_ingredients
             ]
             raw_products = await select_products(

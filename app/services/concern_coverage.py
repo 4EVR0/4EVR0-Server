@@ -18,9 +18,13 @@ from app.services.concern_summary import CONCERN_LABEL_KO
 
 
 def _rank(row: dict[str, Any]) -> tuple:
-    # query_ingredients_by_effects와 같은 순서: 논문 근거 → 그 외 → 결과 효능(BLEMISH_CARE), 점수 내림차순.
-    ev_rank = 2 if row.get("claim") == "Blemish care" else (
-        0 if row.get("eligibility_tier") == "pubmed_evidence" else 1)
+    # query_ingredients_by_effects와 같은 순서: 고민별 논문 근거 → 논문 근거 → 그 외 → 결과 효능(BLEMISH_CARE),
+    # 점수 내림차순.
+    if row.get("eligibility_tier") == "pubmed_review":
+        ev_rank = -1
+    else:
+        ev_rank = 2 if row.get("claim") == "Blemish care" else (
+            0 if row.get("eligibility_tier") == "pubmed_evidence" else 1)
     return ev_rank, -float(row.get("graph_score") or 0.0)
 
 
