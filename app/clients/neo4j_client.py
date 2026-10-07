@@ -172,8 +172,30 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
         return {}
 
 
-async def query_product_concern_evidence(product_ids: list[str], effect_codes: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """제품별 성분×효능 근거(논문·참고 도서만). 고민별 근거 성분 요약용. 실패하면 빈 dict."""
+_PRODUCT_CONCERN_EVIDENCE_FOR_QUERY = """
+UNWIND $product_ids AS product_id
+MATCH (p:Product {product_id: product_id})-[:CONTAINS]->(i:Ingredient)-[r:EVIDENCE_FOR]->(c:Concern)
+WHERE c.concern_code IN $concerns
+  AND NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
+  AND coalesce(i.kr_reg_status, 'none') <> 'banned'
+WITH product_id, i, r, c, split(coalesce(r.effects, ''), '|') AS effects
+RETURN product_id, i.inci_name AS inci_name, i.kor_name AS kor_name, c.concern_code AS concern_code,
+       // 작용 근거가 있는 효능을 대표로(BLEMISH_CARE만 있으면 그대로 두어 핵심 성분에서 빠지게 한다)
+       head([x IN effects WHERE x <> 'BLEMISH_CARE'] + effects) AS effect_code,
+       'pubmed_review' AS evidence_type, r.graph_score AS graph_score, r.paper_count AS paper_count,
+       false AS medical_wording,
+       coalesce(i.sensitive_caution, '') AS sensitive_caution,
+       coalesce(i.sensitive_caution_with, []) AS sensitive_caution_with
+"""
+
+
+async def query_product_concern_evidence(product_ids: list[str], effect_codes: list[str],
+                                         concern_codes: list[str] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """제품별 성분×효능 근거(논문·참고 도서만). 고민별 근거 성분 요약용. 실패하면 빈 dict.
+
+    concern_codes를 주면 고민별 논문 근거(EVIDENCE_FOR, #49) 행(concern_code 포함)을 함께 돌려주고,
+    근거를 검수한 성분(evidence_reviewed)의 AFFECTS 논문 행은 뺀다(질환을 구분하지 않는 근거라서).
+    """
     if not product_ids or not effect_codes:
         return {}
     query = """
@@ -183,16 +205,24 @@ async def query_product_concern_evidence(product_ids: list[str], effect_codes: l
       AND r.evidence_type IN ['pubmed_evidence', 'reference_book']
       AND NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
       AND coalesce(i.kr_reg_status, 'none') <> 'banned'
+      AND NOT ($by_concern AND r.evidence_type = 'pubmed_evidence' AND coalesce(i.evidence_reviewed, false))
     RETURN product_id, i.inci_name AS inci_name, i.kor_name AS kor_name, e.effect_code AS effect_code,
            r.evidence_type AS evidence_type, r.graph_score AS graph_score, r.paper_count AS paper_count,
-           coalesce(r.medical_wording, false) AS medical_wording
+           coalesce(r.medical_wording, false) AS medical_wording,
+           coalesce(i.sensitive_caution, '') AS sensitive_caution,
+           coalesce(i.sensitive_caution_with, []) AS sensitive_caution_with
     """
+    params = {"product_ids": list(dict.fromkeys(product_ids)), "effects": list(effect_codes),
+              "rationale_exclusions": sorted(FRAGRANCE_RATIONALE_EXCLUSIONS),
+              "by_concern": bool(concern_codes), "concerns": list(concern_codes or [])}
     try:
         start = time.perf_counter()
         async with _get_driver().session() as session:
-            result = await session.run(query, product_ids=list(dict.fromkeys(product_ids)),
-                                       effects=list(effect_codes), rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
+            result = await session.run(query, **params)
             rows = [dict(record) async for record in result]
+            if concern_codes:
+                result = await session.run(_PRODUCT_CONCERN_EVIDENCE_FOR_QUERY, **params)
+                rows += [dict(record) async for record in result]
         _log_query("query_product_concern_evidence", {"count": len(product_ids)},
                    (time.perf_counter() - start) * 1000, len(rows))
         out: dict[str, list[dict[str, Any]]] = {}
@@ -225,9 +255,50 @@ async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, 
         return {}
 
 
+# 고민별 논문 근거(GraphRAG_Pipeline #49). graph_score는 log1p(논문별 가중치 합)이라 AFFECTS 임계를 적용하지 않는다.
+# claim은 엣지가 근거로 쓴 효능 가운데 요청 효능의 영문 이름(효능 그룹·설명용).
+_CONCERN_EVIDENCE_QUERY = """
+MATCH (c:Concern {concern_code: $concern})<-[r:EVIDENCE_FOR]-(i:Ingredient)
+WHERE NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
+  AND coalesce(i.kr_reg_status, 'none') <> 'banned'
+OPTIONAL MATCH (e:Effect)
+WHERE e.effect_code IN split(coalesce(r.effects, ''), '|') AND e.effect_code IN $effects
+WITH i, r, collect(e.effect_name_en) AS claims
+RETURN
+    i.inci_name                             AS name,
+    i.kor_name                              AS kor_name,
+    head(claims)                            AS claim,
+    'pubmed_review'                         AS eligibility_tier,
+    toString(r.paper_count)                 AS paper_ref,
+    r.graph_score                           AS graph_score,
+    i.kr_reg_status                         AS kr_reg_status,
+    i.kr_limit_note                         AS kr_limit_note,
+    -1                                      AS ev_rank,
+    coalesce(i.sensitive_caution, '')       AS sensitive_caution,
+    coalesce(i.sensitive_caution_with, [])  AS sensitive_caution_with
+ORDER BY r.graph_score DESC, i.inci_name
+LIMIT $limit
+"""
+
+
+def _merge_concern_evidence(evidence_rows: list[dict[str, Any]], effect_rows: list[dict[str, Any]],
+                            limit: int) -> list[dict[str, Any]]:
+    """고민별 근거 행을 앞에 두고, 성분당 1행(등급·점수가 가장 좋은 행)으로 limit개까지 합친다."""
+    best: dict[str, dict[str, Any]] = {}
+    for row in [*evidence_rows, *effect_rows]:
+        current = best.get(row["name"])
+        key = (row.get("ev_rank", 0), -float(row.get("graph_score") or 0.0))
+        if current is None or key < (current.get("ev_rank", 0), -float(current.get("graph_score") or 0.0)):
+            best[row["name"]] = row
+    ordered = sorted(best.values(),
+                     key=lambda r: (r.get("ev_rank", 0), -float(r.get("graph_score") or 0.0), r["name"]))
+    return ordered[:limit]
+
+
 async def query_ingredients_by_effects(
     effects: list[str],
     min_graph_score: float = 0.0,
+    concern: str | None = None,
 ) -> list[dict[str, Any]]:
     """효능에 관련된 성분을 근거·관련도 순으로 반환한다.
 
@@ -239,6 +310,12 @@ async def query_ingredients_by_effects(
 
     국내 배합금지(kr_reg_status='banned', 식약처 사용제한 원료정보) 성분은 LIMIT 전에 제외한다.
     속성이 없는 노드(적재 전)는 'none'으로 본다. restricted는 kr_limit_note(배합한도)를 함께 반환.
+
+    concern: 고민 코드. 주면 고민별 논문 근거(EVIDENCE_FOR, GraphRAG_Pipeline #49)를 맨 앞에 둔다.
+        EVIDENCE_FOR는 그 고민에 맞는 질환의 사람 대상 연구만 센 근거라, 질환을 구분하지 않는
+        AFFECTS 논문 엣지보다 우선한다. 근거를 검수한 성분(evidence_reviewed)은 고민 순위에서
+        AFFECTS 논문 엣지를 쓰지 않는다. EVIDENCE_FOR가 없는 그래프에서는 기존 결과와 같다.
+    반환 행의 ev_rank: EVIDENCE_FOR -1, 논문 0, 기타 1, BLEMISH_CARE 기타 2.
     """
     if not effects:
         return []
@@ -251,6 +328,7 @@ async def query_ingredients_by_effects(
     WHERE r.graph_score >= $min_score
       AND NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
       AND coalesce(i.kr_reg_status, 'none') <> 'banned'
+      AND NOT ($by_concern AND r.evidence_type = 'pubmed_evidence' AND coalesce(i.evidence_reviewed, false))
     WITH i, e, r,
          // 작용 근거가 없는 결과 효능(BLEMISH_CARE)은 후보가 부족할 때만 채우도록 맨 뒤
          CASE WHEN e.effect_code = 'BLEMISH_CARE' THEN 2
@@ -272,24 +350,30 @@ async def query_ingredients_by_effects(
         best.paper_ref        AS paper_ref,
         best.graph_score      AS graph_score,
         i.kr_reg_status       AS kr_reg_status,
-        i.kr_limit_note       AS kr_limit_note
+        i.kr_limit_note       AS kr_limit_note,
+        best.ev_rank          AS ev_rank,
+        coalesce(i.sensitive_caution, '')       AS sensitive_caution,
+        coalesce(i.sensitive_caution_with, [])  AS sensitive_caution_with
     ORDER BY best.ev_rank, best.graph_score DESC, i.inci_name
     LIMIT $limit
     """
+    params = {"effects": effects, "limit": settings.ingredient_candidate_limit,
+              "rationale_exclusions": sorted(FRAGRANCE_RATIONALE_EXCLUSIONS), "by_concern": concern is not None}
     try:
         start = time.perf_counter()
         async with driver.session() as session:
-            result = await session.run(query, effects=effects, min_score=float(min_graph_score),
-                                       limit=settings.ingredient_candidate_limit,
-                                       rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
+            result = await session.run(query, min_score=float(min_graph_score), **params)
             rows = [dict(record) async for record in result]
             # 폴백: 임계가 결과를 비우면 임계 없이 재조회 (희소 효능 보호)
             if not rows and float(min_graph_score) > 0.0:
-                result = await session.run(query, effects=effects, min_score=0.0,
-                                           limit=settings.ingredient_candidate_limit,
-                                           rationale_exclusions=sorted(FRAGRANCE_RATIONALE_EXCLUSIONS))
+                result = await session.run(query, min_score=0.0, **params)
                 rows = [dict(record) async for record in result]
-        _log_query("query_ingredients_by_effects", {"effects": effects}, (time.perf_counter() - start) * 1000, len(rows))
+            if concern is not None:
+                result = await session.run(_CONCERN_EVIDENCE_QUERY, concern=concern, **params)
+                rows = _merge_concern_evidence([dict(record) async for record in result], rows,
+                                               settings.ingredient_candidate_limit)
+        _log_query("query_ingredients_by_effects", {"effects": effects, "concern": concern},
+                   (time.perf_counter() - start) * 1000, len(rows))
         return rows
     except Exception as exc:
         logger.warning("Neo4j query failed: %s", exc)

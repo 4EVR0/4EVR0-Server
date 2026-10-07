@@ -17,6 +17,8 @@ class IngredientResult(BaseModel):
     # conditional | restricted | none 만 온다. restricted면 kr_limit_note에 배합한도 문구.
     kr_reg_status: str | None = None
     kr_limit_note: str | None = None
+    # 민감 피부 계열 요청에서 남긴 주의 성분의 안내(그래프 sensitive_caution, GraphRAG_Pipeline #49).
+    sensitive_note: str | None = None
 
 
 class ProductIngredientExplanation(BaseModel):

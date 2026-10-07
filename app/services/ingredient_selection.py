@@ -1,6 +1,6 @@
 """추천 성분 최종 선정 (docs/HANDOFF_regulation_and_evidence.md 6장).
 
-입력은 query_ingredients_by_effects 순서(논문 근거 우선, graph_score 내림차순)의 후보 행과
+입력은 query_ingredients_by_effects 순서(고민별 논문 근거 → 논문 근거 우선, graph_score 내림차순)의 후보 행과
 선정된 제품 행이다. 국내 금지·CAUTION 필터는 이미 적용된 상태를 전제로 한다.
 
 규칙
@@ -45,8 +45,12 @@ def ingredient_family(name: str) -> str:
     return _SALT_PREFIX.sub("", upper)
 
 
+# 고민별 논문 근거(pubmed_review, #49)는 질환이 맞는 사람 대상 연구만 센 근거라 논문 효능 근거보다 앞선다.
+_TIER = {"pubmed_review": 0, "pubmed_evidence": 1}
+
+
 def _tier(row: dict[str, Any]) -> int:
-    return 0 if row.get("eligibility_tier") == "pubmed_evidence" else 1
+    return _TIER.get(str(row.get("eligibility_tier") or ""), 2)
 
 
 def select_recommended_ingredients(
