@@ -294,6 +294,9 @@ async def select_products(message: str, concerns: list[Concern],
                               if _is_redness_rosacea_query(concerns) else []),
     )
     raw = filter_by_target_concerns(raw, concerns)
+    if sensitive_caution.is_sensitive_use_query(concerns):
+        # 민감 계열 요청에는 필링(각질 제거) 제품을 권하지 않는다(#49, 민감성 피부 + 여드름).
+        raw = [p for p in raw if not sensitive_caution.is_peel_product(p.get("product_name"))]
     raw = filter_explicit_application_area(raw, message)
     raw = await _filter_products_with_constraints(raw, constraints or [])
     raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
@@ -346,6 +349,9 @@ async def apply_caution_filter(raw_ingredients: list[dict], concerns: list[Conce
         note = sensitive_caution.caution_note(row, concerns)
         if note:
             row["sensitive_note"] = note
+        group = sensitive_caution.score_group(row, concerns)
+        if group:
+            row["score_group"] = group
     # 빈 결과를 피하기 위해 차단된 근거를 되살리지 않는다.
     return kept
 
