@@ -1,0 +1,134 @@
+{
+ "source": "식약처 「화장품 사용 시의 주의사항 및 알레르기 유발성분 표시에 관한 규정」 착향제 구성 성분 중 알레르기 유발 성분 25종",
+ "note": "씻어내는 제품 0.01%, 씻어내지 않는 제품 0.001% 초과 시 전성분 표시 의무. 위험 물질 표시가 아니라 전성분 표시 범위를 넓힌 것.",
+ "aliases": {
+  "ANISYL ALCOHOL": "ANISE ALCOHOL"
+ },
+ "ingredients": [
+  {
+   "inci": "EVERNIA FURFURACEA EXTRACT",
+   "kor": "나무이끼추출물",
+   "cas": "90028-67-4"
+  },
+  {
+   "inci": "LINALOOL",
+   "kor": "리날룰",
+   "cas": "78-70-6"
+  },
+  {
+   "inci": "LIMONENE",
+   "kor": "리모넨",
+   "cas": "5989-27-5"
+  },
+  {
+   "inci": "METHYL 2-OCTYNOATE",
+   "kor": "메칠2-옥티노에이트",
+   "cas": "111-12-6"
+  },
+  {
+   "inci": "BENZYL BENZOATE",
+   "kor": "벤질벤조에이트",
+   "cas": "120-51-4"
+  },
+  {
+   "inci": "BENZYL SALICYLATE",
+   "kor": "벤질살리실레이트",
+   "cas": "118-58-1"
+  },
+  {
+   "inci": "BENZYL CINNAMATE",
+   "kor": "벤질신나메이트",
+   "cas": "103-41-3"
+  },
+  {
+   "inci": "BENZYL ALCOHOL",
+   "kor": "벤질알코올",
+   "cas": "100-51-6"
+  },
+  {
+   "inci": "BUTYLPHENYL METHYLPROPIONAL",
+   "kor": "부틸페닐메틸프로피오날",
+   "cas": "80-54-6"
+  },
+  {
+   "inci": "CITRAL",
+   "kor": "시트랄",
+   "cas": "5392-40-5"
+  },
+  {
+   "inci": "CITRONELLOL",
+   "kor": "시트로넬올",
+   "cas": "106-22-9"
+  },
+  {
+   "inci": "CINNAMYL ALCOHOL",
+   "kor": "신나밀알코올",
+   "cas": "104-54-1"
+  },
+  {
+   "inci": "CINNAMAL",
+   "kor": "신남알",
+   "cas": "104-55-2"
+  },
+  {
+   "inci": "ANISE ALCOHOL",
+   "kor": "아니스에탄올",
+   "cas": "105-13-5"
+  },
+  {
+   "inci": "AMYLCINNAMYL ALCOHOL",
+   "kor": "아밀신나밀알코올",
+   "cas": "101-85-9"
+  },
+  {
+   "inci": "AMYL CINNAMAL",
+   "kor": "아밀신남알",
+   "cas": "122-40-7"
+  },
+  {
+   "inci": "ALPHA-ISOMETHYL IONONE",
+   "kor": "알파-이소메칠이오논",
+   "cas": "127-51-5"
+  },
+  {
+   "inci": "EUGENOL",
+   "kor": "유제놀",
+   "cas": "97-53-0"
+  },
+  {
+   "inci": "ISOEUGENOL",
+   "kor": "이소유제놀",
+   "cas": "97-54-1"
+  },
+  {
+   "inci": "GERANIOL",
+   "kor": "제라니올",
+   "cas": "106-24-1"
+  },
+  {
+   "inci": "EVERNIA PRUNASTRI EXTRACT",
+   "kor": "참나무이끼추출물",
+   "cas": "90028-68-5"
+  },
+  {
+   "inci": "COUMARIN",
+   "kor": "쿠마린",
+   "cas": "91-64-5"
+  },
+  {
+   "inci": "FARNESOL",
+   "kor": "파네솔",
+   "cas": "4602-84-0"
+  },
+  {
+   "inci": "HYDROXYCITRONELLAL",
+   "kor": "하이드록시시트로넬알",
+   "cas": "107-75-5"
+  },
+  {
+   "inci": "HEXYL CINNAMAL",
+   "kor": "헥실신남알",
+   "cas": "101-86-0"
+  }
+ ]
+}
