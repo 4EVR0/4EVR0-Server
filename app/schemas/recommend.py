@@ -45,6 +45,8 @@ class ProductResult(BaseModel):
     fragrance_free_source_url: str | None = None
     # 고민별 근거 성분 개수·핵심 성분(app.services.concern_summary.build_summary). 없으면 None
     concern_summary: dict | None = None
+    # 전성분에 있는 식약처 착향제 알레르기 유발 성분 25종의 한글명(app.services.fragrance_allergens)
+    fragrance_allergens: list[str] = Field(default_factory=list)
     # 리뷰(부연): 논문 근거가 메인, 리뷰는 사용자 합의 보조 신호
     rating: float | None = None
     review_count: int | None = None

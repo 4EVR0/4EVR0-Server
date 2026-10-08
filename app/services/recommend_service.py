@@ -46,6 +46,7 @@ from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import eligible_rationale
 from app.services import sensitive_caution
+from app.services.fragrance_allergens import allergen_note, allergens_in
 from app.services.ingredient_claim_guard import has_ingredient_claim_violation
 from app.services.fragrance_policy import (
     FRAGRANCE_RATIONALE_EXCLUSIONS, fragrance_decision, fragrance_preference,
@@ -405,6 +406,31 @@ def _append_coverage_note(text: str, note: str | None) -> str:
     return f"{text.rstrip()}\n\n{note}" if note else text
 
 
+async def _product_inventory(products: list[ProductResult]) -> dict:
+    """설명 카드와 향료 알레르기 안내가 함께 쓰는 제품 전성분. 한 번만 조회한다."""
+    if not products:
+        return {}
+    return await query_product_ingredient_inventory([product.product_id for product in products])
+
+
+async def _attach_fragrance_allergens(products: list[ProductResult], inventory: dict | None = None) -> None:
+    """추천 제품 전성분의 착향제 알레르기 유발 성분(식약처 표시 대상 25종)을 붙인다. 조회 실패는 빈 목록."""
+    for product in products:
+        product.fragrance_allergens = []
+    if not products:
+        return
+    if inventory is None:
+        inventory = await _product_inventory(products)
+    for product in products:
+        product.fragrance_allergens = allergens_in(inventory.get(product.product_id, []))
+
+
+def _fragrance_allergen_note(products: list[ProductResult]) -> str | None:
+    """출력 가드 검사 뒤 서버가 붙이는 사실 안내. 추천 순위·제외에는 쓰지 않는다."""
+    return allergen_note(
+        (_product_display_name(p.brand, p.product_name), p.fragrance_allergens) for p in products)
+
+
 def _finalize_ingredients(
     raw_ingredients: list[dict], raw_products: list[dict], candidates: list[IngredientResult],
 ) -> list[IngredientResult]:
@@ -651,13 +677,18 @@ def _finalize_with_product_section(text: str, products: list[ProductResult],
     return f"{_strip_product_section(text)}\n\n{_render_product_section(products, ingredients)}"
 
 
-async def _attach_ingredient_explanations(products: list[ProductResult], concerns: list[Concern]) -> None:
-    """랭킹 확정 후 CONTAINS를 읽어 설명만 추가. 조회 실패/미확인은 그대로 둔다."""
+async def _attach_ingredient_explanations(products: list[ProductResult], concerns: list[Concern],
+                                         inventory: dict | None = None) -> None:
+    """랭킹 확정 후 CONTAINS를 읽어 설명만 추가. 조회 실패/미확인은 그대로 둔다.
+
+    inventory: 이미 조회한 제품 전성분(query_product_ingredient_inventory). 없으면 여기서 조회한다.
+    """
     for product in products:
         product.ingredient_explanations = []
     if not settings.dictionary_explanations_enabled or not products or not supports_concerns(concerns):
         return
-    inventory = await query_product_ingredient_inventory([product.product_id for product in products])
+    if inventory is None:
+        inventory = await query_product_ingredient_inventory([product.product_id for product in products])
     for product in products:
         product.ingredient_explanations = cards_for_inventory(inventory.get(product.product_id, []), concerns)
 
@@ -1863,6 +1894,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         metrics.recommend_output_guard_total.labels(kind="followup_quality_fallback").inc()
     if hanja_removed:
         metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
+    await _attach_fragrance_allergens(products)
+    response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
     metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
     next_active = ({**active, "visible_products": _slim_products(products),
@@ -2052,8 +2085,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if redness_match:
                 # 본문이 근거를 설명하는 한 후보만 카드에도 노출한다.
                 products = [redness_match[1]]
-            await _attach_ingredient_explanations(products, profile.concerns)
+            inventory = await _product_inventory(products)
+            await _attach_ingredient_explanations(products, profile.concerns, inventory)
             await _attach_concern_summaries(products, profile.concerns)
+            await _attach_fragrance_allergens(products, inventory)
             if products and redness_match:
                 response_mode = "redness_verified_study_template"
                 response_text = _build_redness_study_response(profile.concerns, redness_match)
@@ -2098,6 +2133,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
                 response_text = _append_coverage_note(
                     response_text, _coverage_note(products, raw_products, profile.concerns))
+                # 향료 알레르기 유발 성분 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
+                response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2480,8 +2517,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             redness_match = _redness_study_match(profile.concerns, candidate_ingredients, products)
             if redness_match:
                 products = [redness_match[1]]
-            await _attach_ingredient_explanations(products, profile.concerns)
+            inventory = await _product_inventory(products)
+            await _attach_ingredient_explanations(products, profile.concerns, inventory)
             await _attach_concern_summaries(products, profile.concerns)
+            await _attach_fragrance_allergens(products, inventory)
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(
@@ -2583,6 +2622,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
                 response_text = _append_coverage_note(
                     response_text, _coverage_note(products, raw_products, profile.concerns))
+                # 향료 알레르기 유발 성분 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
+                response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
