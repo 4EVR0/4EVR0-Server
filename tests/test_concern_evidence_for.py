@@ -9,7 +9,7 @@ from app.domain.enums import Concern
 from app.schemas.recommend import IngredientResult
 from app.services import recommend_service as service
 from app.services import sensitive_caution
-from app.services.concern_coverage import merge_concern_candidates
+from app.services.concern_coverage import concern_ingredient_pool, merge_concern_candidates
 from app.services.concern_summary import build_summary
 from app.services.ingredient_selection import select_recommended_ingredients
 
@@ -187,6 +187,45 @@ class ConcernSummaryReviewTest(unittest.TestCase):
         ]
         s = build_summary([Concern.SENSITIVE_SKIN], rows, {})
         self.assertEqual(["판테놀"], s["concerns"][0]["names"])
+
+
+class RelaxedAcidProductTest(unittest.IsolatedAsyncioTestCase):
+    async def test_relaxed_acids_share_one_score_group_in_pool(self):
+        rows = [_cand("SALICYLIC ACID", "pubmed_review", 2.4, caution="exclude", caution_with=ACNE_FAMILY)
+                | {"concerns": ["ACNE"]},
+                _cand("GLYCOLIC ACID", "pubmed_review", 1.1, caution="exclude", caution_with=ACNE_FAMILY)
+                | {"concerns": ["ACNE"]},
+                _cand("NIACINAMIDE", "pubmed_review", 1.4) | {"concerns": ["SENSITIVE_SKIN", "ACNE"]}]
+        concerns = [Concern.SENSITIVE_SKIN, Concern.ACNE]
+        with patch.object(service, "query_cautioned_ingredients", new=AsyncMock(return_value=set())):
+            kept = await service.apply_caution_filter(rows, concerns)
+        pool = concern_ingredient_pool(kept, concerns, 10)
+        groups = {r["name"]: r.get("score_group") for r in pool}
+        self.assertEqual(sensitive_caution.RELAXED_SCORE_GROUP, groups["SALICYLIC ACID"])
+        self.assertEqual(sensitive_caution.RELAXED_SCORE_GROUP, groups["GLYCOLIC ACID"])
+        self.assertIsNone(groups["NIACINAMIDE"])
+
+    async def test_acne_only_request_has_no_group(self):
+        row = _cand("SALICYLIC ACID", caution="exclude", caution_with=ACNE_FAMILY)
+        self.assertIsNone(sensitive_caution.score_group(row, [Concern.ACNE]))
+
+    async def test_peel_products_dropped_only_for_sensitive_use(self):
+        products = [{"product_id": "1", "product_name": "그린토마토 애시드 20 워시오프 필링 세럼", "category": "세럼",
+                     "matched_count": 3, "matched_ingredients": ["SALICYLIC ACID"], "relevance_score": 3.0},
+                    {"product_id": "2", "product_name": "시카 포어 세럼", "category": "세럼",
+                     "matched_count": 1, "matched_ingredients": ["SALICYLIC ACID"], "relevance_score": 2.0}]
+        with patch.object(service, "query_products_by_ingredients", new=AsyncMock(return_value=products)):
+            sensitive = await service.select_products("민감성 피부인데 여드름 세럼", [Concern.SENSITIVE_SKIN, Concern.ACNE],
+                                                      [{"name": "SALICYLIC ACID", "weight": 2.0}])
+            acne = await service.select_products("여드름 세럼", [Concern.ACNE], [{"name": "SALICYLIC ACID", "weight": 2.0}])
+        self.assertEqual(["2"], [p["product_id"] for p in sensitive])
+        self.assertIn("1", [p["product_id"] for p in acne])
+
+    def test_product_query_counts_score_group_once(self):
+        import inspect
+        source = inspect.getsource(neo4j_client.query_products_by_ingredients)
+        self.assertIn("coalesce(isc.score_group, i.inci_name) AS grp", source)
+        self.assertIn("MAX(weight) AS group_weight", source)
 
 
 if __name__ == "__main__":

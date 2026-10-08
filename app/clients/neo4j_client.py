@@ -55,8 +55,9 @@ async def query_products_by_ingredients(
 ) -> list[dict[str, Any]]:
     """고민-관련도가 높은 성분을 가진 제품을 관련도 순으로 반환한다.
 
-    ingredient_scores: [{"name": inci_name, "weight": float}, ...]
+    ingredient_scores: [{"name": inci_name, "weight": float, "score_group"?: str}, ...]
         weight = 그 성분의 이 고민에 대한 관련도(graph_score). 제품 점수 = 매칭 성분 weight 합.
+        score_group이 같은 성분은 제품당 가장 큰 weight 하나만 더한다.
         → 단순 "성분 개수"가 아니라 관련도 가중이라, 제너럴리스트 성분(예: 나이아신아마이드)만
           겹치는 목적-불일치 제품이 위로 못 올라온다.
     appropriate_categories: 허용 카테고리(포맷) — recommend_service에서 concern 기반 결정.
@@ -85,10 +86,14 @@ async def query_products_by_ingredients(
           MATCH (prod)-[:CONTAINS]->(excluded:Ingredient)
           WHERE excluded.inci_name IN $excluded_ingredients
       }
+    // 같은 score_group(예: 민감 요청에서 완화로 남긴 각질 제거 산)은 제품당 최댓값 하나만 점수에 넣는다.
+    WITH prod, coalesce(isc.score_group, i.inci_name) AS grp,
+         i.inci_name AS name, coalesce(isc.weight, 1.0) AS weight
+    WITH prod, grp, COLLECT(DISTINCT name) AS names, MAX(weight) AS group_weight
     WITH prod,
-         COUNT(DISTINCT i.inci_name)   AS matched_count,
-         COLLECT(DISTINCT i.inci_name) AS matched_ingredients,
-         SUM(coalesce(isc.weight, 1.0)) AS relevance_score
+         REDUCE(acc = [], ns IN COLLECT(names) | acc + ns) AS matched_ingredients,
+         SUM(group_weight) AS relevance_score
+    WITH prod, size(matched_ingredients) AS matched_count, matched_ingredients, relevance_score
     ORDER BY relevance_score DESC, prod.product_name
     // 동일 이름 제품 중복 제거(원본 동작 유지)
     WITH prod.product_name                  AS product_name,

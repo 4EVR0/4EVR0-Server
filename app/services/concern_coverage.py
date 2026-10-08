@@ -81,6 +81,7 @@ def concern_ingredient_pool(candidates: list[dict[str, Any]], concerns: list[Con
     """제품 조회에 넘길 성분 풀. 고민마다 자기 후보 순서대로 번갈아 채운다.
 
     반환 행: {"name", "weight", "concerns"} — weight는 기존과 같이 대표 근거의 graph_score.
+    후보 행에 score_group이 있으면 함께 넘긴다(제품 점수에서 같은 묶음은 최댓값 하나만 센다).
     """
     codes = [c.value for c in dict.fromkeys(concerns)]
     if len(codes) <= 1:
@@ -90,7 +91,8 @@ def concern_ingredient_pool(candidates: list[dict[str, Any]], concerns: list[Con
         picked = _interleave(per_concern, size)
     return [
         {"name": r["name"], "weight": float(r.get("graph_score") or 1.0),
-         "concerns": list(r.get("concerns") or codes)}
+         "concerns": list(r.get("concerns") or codes),
+         **({"score_group": r["score_group"]} if r.get("score_group") else {})}
         for r in picked
     ]
 

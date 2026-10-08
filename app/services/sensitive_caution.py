@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from app.domain.enums import Concern
@@ -22,6 +23,10 @@ SENSITIVE_USE_CONCERNS = frozenset({
 })
 
 RELAXED_NOTE = "민감한 피부라면 저농도·씻어내는 제품부터, 다른 각질 제거 성분과 겹치지 않게 사용"
+# 완화로 남긴 성분(각질 제거 산)은 제품 점수에서 하나의 묶음으로 센다. 산을 여러 개 담은 제품이
+# 산 개수만큼 점수를 받아 위로 올라오지 않게 한다(안내 문구 '겹치지 않게'와 맞춘다).
+RELAXED_SCORE_GROUP = "sensitive_relaxed"
+_PEEL_PRODUCT = re.compile(r"필링|peel", re.IGNORECASE)
 CAUTION_NOTE = "민감한 피부라면 좁은 부위에 먼저 사용해 확인"
 
 
@@ -54,3 +59,16 @@ def caution_note(row: dict[str, Any], concerns: list[Concern]) -> str | None:
     if level == "caution":
         return CAUTION_NOTE
     return None
+
+
+def score_group(row: dict[str, Any], concerns: list[Concern]) -> str | None:
+    """제품 점수 묶음. 민감 계열 요청에서 완화로 남긴 exclude 성분이면 하나의 묶음으로 센다."""
+    if (is_sensitive_use_query(concerns) and row.get("sensitive_caution") == "exclude"
+            and is_relaxed(row, concerns)):
+        return RELAXED_SCORE_GROUP
+    return None
+
+
+def is_peel_product(product_name: str | None) -> bool:
+    """이름으로 보는 필링(각질 제거) 제품. 민감 계열 요청에서는 후보로 쓰지 않는다."""
+    return bool(_PEEL_PRODUCT.search(product_name or ""))
