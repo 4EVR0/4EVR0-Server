@@ -177,3 +177,13 @@ def test_explicit_sensitive_skin_and_redness_do_not_require_model_inference():
         "볼에 홍조가 생겨요.",
         [Concern.ROSACEA_PRONE],
     ) == [Concern.REDNESS]
+
+
+def test_oily_skin_type_named_directly_is_kept():
+    # "지성"은 타입 이름 자체라 번들·유분 같은 표현이 없어도 남는다(건성은 원래 남았음).
+    for message in ("지성 피부인데 쓸만한 화장품 추천해줘", "지성인데 화장품 추천해줘", "피부가 지성이에요"):
+        assert _normalize_skin_types(message, [SkinType.OILY]) == [SkinType.OILY], message
+    # 단어 속 일치("유지성분")는 지성 근거가 아니다.
+    assert _normalize_skin_types("유지성분이 들어간 크림 추천", [SkinType.OILY]) == []
+    # 부정 표현은 지금처럼 근거로 보지 않는다.
+    assert _normalize_skin_types("지성은 아니고 건성이에요", [SkinType.OILY, SkinType.DRY]) == [SkinType.DRY]

@@ -37,7 +37,8 @@ _REDNESS_SIGNAL = re.compile(
 )
 _EXPLICIT_SENSITIVE_SKIN = re.compile(r"민감|예민|sensitive", re.IGNORECASE)
 _COMBINATION_SKIN = re.compile(r"복합성|수부지", re.IGNORECASE)
-_OILY_SURFACE_SIGNAL = re.compile(r"번들|기름|피지|유분|oily", re.IGNORECASE)
+# "지성"은 피부 타입 이름 그 자체다(건성은 _SKIN_DRY_SIGNAL에 있음). "유지성분" 같은 단어 속 일치는 뺀다.
+_OILY_SURFACE_SIGNAL = re.compile(r"(?<![가-힣])지성|번들|기름|피지|유분|oily", re.IGNORECASE)
 _INNER_DRY_SIGNAL = re.compile(
     r"속.{0,20}?(?:건조|수분.{0,8}부족|당)|(?:볼|뺨).{0,8}?(?:건조|당)",
     re.IGNORECASE,
@@ -45,7 +46,7 @@ _INNER_DRY_SIGNAL = re.compile(
 _INNER_ONLY_DRY_SIGNAL = re.compile(r"속.{0,20}?(?:건조|수분.{0,8}부족|당)", re.IGNORECASE)
 _SKIN_DRY_SIGNAL = re.compile(r"건성|건조|당김|당기|당겨|메마르", re.IGNORECASE)
 _NEGATED_SKIN_SIGNAL = re.compile(
-    r"^(?:.{0,4}?(?:지\s*않|지\s*못|안\s*보|없)|.{0,6}?거나.{0,20}?보이지\s*않)",
+    r"^(?:.{0,4}?(?:지\s*않|지\s*못|안\s*보|없|아니)|.{0,6}?거나.{0,20}?보이지\s*않)",
     re.IGNORECASE,
 )
 _DEHYDRATION_CONCERN = re.compile(
