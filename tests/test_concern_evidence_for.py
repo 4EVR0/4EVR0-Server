@@ -123,10 +123,13 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
         return rows, session
 
     async def test_without_concern_runs_effect_query_only(self):
-        rows, session = await self._query([[_cand("NIACINAMIDE") | {"ev_rank": 0}]])
-        self.assertEqual(1, len(session.calls))
+        rows, session = await self._query([[_cand("NIACINAMIDE") | {"ev_rank": 0}],
+                                           [{"name": "NIACINAMIDE", "claims": ["Barrier repair"]}]])
+        self.assertEqual(2, len(session.calls))  # 효능 조회 + 근거 효능 조회
         self.assertFalse(session.calls[0][1]["by_concern"])
+        self.assertNotIn("EVIDENCE_FOR]->(c:Concern {concern_code", session.calls[1][0])
         self.assertEqual(["NIACINAMIDE"], [r["name"] for r in rows])
+        self.assertEqual(["Soothing", "Barrier repair"], rows[0]["supported_claims"])
 
     async def test_concern_evidence_comes_first_one_row_per_ingredient(self):
         effect_rows = [_cand("NIACINAMIDE", score=1.0) | {"ev_rank": 0},
@@ -134,7 +137,8 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
                        _cand("BORON NITRIDE", "reference_book", 0.2) | {"ev_rank": 1}]
         review_rows = [_cand("SALICYLIC ACID", "pubmed_review", 2.46) | {"ev_rank": -1},
                        _cand("GLYCOLIC ACID", "pubmed_review", 1.10) | {"ev_rank": -1}]
-        rows, session = await self._query([effect_rows, review_rows], concern="ACNE")
+        rows, session = await self._query(
+            [effect_rows, review_rows, [{"name": "GLYCOLIC ACID", "claims": ["Keratolytic"]}]], concern="ACNE")
         effect_query, effect_params = session.calls[0]
         self.assertTrue(effect_params["by_concern"])
         self.assertIn("coalesce(i.evidence_reviewed, false)", effect_query)
@@ -143,6 +147,10 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["SALICYLIC ACID", "GLYCOLIC ACID", "NIACINAMIDE", "BORON NITRIDE"],
                          [r["name"] for r in rows])
         self.assertEqual("pubmed_review", rows[0]["eligibility_tier"])
+        # 그래프 전체 근거 효능(다른 고민의 근거)도 허용 범위에 더한다.
+        self.assertIn("Keratolytic", rows[1]["supported_claims"])
+        self.assertIn("reference_book", session.calls[2][0])
+        self.assertIn("NOT coalesce(i.evidence_reviewed, false)", session.calls[2][0])
 
 
 class ReviewTierTest(unittest.TestCase):
