@@ -98,3 +98,16 @@ def test_note_is_appended_after_guard_on_every_transport(transport, with_allerge
         assert "향료 알레르기" not in result["response_text"]
     if concern == Concern.DRY_SKIN:  # 생성 응답은 품질 검사도 통과해야 한다(대체 응답의 표현은 이 PR 범위 밖).
         assert check_response({}, result) == []
+
+
+def test_allergen_note_only_for_products_named_in_the_body():
+    shown = _product("p1")
+    hidden = ProductResult(product_id="p2", product_name="제품 p2", brand="브랜드", category="크림",
+                           matched_count=1, matched_ingredients=["CAFFEINE"], fragrance_allergens=["리날룰"])
+    shown.fragrance_allergens = ["리모넨"]
+    body = "추천 제품\n- 제품 p1: 보습 후보입니다."
+    note = service._fragrance_allergen_note([shown, hidden], body)
+    assert note == "참고: 브랜드 제품 p1 제품에는 향료 알레르기 유발 가능 성분(리모넨)이 표시돼 있어요. " + NOTE_TAIL
+    assert service._fragrance_allergen_note([hidden], body) is None
+    # 카드 목록은 그대로 남는다.
+    assert hidden.fragrance_allergens == ["리날룰"]

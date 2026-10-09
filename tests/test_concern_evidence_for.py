@@ -79,11 +79,24 @@ class ApplyCautionFilterTest(unittest.IsolatedAsyncioTestCase):
             kept = await service.apply_caution_filter(self._rows(), [Concern.IRRITATED_SKIN])
         self.assertNotIn("LACTIC ACID", [r["name"] for r in kept])
 
-    def test_note_reaches_generation_input(self):
-        ingredient = IngredientResult(name="SALICYLIC ACID", claim="Comedolytic",
-                                      sensitive_note=sensitive_caution.RELAXED_NOTE)
-        content = service._compose_user_content("민감성 피부인데 여드름", [ingredient], [])
-        self.assertIn(f"(민감 피부 주의: {sensitive_caution.RELAXED_NOTE})", content)
+    def test_note_is_server_appended_not_left_to_generation(self):
+        sa = IngredientResult(name="SALICYLIC ACID", kor_name="살리실릭애씨드", claim="Comedolytic",
+                              sensitive_note=sensitive_caution.RELAXED_NOTE)
+        ga = IngredientResult(name="GLYCOLIC ACID", kor_name="글라이콜릭애씨드", claim="Comedolytic",
+                              sensitive_note=sensitive_caution.RELAXED_NOTE)
+        rp = IngredientResult(name="RETINYL PALMITATE", kor_name="레티닐팔미테이트", claim="Anti-aging",
+                              sensitive_note=sensitive_caution.CAUTION_NOTE)
+        chol = IngredientResult(name="CHOLESTEROL", kor_name="콜레스테롤", sensitive_note=sensitive_caution.CAUTION_NOTE)
+        # 생성 입력에는 넣지 않는다(서버가 붙이므로 중복 방지).
+        self.assertNotIn("민감 피부 주의", service._compose_user_content("민감성 피부인데 여드름", [sa], []))
+        body = "성분 설명\n- 살리실릭애씨드: 모공 관리.\n- 글라이콜릭애씨드: 각질 관리.\n- 콜레스테롤: 장벽."
+        note = service._sensitive_note([sa, ga, rp, chol], body)
+        self.assertEqual(
+            "참고: 살리실릭애씨드·글라이콜릭애씨드는 " + sensitive_caution.RELAXED_NOTE + "해 주세요.\n"
+            "참고: 콜레스테롤은 " + sensitive_caution.CAUTION_NOTE + "해 주세요.", note)
+        # 본문에 없는 성분(레티닐팔미테이트)은 안내하지 않는다.
+        self.assertNotIn("레티닐팔미테이트", note)
+        self.assertIsNone(service._sensitive_note([rp], body))
 
 
 class _Result:
