@@ -42,5 +42,11 @@ Extraction guidelines (read carefully — extract precisely):
    Do NOT infer skin type from a disease or symptom alone — e.g., 아토피(atopic),
    홍조(redness), 자극으로 따가움(stinging) by themselves do NOT imply SENSITIVE.
 
+8. intent — "product_info" only when the user names ONE specific product (brand and/or product
+   name) and asks what it is, how it is, or what is in it ("OO 어때?", "OO 어떤 제품이야?",
+   "OO 성분 알려줘"). Put the product name exactly as written in product_mention (no extra words).
+   Otherwise intent is "recommend" and product_mention is "". A product type alone ("토너 어때?"),
+   an ingredient alone ("레티놀 크림 어때?"), or "이 제품 / 1번" is NOT product_info.
+
 Return format (no markdown, pure JSON):
-{"skin_types": [], "concerns": [], "constraints": []}
+{"skin_types": [], "concerns": [], "constraints": [], "intent": "recommend", "product_mention": ""}

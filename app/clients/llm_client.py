@@ -20,6 +20,9 @@ PROFILE_JSON_SCHEMA = {
         "skin_types": {"type": "array", "items": {"type": "string", "enum": [e.value for e in SkinType]}},
         "concerns": {"type": "array", "items": {"type": "string", "enum": [e.value for e in Concern]}},
         "constraints": {"type": "array", "items": {"type": "string", "enum": [e.value for e in Constraint]}},
+        # 특정 제품 설명 요청(#124). 필수 항목이 아니라 기존 추출 결과에는 영향이 없다.
+        "intent": {"type": "string", "enum": ["recommend", "product_info"]},
+        "product_mention": {"type": "string", "maxLength": 80},
     },
     "required": ["skin_types", "concerns", "constraints"],
     "additionalProperties": False,
@@ -221,9 +224,13 @@ async def call_llm(message: str) -> UserProfile:
     constraints = [Constraint(v) for v in data.get("constraints", []) if v in Constraint._value2member_map_]
     effects = infer_effects(concerns)
 
+    intent = data.get("intent") if data.get("intent") in ("recommend", "product_info") else None
+    mention = str(data.get("product_mention") or "").strip()[:80] or None
     return UserProfile(
         skin_types=skin_types,
         concerns=concerns,
         effects=effects,
         constraints=constraints,
+        intent=intent,
+        product_mention=mention if intent == "product_info" else None,
     )

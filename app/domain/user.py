@@ -8,3 +8,6 @@ class UserProfile(BaseModel):
     concerns: list[Concern] = Field(default_factory=list)
     effects: list[Effect] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
+    # 특정 제품 설명 요청(#124). intent: "recommend" | "product_info", product_mention: 사용자가 쓴 제품 이름 그대로
+    intent: str | None = None
+    product_mention: str | None = None
