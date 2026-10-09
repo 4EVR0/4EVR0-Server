@@ -60,17 +60,25 @@ def merge_concern_candidates(
     `concerns`에 해당 고민을 모두 남긴다. 고민이 하나면 입력 순서·내용을 그대로 반환한다.
     """
     concerns_by_name: dict[str, list[str]] = {}
+    claims_by_name: dict[str, list[str]] = {}
     best: dict[str, dict[str, Any]] = {}
     for concern, rows in rows_by_concern.items():
         for row in rows:
             name = row["name"]
+            # 근거 효능은 고민마다 다를 수 있어 합친다(각각 그 고민의 근거가 있는 효능).
+            merged = claims_by_name.setdefault(name, [])
+            for claim in row.get("supported_claims") or []:
+                if claim not in merged:
+                    merged.append(claim)
             concerns_by_name.setdefault(name, [])
             if concern.value not in concerns_by_name[name]:
                 concerns_by_name[name].append(concern.value)
             if name not in best or _rank(row) < _rank(best[name]):
                 best[name] = row
     ordered = [
-        [{**best[row["name"]], "concerns": concerns_by_name[row["name"]]} for row in rows]
+        [{**best[row["name"]], "concerns": concerns_by_name[row["name"]],
+          **({"supported_claims": claims_by_name[row["name"]]} if claims_by_name[row["name"]] else {})}
+         for row in rows]
         for rows in rows_by_concern.values()
     ]
     return _interleave(ordered, limit)

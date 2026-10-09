@@ -38,6 +38,9 @@ def has_ingredient_claim_violation(text, ingredients, products=()):
     aliases = {}
     for row in ingredients:
         allowed.setdefault(row.name, set()).update(benefits(row.claim or ''))
+        # 대표 효능 하나만이 아니라 근거가 있는 효능 전체를 허용한다(#49: 고민별 근거는 효능이 여러 개).
+        for claim in getattr(row, 'supported_claims', None) or []:
+            allowed[row.name].update(benefits(claim))
         aliases.setdefault(row.name, set()).update(a.casefold() for a in (row.name, row.kor_name) if a)
     for product in products:
         for card in product_explanations(product):

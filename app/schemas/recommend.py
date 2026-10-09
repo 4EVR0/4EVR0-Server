@@ -11,6 +11,8 @@ class IngredientResult(BaseModel):
     name: str
     kor_name: str | None = None
     claim: str | None = None
+    # 근거가 있는 요청 효능 전체(영문 효능명). 생성 문장 효능 검사의 허용 범위. 응답에는 쓰지 않아도 된다.
+    supported_claims: list[str] = Field(default_factory=list)
     eligibility_tier: str | None = None
     paper_ref: str | None = None
     # 식약처 사용제한 원료 기준 국내 규제 상태. banned는 조회 단계에서 제외되므로 응답에는
