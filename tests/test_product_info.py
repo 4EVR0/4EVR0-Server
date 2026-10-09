@@ -130,17 +130,11 @@ def test_single_match_explains_product_with_server_sections():
     assert [p["product_id"] for p in active["visible_products"]] == ["pA"]  # 후속 질문이 이 제품을 본다
 
 
-def test_clean_llm_intro_is_used_and_bad_one_is_rejected():
-    good = ("이 제품에는 보습 관련 근거가 있는 우레아가 들어 있어요.\n"
-            "미백 관련 근거가 있는 나이아신아마이드도 들어 있어요.")
-    _, patches = _patches([ROW_A], intro_text=good)
+def test_intro_is_always_server_written_even_with_gpu():
+    _, patches = _patches([ROW_A], intro_text="이 제품은 우레아로 보습 효과를 가집니다.")
     resp = _run(service._resolve_conversation_response("s", "t", "브랜드A 수딩 크림 EX 어때?"), patches)
-    assert resp.response_text.startswith(good)
-    bad = "브랜드A 수딩 크림 EX의 우레아는 주름을 없애 주는 가장 강력한 성분이에요."
-    _, patches = _patches([ROW_A], intro_text=bad)
-    resp = _run(service._resolve_conversation_response("s", "t", "브랜드A 수딩 크림 EX 어때?"), patches)
-    assert not resp.response_text.startswith(bad)
     assert resp.response_text.startswith("브랜드A 수딩 크림 EX(크림)은 확인된 성분")
+    assert "효과를 가집니다" not in resp.response_text
 
 
 def test_many_matches_ask_then_number_reply_explains():

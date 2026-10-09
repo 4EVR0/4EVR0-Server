@@ -1936,17 +1936,6 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
 
 
 # ── 특정 제품 설명(#124) ─────────────────────────────────────────────────────
-_PRODUCT_INFO_SYSTEM = (
-    "You are a Korean cosmetics assistant. Write a short overview (2-3 sentences) of ONE product in "
-    "Hangul Korean ONLY, using ONLY the ingredient-effect facts given. Say the product contains ingredients "
-    "related to the listed effects; never promise results. Do NOT mention amounts, concentration, ingredient "
-    "order, 'main ingredient', superlatives, prices, other products, or any effect that is not listed. "
-    "Use ingredient names exactly as given. Write each ingredient in its own sentence with only that "
-    "ingredient's listed effects (never put two ingredients in one sentence), and put each sentence on its own line. "
-    "No headings, no lists, no markdown."
-)
-
-
 def _product_result(row: dict, matched: list[str] | None = None, allergens: list[str] | None = None) -> ProductResult:
     return ProductResult(
         product_id=row["product_id"], goods_no=row.get("goods_no"), product_name=row["product_name"],
@@ -1971,34 +1960,6 @@ async def _resolve_product_mention(tokens: list[str]) -> tuple[str, list[dict]]:
     exact = [r for r in rows if joined in {re.sub(r"[\s-]", "", (r.get("product_name") or "").casefold()),
                                            re.sub(r"[\s-]", "", f"{r.get('brand') or ''}{r.get('product_name') or ''}".casefold())}]
     return ("one", exact) if len(exact) == 1 else ("many", rows)
-
-
-async def _product_info_intro(display: str, category: str | None,
-                              groups: list, ingredients: list[IngredientResult], product: ProductResult) -> str | None:
-    """생성 모델 소개 문장. 효능·무결성·향료 검사를 모두 통과해야 쓴다. 실패·오류는 None(서버 문장 사용)."""
-    if not groups:
-        return None
-    facts = "\n".join(f"- {label}: {', '.join(it.name for it in items)}" for label, items in groups)
-    try:
-        async with llm_slot():
-            client = get_async_llm_client()
-            resp = await client.chat.completions.create(
-                model=settings.gpu_model,
-                messages=[{"role": "system", "content": _PRODUCT_INFO_SYSTEM},
-                          {"role": "user", "content": f"제품: {display} ({category or '분류 없음'})\n효능별 근거 성분:\n{facts}"}],
-                temperature=settings.gen_temperature, max_tokens=300,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
-        text = (resp.choices[0].message.content or "").strip()
-    except Exception as exc:  # 과부하·연결 실패 모두 서버 문장으로 대신한다
-        logger.info("product info intro skipped: %s", exc)
-        return None
-    text, _ = _remove_hanja(text)
-    if (not text or has_ingredient_claim_violation(text, ingredients, [product])
-            or find_response_integrity_issues(text, ingredients, [product]) or mentions_excluded_rationale(text)):
-        metrics.recommend_output_guard_total.labels(kind="product_info_intro_fallback").inc()
-        return None
-    return text
 
 
 async def _product_info_response(session_id: str, turn_id: str, message: str, row: dict) -> RecommendResponse:
@@ -2028,8 +1989,9 @@ async def _product_info_response(session_id: str, turn_id: str, message: str, ro
         for inci, it in by_inci.items()
     ]
     product = _product_result(row, list(by_inci), allergens_in({"name": f["inci_name"]} for f in facts))
-    intro = (await _product_info_intro(display, row.get("category"), groups, ingredients, product)
-             or product_info.default_intro(display, row.get("category"), len(facts), len(by_inci)))
+    # 소개 문장도 서버가 쓴다. 생성 모델 문장은 효능 검사를 통과해도 효과 단정·여러 성분 나열이 잦아
+    # 실검증에서 쓰지 않기로 했다(#124). 그래서 이 기능은 GPU 없이도 답한다.
+    intro = product_info.default_intro(display, row.get("category"), len(facts), len(by_inci))
     text = f"{intro}\n\n{product_info.render_sections(groups, facts)}"
     text = _append_coverage_note(text, product_info.product_allergen_note(display, facts))
     metrics.recommend_requests_total.labels(status="ok").inc()
