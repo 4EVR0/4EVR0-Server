@@ -261,18 +261,28 @@ async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, 
 
 
 # 고민별 논문 근거(GraphRAG_Pipeline #49). graph_score는 log1p(논문별 가중치 합)이라 AFFECTS 임계를 적용하지 않는다.
-# claim은 엣지가 근거로 쓴 효능 가운데 요청 효능의 영문 이름(효능 그룹·설명용).
+# claim(대표 효능)은 엣지가 근거로 쓴 요청 효능 가운데 CLAIM_PRIORITY 순으로 가장 구체적인 것.
+# supported_claims는 근거가 있는 요청 효능 전체로, 생성 문장 효능 검사(ingredient_claim_guard)의 허용 범위가 된다.
+CLAIM_PRIORITY = [
+    "COMEDOLYTIC", "KERATOLYTIC", "SEBUM_REGULATION", "ANTIMICROBIAL", "DEPIGMENTING", "BRIGHTENING",
+    "ANTI_AGING", "BARRIER_REPAIR", "MOISTURE_RETENTION", "HYDRATING", "PHOTOPROTECTIVE", "WOUND_HEALING",
+    "ANTIOXIDANT", "SOOTHING", "ANTI_INFLAMMATORY", "BLEMISH_CARE",
+]
 _CONCERN_EVIDENCE_QUERY = """
 MATCH (c:Concern {concern_code: $concern})<-[r:EVIDENCE_FOR]-(i:Ingredient)
 WHERE NOT toUpper(trim(i.inci_name)) IN $rationale_exclusions
   AND coalesce(i.kr_reg_status, 'none') <> 'banned'
 OPTIONAL MATCH (e:Effect)
 WHERE e.effect_code IN split(coalesce(r.effects, ''), '|') AND e.effect_code IN $effects
+WITH i, r, e,
+     coalesce(head([x IN range(0, size($claim_priority) - 1) WHERE $claim_priority[x] = e.effect_code]), 999) AS prio
+ORDER BY prio
 WITH i, r, collect(e.effect_name_en) AS claims
 RETURN
     i.inci_name                             AS name,
     i.kor_name                              AS kor_name,
     head(claims)                            AS claim,
+    claims                                  AS supported_claims,
     'pubmed_review'                         AS eligibility_tier,
     toString(r.paper_count)                 AS paper_ref,
     r.graph_score                           AS graph_score,
@@ -286,15 +296,56 @@ LIMIT $limit
 """
 
 
+# 성분마다 그래프에 근거가 있는 효능 전체(요청 고민과 무관). 생성 문장 효능 검사의 허용 범위로만 쓴다.
+# 검수한 성분은 고민별 근거(EVIDENCE_FOR)와 참고 도서만, 검수하지 않은 성분은 논문·참고 도서 AFFECTS를 쓴다.
+# CosIng 기능 표기는 근거로 넓히지 않는다.
+_SUPPORTED_CLAIMS_QUERY = """
+UNWIND $names AS n
+MATCH (i:Ingredient {inci_name: n})
+OPTIONAL MATCH (i)-[a:AFFECTS]->(e:Effect)
+WHERE a.evidence_type = 'reference_book'
+   OR (a.evidence_type = 'pubmed_evidence' AND NOT coalesce(i.evidence_reviewed, false))
+WITH i, collect(DISTINCT e.effect_name_en) AS affects_claims
+OPTIONAL MATCH (i)-[f:EVIDENCE_FOR]->(:Concern)
+WITH i, affects_claims,
+     reduce(codes = [], x IN collect(f.effects) | codes + split(coalesce(x, ''), '|')) AS codes
+OPTIONAL MATCH (e2:Effect) WHERE e2.effect_code IN codes
+WITH i, affects_claims, collect(DISTINCT e2.effect_name_en) AS evidence_claims
+RETURN i.inci_name AS name, affects_claims + evidence_claims AS claims
+"""
+
+
+async def _add_graph_supported_claims(session, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """후보 행의 supported_claims에 그래프 전체의 근거 효능을 더한다. 조회 실패는 호출 쪽 예외 처리를 따른다."""
+    if not rows:
+        return rows
+    result = await session.run(_SUPPORTED_CLAIMS_QUERY, names=[r["name"] for r in rows])
+    extra = {record.get("name"): record.get("claims") or [] async for record in result}
+    out = []
+    for row in rows:
+        merged = list(row.get("supported_claims") or ([row["claim"]] if row.get("claim") else []))
+        for claim in extra.get(row["name"], []):
+            if claim and claim not in merged:
+                merged.append(claim)
+        out.append({**row, "supported_claims": merged})
+    return out
+
+
 def _merge_concern_evidence(evidence_rows: list[dict[str, Any]], effect_rows: list[dict[str, Any]],
                             limit: int) -> list[dict[str, Any]]:
     """고민별 근거 행을 앞에 두고, 성분당 1행(등급·점수가 가장 좋은 행)으로 limit개까지 합친다."""
     best: dict[str, dict[str, Any]] = {}
+    claims: dict[str, list[str]] = {}
     for row in [*evidence_rows, *effect_rows]:
         current = best.get(row["name"])
         key = (row.get("ev_rank", 0), -float(row.get("graph_score") or 0.0))
         if current is None or key < (current.get("ev_rank", 0), -float(current.get("graph_score") or 0.0)):
             best[row["name"]] = row
+        merged = claims.setdefault(row["name"], [])
+        for claim in row.get("supported_claims") or [row.get("claim")]:
+            if claim and claim not in merged:
+                merged.append(claim)
+    best = {name: {**row, "supported_claims": claims[name]} for name, row in best.items()}
     ordered = sorted(best.values(),
                      key=lambda r: (r.get("ev_rank", 0), -float(r.get("graph_score") or 0.0), r["name"]))
     return ordered[:limit]
@@ -340,6 +391,9 @@ async def query_ingredients_by_effects(
               WHEN r.evidence_type = 'pubmed_evidence' THEN 0 ELSE 1 END AS ev_rank
     ORDER BY ev_rank, r.graph_score DESC
     WITH i,
+         // 허용 효능은 논문·참고 도서 근거만. CosIng 기능 표기는 근거로 넓히지 않는다(collect는 null을 뺀다).
+         collect(DISTINCT CASE WHEN r.evidence_type IN ['pubmed_evidence', 'reference_book']
+                               THEN e.effect_name_en END) AS supported_claims,
          head(collect({
              claim:            e.effect_name_en,
              eligibility_tier: r.evidence_type,
@@ -357,13 +411,15 @@ async def query_ingredients_by_effects(
         i.kr_reg_status       AS kr_reg_status,
         i.kr_limit_note       AS kr_limit_note,
         best.ev_rank          AS ev_rank,
+        supported_claims      AS supported_claims,
         coalesce(i.sensitive_caution, '')       AS sensitive_caution,
         coalesce(i.sensitive_caution_with, [])  AS sensitive_caution_with
     ORDER BY best.ev_rank, best.graph_score DESC, i.inci_name
     LIMIT $limit
     """
     params = {"effects": effects, "limit": settings.ingredient_candidate_limit,
-              "rationale_exclusions": sorted(FRAGRANCE_RATIONALE_EXCLUSIONS), "by_concern": concern is not None}
+              "rationale_exclusions": sorted(FRAGRANCE_RATIONALE_EXCLUSIONS), "by_concern": concern is not None,
+              "claim_priority": CLAIM_PRIORITY}
     try:
         start = time.perf_counter()
         async with driver.session() as session:
@@ -377,6 +433,7 @@ async def query_ingredients_by_effects(
                 result = await session.run(_CONCERN_EVIDENCE_QUERY, concern=concern, **params)
                 rows = _merge_concern_evidence([dict(record) async for record in result], rows,
                                                settings.ingredient_candidate_limit)
+            rows = await _add_graph_supported_claims(session, rows)
         _log_query("query_ingredients_by_effects", {"effects": effects, "concern": concern},
                    (time.perf_counter() - start) * 1000, len(rows))
         return rows

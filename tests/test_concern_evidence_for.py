@@ -123,10 +123,13 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
         return rows, session
 
     async def test_without_concern_runs_effect_query_only(self):
-        rows, session = await self._query([[_cand("NIACINAMIDE") | {"ev_rank": 0}]])
-        self.assertEqual(1, len(session.calls))
+        rows, session = await self._query([[_cand("NIACINAMIDE") | {"ev_rank": 0}],
+                                           [{"name": "NIACINAMIDE", "claims": ["Barrier repair"]}]])
+        self.assertEqual(2, len(session.calls))  # 효능 조회 + 근거 효능 조회
         self.assertFalse(session.calls[0][1]["by_concern"])
+        self.assertNotIn("EVIDENCE_FOR]->(c:Concern {concern_code", session.calls[1][0])
         self.assertEqual(["NIACINAMIDE"], [r["name"] for r in rows])
+        self.assertEqual(["Soothing", "Barrier repair"], rows[0]["supported_claims"])
 
     async def test_concern_evidence_comes_first_one_row_per_ingredient(self):
         effect_rows = [_cand("NIACINAMIDE", score=1.0) | {"ev_rank": 0},
@@ -134,7 +137,8 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
                        _cand("BORON NITRIDE", "reference_book", 0.2) | {"ev_rank": 1}]
         review_rows = [_cand("SALICYLIC ACID", "pubmed_review", 2.46) | {"ev_rank": -1},
                        _cand("GLYCOLIC ACID", "pubmed_review", 1.10) | {"ev_rank": -1}]
-        rows, session = await self._query([effect_rows, review_rows], concern="ACNE")
+        rows, session = await self._query(
+            [effect_rows, review_rows, [{"name": "GLYCOLIC ACID", "claims": ["Keratolytic"]}]], concern="ACNE")
         effect_query, effect_params = session.calls[0]
         self.assertTrue(effect_params["by_concern"])
         self.assertIn("coalesce(i.evidence_reviewed, false)", effect_query)
@@ -143,6 +147,10 @@ class ConcernQueryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["SALICYLIC ACID", "GLYCOLIC ACID", "NIACINAMIDE", "BORON NITRIDE"],
                          [r["name"] for r in rows])
         self.assertEqual("pubmed_review", rows[0]["eligibility_tier"])
+        # 그래프 전체 근거 효능(다른 고민의 근거)도 허용 범위에 더한다.
+        self.assertIn("Keratolytic", rows[1]["supported_claims"])
+        self.assertIn("reference_book", session.calls[2][0])
+        self.assertIn("NOT coalesce(i.evidence_reviewed, false)", session.calls[2][0])
 
 
 class ReviewTierTest(unittest.TestCase):
@@ -226,6 +234,44 @@ class RelaxedAcidProductTest(unittest.IsolatedAsyncioTestCase):
         source = inspect.getsource(neo4j_client.query_products_by_ingredients)
         self.assertIn("coalesce(isc.score_group, i.inci_name) AS grp", source)
         self.assertIn("MAX(weight) AS group_weight", source)
+
+
+class SupportedClaimsTest(unittest.TestCase):
+    def test_guard_allows_every_supported_effect_but_not_others(self):
+        from app.services.ingredient_claim_guard import has_ingredient_claim_violation
+        sa = IngredientResult(name="SALICYLIC ACID", kor_name="살리실릭애씨드", claim="Comedolytic",
+                              supported_claims=["Comedolytic", "Sebum regulation", "Anti-inflammatory", "Blemish care"])
+        ok = "성분 설명\n- 살리실릭애씨드: 모공 막힘과 피지, 트러블 진정에 도움이 된다고 알려져 있어요."
+        bad = "성분 설명\n- 살리실릭애씨드: 주름 개선에 도움이 된다고 알려져 있어요."
+        self.assertFalse(has_ingredient_claim_violation(ok, [sa]))
+        self.assertTrue(has_ingredient_claim_violation(bad, [sa]))
+        # 대표 효능 하나만 있으면 예전처럼 좁게 검사한다.
+        narrow = IngredientResult(name="SALICYLIC ACID", kor_name="살리실릭애씨드", claim="Anti-inflammatory")
+        self.assertTrue(has_ingredient_claim_violation(ok, [narrow]))
+
+    def test_merge_unions_supported_claims_across_rows_and_concerns(self):
+        rows = neo4j_client._merge_concern_evidence(
+            [_cand("SALICYLIC ACID", "pubmed_review", 2.4, "Comedolytic")
+             | {"ev_rank": -1, "supported_claims": ["Comedolytic", "Anti-inflammatory"]}],
+            [_cand("SALICYLIC ACID", "reference_book", 0.2, "Keratolytic") | {"ev_rank": 1, "supported_claims": ["Keratolytic"]}],
+            10)
+        self.assertEqual("Comedolytic", rows[0]["claim"])
+        self.assertEqual(["Comedolytic", "Anti-inflammatory", "Keratolytic"], rows[0]["supported_claims"])
+        merged = merge_concern_candidates({
+            Concern.ACNE: [rows[0]],
+            Concern.HYPERPIGMENTATION: [_cand("SALICYLIC ACID", "pubmed_review", 0.5, "Depigmenting")
+                                        | {"supported_claims": ["Depigmenting"]}],
+        }, 5)
+        self.assertEqual(["Comedolytic", "Anti-inflammatory", "Keratolytic", "Depigmenting"],
+                         merged[0]["supported_claims"])
+
+    def test_queries_order_claims_and_limit_affects_claims_to_papers_and_books(self):
+        import inspect
+        self.assertIn("$claim_priority", neo4j_client._CONCERN_EVIDENCE_QUERY)
+        self.assertEqual("COMEDOLYTIC", neo4j_client.CLAIM_PRIORITY[0])
+        self.assertEqual(["SOOTHING", "ANTI_INFLAMMATORY", "BLEMISH_CARE"], neo4j_client.CLAIM_PRIORITY[-3:])
+        source = inspect.getsource(neo4j_client.query_ingredients_by_effects)
+        self.assertIn("r.evidence_type IN ['pubmed_evidence', 'reference_book']", source)
 
 
 if __name__ == "__main__":

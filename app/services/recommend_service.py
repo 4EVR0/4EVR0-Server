@@ -2035,6 +2035,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                     name=row["name"],
                     kor_name=row.get("kor_name"),
                     claim=row.get("claim"),
+                    supported_claims=row.get("supported_claims") or [],
                     eligibility_tier=row.get("eligibility_tier"),
                     paper_ref=row.get("paper_ref"),
                     kr_reg_status=row.get("kr_reg_status"),
@@ -2485,6 +2486,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             raw_ingredients, ingredient_scores = await retrieve_ingredient_candidates(profile)
             ingredients = [
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
+                                 supported_claims=row.get("supported_claims") or [],
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
                                  kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"),
                                  sensitive_note=row.get("sensitive_note"))
