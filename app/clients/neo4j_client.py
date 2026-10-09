@@ -530,3 +530,99 @@ async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
     except Exception as exc:
         logger.warning("Neo4j path query failed: %s", exc)
         return []
+
+
+# ── 특정 제품 설명(#124) ─────────────────────────────────────────────────────
+_PRODUCTS_BY_NAME_QUERY = """
+MATCH (p:Product)
+WITH p, toLower(replace(replace(coalesce(p.brand, '') + coalesce(p.product_name, ''), ' ', ''), '-', '')) AS hay
+WHERE size($tokens) > 0 AND all(t IN $tokens WHERE hay CONTAINS t)
+RETURN
+    toString(coalesce(p.product_id, p.goodsNo, p.goods_no)) AS product_id,
+    toString(coalesce(p.goodsNo, p.goods_no, p.product_id)) AS goods_no,
+    p.product_name AS product_name, p.brand AS brand, p.category AS category,
+    p.rating AS rating, p.review_count AS review_count, p.review_stats AS review_stats,
+    p.product_url AS product_url
+ORDER BY size(p.product_name), coalesce(p.review_count, 0) DESC, p.product_name
+LIMIT $limit
+"""
+
+
+async def query_products_by_name_tokens(tokens: list[str], limit: int = 21) -> list[dict[str, Any]]:
+    """제품명·브랜드(띄어쓰기·대소문자 무시)에 모든 토큰이 들어 있는 제품. 같은 이름은 하나만. 실패하면 빈 목록."""
+    if not tokens:
+        return []
+    try:
+        start = time.perf_counter()
+        async with _get_driver().session() as session:
+            result = await session.run(_PRODUCTS_BY_NAME_QUERY, tokens=list(tokens), limit=int(limit))
+            rows = [dict(record) async for record in result]
+        _log_query("query_products_by_name_tokens", {"tokens": tokens}, (time.perf_counter() - start) * 1000, len(rows))
+    except Exception as exc:
+        logger.warning("Neo4j product name query failed: %s", exc)
+        return []
+    seen: set[str] = set()
+    unique = []
+    for row in rows:
+        if row["product_name"] in seen:
+            continue
+        seen.add(row["product_name"])
+        unique.append(row)
+    return unique
+
+
+# 제품 성분별 근거. 검수한 성분은 고민별 근거(EVIDENCE_FOR)와 참고 도서만, 검수하지 않은 성분은 논문·참고 도서
+# AFFECTS를 쓴다(후보 조회의 근거 효능 범위와 같다). CosIng 기능 표기는 효능 근거로 보지 않는다.
+_PRODUCT_INGREDIENT_FACTS_QUERY = """
+MATCH (p:Product {product_id: $product_id})-[:CONTAINS]->(i:Ingredient)
+WHERE i.inci_name IS NOT NULL AND i.inci_name <> ''
+OPTIONAL MATCH (i)-[a:AFFECTS]->(e:Effect)
+WHERE a.evidence_type = 'reference_book'
+   OR (a.evidence_type = 'pubmed_evidence' AND NOT coalesce(i.evidence_reviewed, false))
+WITH i, collect(CASE WHEN e IS NULL THEN NULL ELSE
+                  {effect: e.effect_code, type: a.evidence_type, papers: coalesce(a.paper_count, 0),
+                   medical: coalesce(a.medical_wording, false)} END) AS affects
+OPTIONAL MATCH (i)-[f:EVIDENCE_FOR]->(:Concern)
+WITH i, affects, collect(CASE WHEN f IS NULL THEN NULL ELSE
+                           {effects: f.effects, papers: coalesce(f.paper_count, 0)} END) AS evidence
+RETURN i.inci_name AS inci_name, i.kor_name AS kor_name, i.kr_reg_status AS kr_reg_status,
+       i.kr_limit_note AS kr_limit_note, coalesce(i.sensitive_caution, '') AS sensitive_caution,
+       affects, evidence
+ORDER BY i.inci_name
+"""
+
+
+async def query_product_ingredient_facts(product_id: str) -> list[dict[str, Any]] | None:
+    """제품의 확인된 성분과 성분별 근거. 조회 실패는 None(성분이 없는 것과 구분)."""
+    try:
+        start = time.perf_counter()
+        async with _get_driver().session() as session:
+            result = await session.run(_PRODUCT_INGREDIENT_FACTS_QUERY, product_id=product_id)
+            rows = [dict(record) async for record in result]
+        _log_query("query_product_ingredient_facts", {"product_id": product_id},
+                   (time.perf_counter() - start) * 1000, len(rows))
+        return rows
+    except Exception as exc:
+        logger.warning("Neo4j product ingredient facts query failed: %s", exc)
+        return None
+
+
+_BRANDS_CACHE: dict[str, Any] = {"at": 0.0, "brands": frozenset()}
+
+
+async def query_product_brands(ttl_seconds: float = 3600.0) -> frozenset[str]:
+    """제품 브랜드 이름(소문자·띄어쓰기 제거). 제품 설명 규칙 경로가 '브랜드를 말했는지' 판단할 때 쓴다. 1시간 캐시."""
+    now = time.monotonic()
+    if _BRANDS_CACHE["brands"] and now - _BRANDS_CACHE["at"] < ttl_seconds:
+        return _BRANDS_CACHE["brands"]
+    try:
+        async with _get_driver().session() as session:
+            result = await session.run(
+                "MATCH (p:Product) WHERE p.brand IS NOT NULL AND p.brand <> '' "
+                "RETURN DISTINCT toLower(replace(replace(p.brand, ' ', ''), '-', '')) AS brand")
+            brands = frozenset([record["brand"] async for record in result])
+    except Exception as exc:
+        logger.warning("Neo4j brand query failed: %s", exc)
+        return _BRANDS_CACHE["brands"]
+    _BRANDS_CACHE.update(at=now, brands=brands)
+    return brands

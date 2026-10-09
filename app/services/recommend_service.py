@@ -19,7 +19,10 @@ from app.clients.neo4j_client import (
     query_product_concern_evidence,
     query_product_ingredient_inventory,
     query_product_fragrance_evidence,
+    query_product_brands,
+    query_product_ingredient_facts,
     query_products_by_ingredients,
+    query_products_by_name_tokens,
 )
 from app.core import metrics
 from app.services.concern_coverage import (
@@ -45,7 +48,7 @@ from app.services.ingredient_explanations import (
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import eligible_rationale
-from app.services import sensitive_caution
+from app.services import product_info, sensitive_caution
 from app.services.skin_type_defaults import apply_skin_type_defaults
 from app.services.fragrance_allergens import allergen_note, allergens_in
 from app.services.ingredient_claim_guard import has_ingredient_claim_violation
@@ -1932,6 +1935,183 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
                              response_mode=response_mode)
 
 
+# ── 특정 제품 설명(#124) ─────────────────────────────────────────────────────
+_PRODUCT_INFO_SYSTEM = (
+    "You are a Korean cosmetics assistant. Write a short overview (2-3 sentences) of ONE product in "
+    "Hangul Korean ONLY, using ONLY the ingredient-effect facts given. Say the product contains ingredients "
+    "related to the listed effects; never promise results. Do NOT mention amounts, concentration, ingredient "
+    "order, 'main ingredient', superlatives, prices, other products, or any effect that is not listed. "
+    "Use ingredient names exactly as given. Write each ingredient in its own sentence with only that "
+    "ingredient's listed effects (never put two ingredients in one sentence), and put each sentence on its own line. "
+    "No headings, no lists, no markdown."
+)
+
+
+def _product_result(row: dict, matched: list[str] | None = None, allergens: list[str] | None = None) -> ProductResult:
+    return ProductResult(
+        product_id=row["product_id"], goods_no=row.get("goods_no"), product_name=row["product_name"],
+        brand=row.get("brand") or "", category=row.get("category") or "",
+        image_url=build_product_image_url(row.get("goods_no") or row["product_id"]),
+        product_url=row.get("product_url"), matched_count=len(matched or []),
+        matched_ingredients=list(matched or []), rating=row.get("rating"), review_count=row.get("review_count"),
+        review_stats=_parse_review_stats(row.get("review_stats")), fragrance_allergens=list(allergens or []),
+    )
+
+
+async def _resolve_product_mention(tokens: list[str]) -> tuple[str, list[dict]]:
+    """제품 이름 토큰 → ('one'|'many'|'none'|'broad', 후보). 이름이 정확히 같은 제품이 있으면 그 제품 하나."""
+    rows = await query_products_by_name_tokens(tokens)
+    if not rows:
+        return "none", []
+    if len(rows) >= product_info.TOO_BROAD:
+        return "broad", rows
+    if len(rows) == 1:
+        return "one", rows
+    joined = "".join(tokens)
+    exact = [r for r in rows if joined in {re.sub(r"[\s-]", "", (r.get("product_name") or "").casefold()),
+                                           re.sub(r"[\s-]", "", f"{r.get('brand') or ''}{r.get('product_name') or ''}".casefold())}]
+    return ("one", exact) if len(exact) == 1 else ("many", rows)
+
+
+async def _product_info_intro(display: str, category: str | None,
+                              groups: list, ingredients: list[IngredientResult], product: ProductResult) -> str | None:
+    """생성 모델 소개 문장. 효능·무결성·향료 검사를 모두 통과해야 쓴다. 실패·오류는 None(서버 문장 사용)."""
+    if not groups:
+        return None
+    facts = "\n".join(f"- {label}: {', '.join(it.name for it in items)}" for label, items in groups)
+    try:
+        async with llm_slot():
+            client = get_async_llm_client()
+            resp = await client.chat.completions.create(
+                model=settings.gpu_model,
+                messages=[{"role": "system", "content": _PRODUCT_INFO_SYSTEM},
+                          {"role": "user", "content": f"제품: {display} ({category or '분류 없음'})\n효능별 근거 성분:\n{facts}"}],
+                temperature=settings.gen_temperature, max_tokens=300,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:  # 과부하·연결 실패 모두 서버 문장으로 대신한다
+        logger.info("product info intro skipped: %s", exc)
+        return None
+    text, _ = _remove_hanja(text)
+    if (not text or has_ingredient_claim_violation(text, ingredients, [product])
+            or find_response_integrity_issues(text, ingredients, [product]) or mentions_excluded_rationale(text)):
+        metrics.recommend_output_guard_total.labels(kind="product_info_intro_fallback").inc()
+        return None
+    return text
+
+
+async def _product_info_response(session_id: str, turn_id: str, message: str, row: dict) -> RecommendResponse:
+    """지목한 제품의 확인된 성분을 효능별로 묶어 설명한다."""
+    display = _product_display_name(row.get("brand"), row.get("product_name"))
+    facts = await query_product_ingredient_facts(row["product_id"])
+    if facts is None:
+        text = "제품 성분 정보를 불러오지 못했어요. 잠시 후 다시 물어봐 주세요."
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                                 response_text=text, model_used=settings.gpu_model, response_mode="product_info_unavailable")
+    groups = product_info.group_facts(facts)
+    by_inci: dict[str, product_info.IngredientEvidence] = {}
+    codes: dict[str, set[str]] = {}
+    for _, items in groups:
+        for it in items:
+            by_inci.setdefault(it.inci, it)
+            codes.setdefault(it.inci, set()).update(it.effects)
+    ingredients = [
+        IngredientResult(
+            name=inci, kor_name=it.name,
+            claim=product_info.effect_name_en(sorted(codes[inci])[0]) if codes[inci] else None,
+            supported_claims=[product_info.effect_name_en(c) for c in sorted(codes[inci])],
+            eligibility_tier="pubmed_review" if it.papers else "reference_book",
+            paper_ref=str(it.papers) if it.papers else None,
+        )
+        for inci, it in by_inci.items()
+    ]
+    product = _product_result(row, list(by_inci), allergens_in({"name": f["inci_name"]} for f in facts))
+    intro = (await _product_info_intro(display, row.get("category"), groups, ingredients, product)
+             or product_info.default_intro(display, row.get("category"), len(facts), len(by_inci)))
+    text = f"{intro}\n\n{product_info.render_sections(groups, facts)}"
+    text = _append_coverage_note(text, product_info.product_allergen_note(display, facts))
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    await _store_turn(session_id, message, [product], text,
+                      active_state=_active_recommendation(UserProfile(), message, [product], turn_id, ingredients))
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients, products=[product],
+                             response_text=text, model_used=settings.gpu_model, response_mode="product_info")
+
+
+async def _product_choice_response(session_id: str, turn_id: str, message: str, rows: list[dict]) -> RecommendResponse:
+    """후보가 여러 개면 되묻는다. 후보는 세션에 저장해 다음 턴에서 번호·이름으로 고른다."""
+    shown = rows[:product_info.MAX_CHOICES]
+    products = [_product_result(r) for r in shown]
+    text = product_info.choice_text(shown, _product_display_name)
+    active = _active_recommendation(UserProfile(), message, products, turn_id, [])
+    active["pending_product_choices"] = [
+        {k: r.get(k) for k in ("product_id", "goods_no", "product_name", "brand", "category", "rating",
+                               "review_count", "review_stats", "product_url")}
+        for r in shown
+    ]
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    await _store_turn(session_id, message, products, text, active_state=active)
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=products,
+                             response_text=text, model_used=settings.gpu_model, response_mode="product_choice")
+
+
+async def _product_info_by_rule(session_id: str, turn_id: str, message: str,
+                                active: dict | None) -> RecommendResponse | None:
+    """규칙 경로: 되묻기 선택 또는 '제품 A 어때?'. 해당하지 않으면 None(기존 흐름)."""
+    pending = (active or {}).get("pending_product_choices") or []
+    if pending:
+        chosen = product_info.choice_from_message(message, pending)
+        if chosen:
+            return await _product_info_response(session_id, turn_id, message, chosen)
+    if not product_info.looks_like_product_info(message):
+        return None
+    tokens = product_info.mention_tokens(message)
+    if not tokens:  # "이 제품 어때?"·"1번 어때?"처럼 직전 추천을 가리키면 기존 후속 처리
+        return None
+    # 규칙 경로는 브랜드를 말한 경우만. "레티놀 크림 어때?"처럼 성분·제형만 말한 질문을 제품 검색으로
+    # 가로채지 않는다(이런 경우는 생성 모델의 의도 판단으로 넘긴다).
+    if not product_info.has_brand(tokens, await query_product_brands()):
+        return None
+    kind, rows = await _resolve_product_mention(tokens)
+    visible = {str(p.get("product_id")) for p in (active or {}).get("visible_products") or []}
+    if kind == "one" and str(rows[0]["product_id"]) not in visible:
+        return await _product_info_response(session_id, turn_id, message, rows[0])
+    if kind == "many":
+        return await _product_choice_response(session_id, turn_id, message, rows)
+    return None  # 없거나 너무 넓으면 추천 흐름(생성 모델이 제품 설명으로 보면 아래에서 다시 처리)
+
+
+async def _product_info_by_mention(session_id: str, turn_id: str, message: str, mention: str) -> RecommendResponse | None:
+    """생성 모델 경로: 프로필 추출이 제품 설명 요청과 제품 이름을 돌려준 경우."""
+    tokens = product_info.mention_tokens(mention)
+    if not tokens:
+        return None
+    kind, rows = await _resolve_product_mention(tokens)
+    if kind == "one":
+        return await _product_info_response(session_id, turn_id, message, rows[0])
+    if kind == "many":
+        return await _product_choice_response(session_id, turn_id, message, rows)
+    if kind == "none":
+        metrics.recommend_requests_total.labels(status="ok").inc()
+        await _store_turn(session_id, message, [], product_info.NOT_FOUND_TEXT)
+        return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                                 response_text=product_info.NOT_FOUND_TEXT, model_used=settings.gpu_model,
+                                 response_mode="product_not_found")
+    return None
+
+
+def _sse_frames(response: RecommendResponse, finish_reason: str) -> list[str]:
+    return [
+        _sse("meta", {"session_id": response.session_id, "turn_id": response.turn_id,
+                      "ingredients": [i.model_dump() for i in response.ingredients],
+                      "products": [p.model_dump() for p in response.products],
+                      "model_used": response.model_used}),
+        _sse("delta", {"text": response.response_text}),
+        _sse("done", {"finish_reason": finish_reason, "response_mode": response.response_mode}),
+    ]
+
+
 async def _resolve_conversation_response(
     session_id: str,
     turn_id: str,
@@ -1944,6 +2124,10 @@ async def _resolve_conversation_response(
     """
     history = await conversation_store.load_recent(session_id)
     active = await conversation_store.load_active(session_id)
+    # 특정 제품 설명(#124): 되묻기 선택·"제품 A 어때?"는 후속 판단보다 먼저 본다.
+    product_response = await _product_info_by_rule(session_id, turn_id, message, active)
+    if product_response is not None:
+        return product_response
     requested = _requested_categories(message)
     explicit_prior = _has_followup_cue(message)
     pending = set(active.get("pending_categories") or []) if active else set()
@@ -2052,6 +2236,10 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             profile, skin_type_note = apply_skin_type_defaults(profile)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+            if profile.intent == "product_info" and profile.product_mention:
+                product_response = await _product_info_by_mention(session_id, turn_id, message, profile.product_mention)
+                if product_response is not None:
+                    return product_response
 
             # 2) Neo4j 조회 (효능→성분, 성분→제품)
             _t = time.perf_counter()
@@ -2512,6 +2700,12 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             profile, skin_type_note = apply_skin_type_defaults(profile)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
+            if profile.intent == "product_info" and profile.product_mention:
+                product_response = await _product_info_by_mention(session_id, turn_id, message, profile.product_mention)
+                if product_response is not None:
+                    for frame in _sse_frames(product_response, "product_info"):
+                        yield frame
+                    return
 
             _t = time.perf_counter()
             raw_ingredients, ingredient_scores = await retrieve_ingredient_candidates(profile)
