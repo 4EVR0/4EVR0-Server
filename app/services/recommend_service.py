@@ -46,6 +46,7 @@ from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import eligible_rationale
 from app.services import sensitive_caution
+from app.services.skin_type_defaults import apply_skin_type_defaults
 from app.services.fragrance_allergens import allergen_note, allergens_in
 from app.services.ingredient_claim_guard import has_ingredient_claim_violation
 from app.services.fragrance_policy import (
@@ -2047,6 +2048,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             profile = UserProfile.model_validate(profile, from_attributes=True)
             constraints = merge_fragrance_constraint(message, list(profile.constraints))
             profile = profile.model_copy(update={"constraints": constraints})
+            # 고민 없이 피부 타입만 말하면 타입별 기본 고민으로 추천한다(그렇지 않으면 제품 0개).
+            profile, skin_type_note = apply_skin_type_defaults(profile)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -2156,10 +2159,13 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
-                response_text = _append_coverage_note(
-                    response_text, _coverage_note(products, raw_products, profile.concerns))
+                if not skin_type_note:  # 타입으로 채운 고민은 사용자가 요청한 고민이 아니므로 부분 충족 안내를 생략
+                    response_text = _append_coverage_note(
+                        response_text, _coverage_note(products, raw_products, profile.concerns))
                 # 민감 피부 주의·향료 알레르기 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
                 response_text = _append_server_notes(response_text, candidate_ingredients, products)
+                if skin_type_note:
+                    response_text = f"{skin_type_note}\n\n{response_text}"
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2502,6 +2508,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             profile = UserProfile.model_validate(profile, from_attributes=True)
             constraints = merge_fragrance_constraint(message, list(profile.constraints))
             profile = profile.model_copy(update={"constraints": constraints})
+            # 고민 없이 피부 타입만 말하면 타입별 기본 고민으로 추천한다(그렇지 않으면 제품 0개).
+            profile, skin_type_note = apply_skin_type_defaults(profile)
             spans["extract"] = time.perf_counter() - _t
             metrics.profile_extraction_method_total.labels(method=extraction_method).inc()
 
@@ -2645,10 +2653,13 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
-                response_text = _append_coverage_note(
-                    response_text, _coverage_note(products, raw_products, profile.concerns))
+                if not skin_type_note:  # 타입으로 채운 고민은 사용자가 요청한 고민이 아니므로 부분 충족 안내를 생략
+                    response_text = _append_coverage_note(
+                        response_text, _coverage_note(products, raw_products, profile.concerns))
                 # 민감 피부 주의·향료 알레르기 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
                 response_text = _append_server_notes(response_text, candidate_ingredients, products)
+                if skin_type_note:
+                    response_text = f"{skin_type_note}\n\n{response_text}"
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
