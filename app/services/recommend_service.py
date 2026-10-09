@@ -425,10 +425,34 @@ async def _attach_fragrance_allergens(products: list[ProductResult], inventory: 
         product.fragrance_allergens = allergens_in(inventory.get(product.product_id, []))
 
 
-def _fragrance_allergen_note(products: list[ProductResult]) -> str | None:
-    """출력 가드 검사 뒤 서버가 붙이는 사실 안내. 추천 순위·제외에는 쓰지 않는다."""
+def _mentions_product(text: str, product: ProductResult) -> bool:
+    return bool(product.product_name) and product.product_name in text
+
+
+def _fragrance_allergen_note(products: list[ProductResult], text: str) -> str | None:
+    """출력 가드 검사 뒤 서버가 붙이는 사실 안내. 추천 순위·제외에는 쓰지 않는다.
+
+    응답 본문에 이름이 나온 제품만 안내한다(본문에 없는 카드 제품까지 적으면 헷갈린다).
+    카드의 fragrance_allergens 목록은 그대로 둔다.
+    """
     return allergen_note(
-        (_product_display_name(p.brand, p.product_name), p.fragrance_allergens) for p in products)
+        (_product_display_name(p.brand, p.product_name), p.fragrance_allergens)
+        for p in products if _mentions_product(text, p))
+
+
+def _sensitive_note(ingredients: list[IngredientResult], text: str) -> str | None:
+    """민감 피부 주의 안내(sensitive_note)를 서버가 붙인다. 응답 본문에 이름이 나온 성분만."""
+    folded = text.casefold()
+    return sensitive_caution.notes_text(
+        (i.kor_name or i.name, i.sensitive_note) for i in ingredients
+        if i.sensitive_note and any(a and a.casefold() in folded for a in (i.kor_name, i.name)))
+
+
+def _append_server_notes(text: str, ingredients: list[IngredientResult], products: list[ProductResult]) -> str:
+    """출력 가드 뒤에 붙이는 서버 안내(민감 피부 주의 → 향료 알레르기 표시). 본문 기준으로 대상을 고른다."""
+    body = text
+    text = _append_coverage_note(text, _sensitive_note(ingredients, body))
+    return _append_coverage_note(text, _fragrance_allergen_note(products, body))
 
 
 def _finalize_ingredients(
@@ -1895,7 +1919,7 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     if hanja_removed:
         metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
     await _attach_fragrance_allergens(products)
-    response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
+    response_text = _append_server_notes(response_text, [], products)
     metrics.recommend_requests_total.labels(status="ok").inc()
     # 성분 목록도 함께 넘긴다 → 프론트가 응답 텍스트의 성분명을 올리브색으로 강조(마커 유무 무관).
     next_active = ({**active, "visible_products": _slim_products(products),
@@ -2134,8 +2158,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
                 response_text = _append_coverage_note(
                     response_text, _coverage_note(products, raw_products, profile.concerns))
-                # 향료 알레르기 유발 성분 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
-                response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
+                # 민감 피부 주의·향료 알레르기 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
+                response_text = _append_server_notes(response_text, candidate_ingredients, products)
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2316,7 +2340,6 @@ def _compose_user_content(
             f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
             f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
             + (f" (국내 배합한도: {i.kr_limit_note})" if i.kr_reg_status == "restricted" and i.kr_limit_note else "")
-            + (f" (민감 피부 주의: {i.sensitive_note})" if i.sensitive_note else "")
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -2624,8 +2647,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
                 response_text = _append_coverage_note(
                     response_text, _coverage_note(products, raw_products, profile.concerns))
-                # 향료 알레르기 유발 성분 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
-                response_text = _append_coverage_note(response_text, _fragrance_allergen_note(products))
+                # 민감 피부 주의·향료 알레르기 표시 안내(출력 가드 뒤에 붙여 가드에 걸리지 않게 한다).
+                response_text = _append_server_notes(response_text, candidate_ingredients, products)
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:

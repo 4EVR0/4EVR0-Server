@@ -72,3 +72,23 @@ def score_group(row: dict[str, Any], concerns: list[Concern]) -> str | None:
 def is_peel_product(product_name: str | None) -> bool:
     """이름으로 보는 필링(각질 제거) 제품. 민감 계열 요청에서는 후보로 쓰지 않는다."""
     return bool(_PEEL_PRODUCT.search(product_name or ""))
+
+
+def _topic(word: str) -> str:
+    """'살리실릭애씨드는'·'콜레스테롤은'처럼 받침에 맞춘 주제 조사."""
+    last = word.strip()[-1:] if word.strip() else ""
+    batchim = "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0
+    return f"{word}{'은' if batchim else '는'}"
+
+
+def notes_text(items: Iterable[tuple[str, str]]) -> str | None:
+    """[(성분 표시 이름, 안내 문구)] → 안내 문구별로 성분을 묶은 '참고:' 줄. 없으면 None.
+
+    응답 본문을 검사한 뒤 서버가 붙이는 문장이다(생성 모델이 안내를 빠뜨려도 항상 나오게).
+    """
+    grouped: dict[str, list[str]] = {}
+    for name, note in items:
+        if note and name not in grouped.setdefault(note, []):
+            grouped[note].append(name)
+    lines = [f"참고: {_topic('·'.join(names))} {note}해 주세요." for note, names in grouped.items() if names]
+    return "\n".join(lines) or None
