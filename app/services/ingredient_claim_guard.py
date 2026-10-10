@@ -2,13 +2,13 @@
 
 A sentence fails only when it states a benefit that none of its mentioned ingredients
 supports ("A와 B가 보습과 각질 연화를 돕는다" passes if A supports one and B the other).
-Superlatives are wording, not errors. Inventory/product titles
+Superlatives and amount claims fail: the graph has paper counts, not effect size or amounts. Inventory/product titles
 are not parsed as generated claims. This guards benefits, not every mechanism.
 """
 import re
 from app.services.ingredient_explanations import product_explanations
 
-POLICY_VERSION = "ingredient-claim-guard-v2"
+POLICY_VERSION = "ingredient-claim-guard-v3"
 PATTERNS = {
     'tone': r'미백|색소|잡티|피부\s*톤|브라이트닝|whiten|brighten|depigment',
     'aging': r'주름|탄력|노화|리프팅|wrinkle|anti[- ]?aging',
@@ -26,6 +26,12 @@ PATTERNS = {
 }
 
 
+# 논문 건수는 연구 편수일 뿐 효과의 크기·순위가 아니고, 그래프에는 함량이 없다.
+UNSUPPORTED_ASSERTION = re.compile(
+    r'가장\s*\S{0,6}\s*(?:강력|효과|우수|좋|뛰어)|최고|최상|최강|극대화|most\s+effective|strongest'
+    r'|주성분|주력|주된[^.\n]{0,10}?성분|고농도|입증|증명', re.I)
+
+
 def benefits(text):
     return {key for key, pattern in PATTERNS.items() if re.search(pattern, text, re.I)}
 
@@ -33,6 +39,8 @@ def benefits(text):
 def has_ingredient_claim_violation(text, ingredients, products=()):
     # Product section is server-authored or covered by the separate inclusion guard.
     prose = re.split(r'(?m)^\s*[#*\d. ]*추천 제품', text, maxsplit=1)[0]
+    if UNSUPPORTED_ASSERTION.search(prose):
+        return True
     allowed = {}
     aliases = {}
     for row in ingredients:

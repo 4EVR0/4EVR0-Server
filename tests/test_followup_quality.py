@@ -118,7 +118,7 @@ def test_patch_test_advice_is_not_a_safety_claim():
         assert response.response_mode == "followup", advice
 
 
-def test_wording_is_not_an_error():
+def test_superlative_and_amount_claims_fall_back():
     for answer in ("**크림 B**가 가장 보습력이 뛰어납니다.", "**크림 B**는 *우레아*가 주력인 크림으로 보습 효과를 극대화해요."):
         response, _ = _run("왜 이 제품들을 추천했어?", answer)
-        assert response.response_mode == "followup", answer
+        assert response.response_mode == "followup_quality_fallback", answer
