@@ -36,3 +36,9 @@ def test_graph_ingredient_missing_from_shown_products_is_caught():
 
 def test_check_is_skipped_without_inventory():
     assert codes("**마데카솔 (MADECASSOL)**이 포함돼 있어요.", inventory={}) == []
+
+
+def test_wrong_korean_name_for_known_inci_is_caught():
+    assert codes("**마데카씨드 (MADECASSOSIDE)**가 들어 있어요.") == ["UNKNOWN_INGREDIENT"]
+    assert codes("**마데카소사이드 (MADECASSOSIDE)**가 들어 있어요.") == []
+    assert codes("*세라마이드엔피* (CERAMIDE NP)와 마데카소사이드(MADECASSOSIDE)") == []

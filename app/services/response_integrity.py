@@ -19,6 +19,8 @@ _LONG_UPPERCASE_TOKEN = re.compile(r"(?<![A-Za-z])[A-Z]{6,}(?![A-Za-z])")
 _PARENTHETICAL = re.compile(r"\([^()]*\)")
 # "한글명 (INCI)" 표기의 INCI 부분.
 _INCI_LABEL = re.compile(r"[가-힣][^()\n]{0,40}?\(\s*([A-Z0-9][A-Z0-9 ,.'/\-]{3,}?)\s*\)")
+# INCI 바로 앞의 한글 이름(강조 표시 허용). "1,2-헥산다이올"처럼 숫자로 시작하면 한글 부분만 잡힌다.
+_KOREAN_BEFORE_INCI = re.compile(r"([가-힣][가-힣0-9/\-]*)\**\s*\**\s*\(\s*([A-Z0-9][A-Z0-9 ,.'/\-]{3,}?)\s*\)")
 # *성분* / **성분** 강조 표기.
 _EMPHASIS = re.compile(r"\*{1,2}([^*\n]{2,40}?)\*{1,2}")
 # 그래프에 없는 이름이라도 성분처럼 보이는 어미(지어낸 성분명 판별용).
@@ -44,6 +46,7 @@ def _unknown_ingredient(
     """보여 주는 제품·성분에서 확인되지 않은 성분명을 찾는다.
 
     - "한글명 (INCI)"의 INCI가 확인된 성분이 아니면 걸린다.
+    - INCI는 맞아도 앞의 한글명이 그 성분의 한글명과 다르면 걸린다(예: 마데카씨드 (MADECASSOSIDE)).
     - 강조한 한글 이름이 그래프 성분인데 보여 주는 제품에 없으면 걸린다.
     - 그래프에도 없는 이름은 성분 어미(애씨드·추출물·솔·론 등)로 끝날 때만 걸린다(지어낸 성분명).
     제품명·브랜드 일부, 확인된 성분명 일부(예: 세라마이드엔피 → 세라마이드)는 허용한다.
@@ -54,6 +57,13 @@ def _unknown_ingredient(
     allowed |= {_key(str(row.get(field) or "")) for rows in inventory.values() for row in rows
                 for field in ("name", "kor_name")}
     allowed.discard("")
+    korean_by_inci: dict[str, str] = {}
+    pairs = [(_field(row, "name"), _field(row, "kor_name")) for row in ingredients]
+    pairs += [(card.name or "", card.kor_name or "") for product in products for card in product_explanations(product)]
+    pairs += [(str(row.get("name") or ""), str(row.get("kor_name") or "")) for rows in inventory.values() for row in rows]
+    for inci, kor in pairs:
+        if inci and kor:
+            korean_by_inci.setdefault(_key(inci), _key(kor))
     labels = [_key(_field(product, field)) for product in products for field in ("product_name", "brand")]
     labels = [label for label in labels if label]
 
@@ -64,6 +74,10 @@ def _unknown_ingredient(
 
     for match in _INCI_LABEL.finditer(text):
         if not known(match.group(1)):
+            return match.group(0).strip()
+    for match in _KOREAN_BEFORE_INCI.finditer(text):
+        written, expected = _key(match.group(1)), korean_by_inci.get(_key(match.group(2)))
+        if expected and written not in expected and expected not in written:
             return match.group(0).strip()
     for match in _EMPHASIS.finditer(text):
         name = _PARENTHETICAL.sub("", match.group(1)).strip()
