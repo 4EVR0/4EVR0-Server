@@ -15,6 +15,7 @@ from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, ll
 from app.clients.neo4j_client import (
     query_cautioned_ingredients,
     query_ingredient_kor_names,
+    query_ingredient_vocabulary,
     query_ingredients_by_effects,
     query_product_concern_evidence,
     query_product_ingredient_inventory,
@@ -1970,7 +1971,9 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     excluded_names = {
         p.get("name") for p in source if p.get("name")
     } - {p.get("name") for p in selected if p.get("name")}
-    integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+    inventory = await query_product_ingredient_inventory([p.product_id for p in products])
+    integrity_issues = find_response_integrity_issues(
+        response_text, ingredients, products, inventory, await query_ingredient_vocabulary())
     excluded_mentioned = any(name in response_text for name in excluded_names)
     response_mode = "followup_filtered" if requested else "followup"
     fragrance_violation = _is_sensitivity_query(concerns) and mentions_excluded_rationale(response_text)
@@ -2357,7 +2360,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             product_section = response_mode == "generated" and _uses_concern_product_section(products)
             if product_section:
                 response_text = _strip_product_section(response_text)
-            integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+            integrity_issues = find_response_integrity_issues(
+                response_text, ingredients, products, inventory, await query_ingredient_vocabulary())
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
                                    or (response_mode == "generated" and has_ingredient_claim_violation(
@@ -2857,7 +2861,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             product_section = response_mode == "generated" and _uses_concern_product_section(products)
             if product_section:
                 response_text = _strip_product_section(response_text)
-            integrity_issues = find_response_integrity_issues(response_text, ingredients, products)
+            integrity_issues = find_response_integrity_issues(
+                response_text, ingredients, products, inventory, await query_ingredient_vocabulary())
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
                                    or (response_mode == "generated" and has_ingredient_claim_violation(

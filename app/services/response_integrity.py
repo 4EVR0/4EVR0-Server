@@ -17,6 +17,12 @@ _REPEATED_KOREAN_WORD = re.compile(
 _ALLOWED_REDUPLICATIONS = {"매일", "조금", "서로", "자꾸"}
 _LONG_UPPERCASE_TOKEN = re.compile(r"(?<![A-Za-z])[A-Z]{6,}(?![A-Za-z])")
 _PARENTHETICAL = re.compile(r"\([^()]*\)")
+# "한글명 (INCI)" 표기의 INCI 부분.
+_INCI_LABEL = re.compile(r"[가-힣][^()\n]{0,40}?\(\s*([A-Z0-9][A-Z0-9 ,.'/\-]{3,}?)\s*\)")
+# *성분* / **성분** 강조 표기.
+_EMPHASIS = re.compile(r"\*{1,2}([^*\n]{2,40}?)\*{1,2}")
+# 그래프에 없는 이름이라도 성분처럼 보이는 어미(지어낸 성분명 판별용).
+_INGREDIENT_SUFFIX = re.compile(r"(?:애씨드|추출물|오일|아마이드|펩타이드|세라마이드|글루칸|에이트|레이트|솔|론|놀|올|틴)$")
 
 
 def _field(row: Any, name: str) -> str:
@@ -24,10 +30,56 @@ def _field(row: Any, name: str) -> str:
     return str(value or "").strip()
 
 
+def _key(name: str) -> str:
+    return re.sub(r"[\s\-]", "", name).casefold()
+
+
+def _unknown_ingredient(
+    text: str,
+    ingredients: Sequence[Any],
+    products: Sequence[Any],
+    inventory: Mapping[str, Sequence[Mapping[str, Any]]],
+    vocabulary: frozenset[str],
+) -> str | None:
+    """보여 주는 제품·성분에서 확인되지 않은 성분명을 찾는다.
+
+    - "한글명 (INCI)"의 INCI가 확인된 성분이 아니면 걸린다.
+    - 강조한 한글 이름이 그래프 성분인데 보여 주는 제품에 없으면 걸린다.
+    - 그래프에도 없는 이름은 성분 어미(애씨드·추출물·솔·론 등)로 끝날 때만 걸린다(지어낸 성분명).
+    제품명·브랜드 일부, 확인된 성분명 일부(예: 세라마이드엔피 → 세라마이드)는 허용한다.
+    """
+    allowed = {_key(_field(row, field)) for row in ingredients for field in ("name", "kor_name")}
+    allowed |= {_key(name) for product in products for card in product_explanations(product)
+                for name in (card.name, card.kor_name) if name}
+    allowed |= {_key(str(row.get(field) or "")) for rows in inventory.values() for row in rows
+                for field in ("name", "kor_name")}
+    allowed.discard("")
+    labels = [_key(_field(product, field)) for product in products for field in ("product_name", "brand")]
+    labels = [label for label in labels if label]
+
+    def known(name: str) -> bool:
+        key = _key(name)
+        return (key in allowed or any(key in label for label in labels)
+                or (len(key) >= 3 and any(key in item for item in allowed)))
+
+    for match in _INCI_LABEL.finditer(text):
+        if not known(match.group(1)):
+            return match.group(0).strip()
+    for match in _EMPHASIS.finditer(text):
+        name = _PARENTHETICAL.sub("", match.group(1)).strip()
+        if not re.fullmatch(r"[가-힣][가-힣0-9\s\-]*", name) or known(name):
+            continue
+        if _key(name) in vocabulary or _INGREDIENT_SUFFIX.search(name):
+            return name
+    return None
+
+
 def find_response_integrity_issues(
     text: str,
     ingredients: Sequence[Any],
     products: Sequence[Any],
+    inventory: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    vocabulary: frozenset[str] = frozenset(),
 ) -> list[tuple[str, str]]:
     """Find high-confidence degeneration without rejecting known names or INCI labels.
 
@@ -61,4 +113,9 @@ def find_response_integrity_issues(
     stray = _LONG_UPPERCASE_TOKEN.search(prose)
     if stray:
         issues.append(("STRAY_ENGLISH_TOKEN", f"설명에 섞인 영문 토큰: {stray.group(0)}"))
+    # 제품 전성분을 넘긴 경우에만 본다(전성분 없이는 '확인되지 않음'을 판단할 수 없다).
+    if inventory:
+        unknown = _unknown_ingredient(text, ingredients, products, inventory, vocabulary)
+        if unknown:
+            issues.append(("UNKNOWN_INGREDIENT", f"확인되지 않은 성분명: {unknown[:80]}"))
     return issues

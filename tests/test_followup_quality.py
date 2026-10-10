@@ -97,3 +97,14 @@ def test_ranking_marker_alone_on_line_takes_next_line():
     clean, ranking = _extract_ranking("답변입니다.\n[추천순위]\n**토너 A** | 크림 B")
     assert clean == "답변입니다."
     assert ranking == ["토너 A", "크림 B"]
+
+
+def test_unknown_ingredient_name_falls_back():
+    inventory = {"t": [{"name": "NIACINAMIDE", "kor_name": "나이아신아마이드"}],
+                 "c": [{"name": "UREA", "kor_name": "우레아"}]}
+    with patch.object(service, "query_product_ingredient_inventory", AsyncMock(return_value=inventory)), \
+            patch.object(service, "query_ingredient_vocabulary", AsyncMock(return_value=frozenset())):
+        response, _ = _run("왜 이 제품들을 추천했어?", "**크림 B**는 **마데카솔 (MADECASSOL)**이 들어 있어요.")
+        assert response.response_mode == "followup_quality_fallback"
+        response, _ = _run("왜 이 제품들을 추천했어?", "**크림 B**는 *우레아* (UREA)가 들어 있어요.")
+        assert response.response_mode == "followup"
