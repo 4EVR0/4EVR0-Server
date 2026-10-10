@@ -620,6 +620,28 @@ async def query_product_ingredient_facts(product_id: str) -> list[dict[str, Any]
         return None
 
 
+_VOCAB_CACHE: dict[str, Any] = {"at": 0.0, "names": frozenset()}
+
+
+async def query_ingredient_vocabulary(ttl_seconds: float = 3600.0) -> frozenset[str]:
+    """그래프 성분 이름(INCI·한글명, 소문자·띄어쓰기 제거). 생성 문장의 성분명이 실제 성분인지 볼 때 쓴다. 1시간 캐시."""
+    now = time.monotonic()
+    if _VOCAB_CACHE["names"] and now - _VOCAB_CACHE["at"] < ttl_seconds:
+        return _VOCAB_CACHE["names"]
+    try:
+        async with _get_driver().session() as session:
+            result = await session.run(
+                "MATCH (i:Ingredient) UNWIND [i.inci_name, i.kor_name] AS n "
+                "WITH n WHERE n IS NOT NULL AND n <> '' "
+                "RETURN DISTINCT toLower(replace(replace(n, ' ', ''), '-', '')) AS name")
+            names = frozenset([record["name"] async for record in result])
+    except Exception as exc:
+        logger.warning("Neo4j ingredient vocabulary query failed: %s", exc)
+        return _VOCAB_CACHE["names"]
+    _VOCAB_CACHE.update(at=now, names=names)
+    return names
+
+
 _BRANDS_CACHE: dict[str, Any] = {"at": 0.0, "brands": frozenset()}
 
 
