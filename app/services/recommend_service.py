@@ -1355,8 +1355,9 @@ _FOLLOWUP_SYSTEM = (
     "cite the concrete reason from the given data — the responsible ingredient(s) and/or the "
     "formulation/category (e.g., cream vs serum). Do NOT fabricate reasons.\n"
     "Do NOT say a product or ingredient is safe, gentle, low-irritation, or fine for sensitive skin. "
-    "Do NOT call an ingredient a main ingredient (주성분/주요 성분) — ingredient amounts are unknown. "
-    "Do NOT claim one product is the most effective or best; describe differences only by the listed "
+    "Do NOT call an ingredient a main ingredient (주성분/주요 성분/주력/주된 성분/고농도) — ingredient amounts are unknown. "
+    "Do NOT claim one product or ingredient is the most effective, strongest, or best (no 가장 강력·최고·최강·극대화); "
+    "paper counts are numbers of studies, not effect size or proof (no 입증·증명). Describe differences only by the listed "
     "ingredients and category.\n"
     "Keep the whole answer within ~700 Korean characters.\n"
     "If you recommend or rank specific products as better choices, END your answer with a separate "
@@ -1704,10 +1705,10 @@ def _build_safe_followup_response(
 # 민감 피부 사용·순함 질문. 그래프로 확인할 수 없는 "안전하다/순하다"를 생성하지 않고 주의 성분을 알린다.
 _SENSITIVE_USE_QUESTION = re.compile(
     r"(?:민감|예민)[^?\n]*(?:써도|사용해도|발라도|괜찮|돼|되나|될까|맞을까|맞아)|순한|순해|자극(?:이|은)?\s*(?:없|적|덜|심)")
-# 근거 없이 안전·순함·함량을 단정하는 문장(후속 생성 문장 검사).
+# 근거 없이 안전·순함·함량을 단정하는 문장(후속 생성 문장 검사). 최상급·함량은 효능 검사에서도 본다.
 _UNSUPPORTED_SAFETY = re.compile(
     r"안전(?:합니다|해요|한\s*제품)|자극(?:이|은)?\s*(?:없|적)|순한\s*(?:제품|선택|편)|주성분|주요\s*성분"
-    r"|핵심\s*성분으로|주력|고농도|극대화|민감한?\s*피부(?:도|에도)\s*(?:잘|괜찮|적합)|가장\s*\S{0,6}\s*(?:뛰어|우수|강력|효과)"
+    r"|핵심\s*성분으로|고농도|민감한?\s*피부(?:도|에도)\s*(?:잘|괜찮|적합)"
     # 자극 완화·민감 피부 사용 권유(그래프에 근거가 없다).
     # 패치 테스트·좁은 부위·소량 권유는 사용 안내라 허용한다.
     r"|자극을?\s*(?:줄|완화|덜)|민감한?\s*피부(?:일\s*경우|라면|에도|도)(?![^.\n]{0,30}(?:테스트|좁은|소량|먼저))"

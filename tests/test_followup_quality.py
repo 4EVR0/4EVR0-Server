@@ -81,7 +81,7 @@ def test_sensitive_use_question_is_answered_from_caution_list_without_llm():
 
 def test_unsupported_safety_and_amount_claims_fall_back():
     for answer in ("**토너 A**는 민감한 피부에도 안전합니다.", "*우레아*가 주성분이라 촉촉해요.",
-                   "**크림 B**가 가장 보습력이 뛰어납니다.", "**토너 A**는 자극이 적어요.",
+                   "**토너 A**는 자극이 적어요.",
                    "**크림 B**는 *우레아*가 고농도로 배합돼 있어요.",
                    "*우레아*는 자극을 줄여주는 역할을 해요.",
                    "민감한 피부일 경우 아침과 저녁 모두에 사용해도 좋습니다."):
@@ -116,3 +116,9 @@ def test_patch_test_advice_is_not_a_safety_claim():
     for advice in ("민감한 피부라면 좁은 부위에 먼저 발라 보세요.", "민감한 피부라면 패치 테스트를 먼저 해보시는 것이 좋습니다."):
         response, _ = _run("왜 이 제품들을 추천했어?", f"**크림 B**는 *우레아*가 들어 있어요. {advice}")
         assert response.response_mode == "followup", advice
+
+
+def test_superlative_and_amount_claims_fall_back():
+    for answer in ("**크림 B**가 가장 보습력이 뛰어납니다.", "**크림 B**는 *우레아*가 주력인 크림으로 보습 효과를 극대화해요."):
+        response, _ = _run("왜 이 제품들을 추천했어?", answer)
+        assert response.response_mode == "followup_quality_fallback", answer

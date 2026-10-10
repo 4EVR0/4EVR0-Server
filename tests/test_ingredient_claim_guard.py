@@ -8,10 +8,27 @@ def retinol():
     return IngredientResult(name='RETINOL', kor_name='레티놀', claim='Anti-aging')
 
 
-def test_rejects_unprovided_benefit_and_superlative():
-    for text in ('레티놀은 주름과 미백에 도움이 됩니다.', '레티놀은 가장 강력한 주름 개선 성분입니다.',
+def test_rejects_unprovided_benefit():
+    for text in ('레티놀은 주름과 미백에 도움이 됩니다.',
                  '레티놀: 주름 관리에 도움이 됩니다.\n미백에도 도움이 됩니다.'):
         assert has_ingredient_claim_violation('성분 설명\n'+text,[retinol()])
+
+
+def test_superlative_and_amount_claims_are_unsupported():
+    # 논문 건수는 연구 편수일 뿐 효과의 크기가 아니고, 그래프에는 함량이 없다.
+    for text in ('레티놀은 논문 근거 47건으로 가장 강력한 주름 개선 성분입니다.', '최고의 주름 개선 성분입니다.',
+                 '주름 개선 효과를 극대화합니다.', '레티놀이 주력인 세럼입니다.', '레티놀이 주된 주름 개선 성분입니다.',
+                 '레티놀이 고농도로 들어 있어요.', '레티놀은 47건의 논문에서 주름 개선 효과가 입증되었습니다.'):
+        assert has_ingredient_claim_violation('성분 설명\n'+text,[retinol()]), text
+    assert not has_ingredient_claim_violation('성분 설명\n레티놀 (논문 근거 47건): 주름 관리에 도움을 줍니다.',[retinol()])
+
+
+def test_multi_ingredient_sentence_needs_some_support_for_each_benefit():
+    urea=IngredientResult(name='UREA',kor_name='우레아',supported_claims=['Hydrating','Keratolytic'])
+    glycerin=IngredientResult(name='GLYCERIN',kor_name='글리세린',supported_claims=['Hydrating'])
+    assert not has_ingredient_claim_violation('우레아와 글리세린이 각질 연화와 보습을 돕습니다.',[urea,glycerin])
+    # 둘 다 근거가 없는 효능(미백)은 오류다.
+    assert has_ingredient_claim_violation('우레아와 글리세린이 보습과 미백을 돕습니다.',[urea,glycerin])
 
 
 def test_does_not_transfer_other_ingredients_effect():
