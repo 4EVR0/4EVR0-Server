@@ -331,6 +331,19 @@ async def _add_graph_supported_claims(session, rows: list[dict[str, Any]]) -> li
     return out
 
 
+async def query_supported_claims(names: list[str]) -> dict[str, list[str]]:
+    """성분별 근거 효능(영문 효능명). 후속 답변의 효능 검사 허용 범위. 조회 실패는 빈 dict(검사가 엄격해진다)."""
+    if not names:
+        return {}
+    try:
+        async with _get_driver().session() as session:
+            result = await session.run(_SUPPORTED_CLAIMS_QUERY, names=list(names))
+            return {record.get("name"): [c for c in record.get("claims") or [] if c] async for record in result}
+    except Exception as exc:
+        logger.warning("Neo4j supported claims query failed: %s", exc)
+        return {}
+
+
 def _merge_concern_evidence(evidence_rows: list[dict[str, Any]], effect_rows: list[dict[str, Any]],
                             limit: int) -> list[dict[str, Any]]:
     """고민별 근거 행을 앞에 두고, 성분당 1행(등급·점수가 가장 좋은 행)으로 limit개까지 합친다."""

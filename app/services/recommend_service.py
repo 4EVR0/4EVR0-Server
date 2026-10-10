@@ -23,6 +23,7 @@ from app.clients.neo4j_client import (
     query_product_ingredient_facts,
     query_products_by_ingredients,
     query_products_by_name_tokens,
+    query_supported_claims,
 )
 from app.core import metrics
 from app.services.concern_coverage import (
@@ -1352,9 +1353,13 @@ _FOLLOWUP_SYSTEM = (
     "When you explain WHY a product has a property (heavy, rich, moisturizing, gentle, exfoliating, etc.), "
     "cite the concrete reason from the given data — the responsible ingredient(s) and/or the "
     "formulation/category (e.g., cream vs serum). Do NOT fabricate reasons.\n"
+    "Do NOT say a product or ingredient is safe, gentle, low-irritation, or fine for sensitive skin. "
+    "Do NOT call an ingredient a main ingredient (주성분/주요 성분) — ingredient amounts are unknown. "
+    "Do NOT claim one product is the most effective or best; describe differences only by the listed "
+    "ingredients and category.\n"
     "Keep the whole answer within ~700 Korean characters.\n"
     "If you recommend or rank specific products as better choices, END your answer with a separate "
-    "final line EXACTLY: [추천순위] 제품명1 | 제품명2 (most to least recommended). "
+    "final line EXACTLY: [추천순위] 제품명1 | 제품명2 (most to least recommended), all on that ONE line. "
     "Include only products you actually recommend. If you are NOT ranking, OMIT this line."
 )
 
@@ -1381,7 +1386,7 @@ def _followup_context(history: list[dict], ing_kor: dict[str, str], deictic: boo
         for p in last["products"]:
             rate = f" ⭐{p['rating']}" if p.get("rating") else ""
             ings = ", ".join(_fmt_ingredient(i, ing_kor) for i in (p.get("matched_ingredients") or [])[:4])
-            ing_str = f" · 핵심성분: {ings}" if ings else ""
+            ing_str = f" · 추천 근거 성분: {ings}" if ings else ""
             # product_name에 이미 브랜드가 포함된 경우가 많아 brand를 앞에 안 붙인다(중복 방지).
             name = p.get("name") or ""
             brand = p.get("brand") or ""
@@ -1406,10 +1411,15 @@ def _extract_ranking(response_text: str) -> tuple[str, list[str]]:
     """응답에서 '[추천순위] a | b' 마커 줄을 뽑아 (마커 제거된 텍스트, [이름...]) 반환.
     마커 없으면 (원문, [])."""
     kept, ranking = [], []
-    for line in response_text.split("\n"):
+    lines = response_text.split("\n")
+    for index, line in enumerate(lines):
         m = _RANK_RE.match(line)
         if m and "추천순위" in line:
-            ranking = [n.strip() for n in m.group(1).split("|") if n.strip()]
+            names = re.sub(r"^[\]\s:：*]+", "", m.group(1))
+            if not names.strip() and index + 1 < len(lines):
+                # 마커만 있는 줄이면 다음 줄이 순위다.
+                names = lines.pop(index + 1)
+            ranking = [n.strip(" *") for n in names.split("|") if n.strip(" *")]
         else:
             kept.append(line)
     return "\n".join(kept).strip(), ranking
@@ -1690,6 +1700,45 @@ def _build_safe_followup_response(
     return "\n".join(lines), products
 
 
+# 민감 피부 사용·순함 질문. 그래프로 확인할 수 없는 "안전하다/순하다"를 생성하지 않고 주의 성분을 알린다.
+_SENSITIVE_USE_QUESTION = re.compile(
+    r"(?:민감|예민)[^?\n]*(?:써도|사용해도|발라도|괜찮|돼|되나|될까|맞을까|맞아)|순한|순해|자극(?:이|은)?\s*(?:없|적|덜|심)")
+# 근거 없이 안전·순함·함량을 단정하는 문장(후속 생성 문장 검사).
+_UNSUPPORTED_SAFETY = re.compile(
+    r"안전(?:합니다|해요|한\s*제품)|자극(?:이|은)?\s*(?:없|적)|순한\s*(?:제품|선택|편)|주성분|주요\s*성분"
+    r"|핵심\s*성분으로|주력|고농도|극대화|민감한?\s*피부(?:도|에도)\s*(?:잘|괜찮|적합)|가장\s*\S{0,6}\s*(?:뛰어|우수|강력|효과)")
+# 한글·영문 외 문자(키릴·가나·태국 문자 등). 한자는 정규화에서 지우되, 지워진 문장은 깨졌으므로 함께 대체한다.
+_FOREIGN_SCRIPT = re.compile(r"[\u0400-\u04FF\u0E00-\u0E7F\u3040-\u30FF]")
+
+
+async def _sensitive_use_followup(session_id: str, turn_id: str, message: str,
+                                  selected: list[dict], active: dict | None) -> RecommendResponse:
+    """선택 제품의 확인된 성분 중 민감 피부 주의 성분(sensitive_caution)을 제품별로 알린다."""
+    products = _reconstruct_products(selected)
+    facts = await asyncio.gather(*(query_product_ingredient_facts(p.product_id) for p in products))
+    lead = "어느 제품이 더 순한지는" if re.search(r"순한|순해", message) else "민감한 피부에 맞을지는"
+    lines = [f"{lead} 성분만으로 단정할 수 없어요. 확인된 성분 기준으로 민감한 피부에서 주의가 필요한 성분을 정리했어요."]
+    for product, rows in zip(products, facts):
+        if rows is None:
+            status = "성분 정보를 확인하지 못했어요."
+        else:
+            names = list(dict.fromkeys(r.get("kor_name") or r["inci_name"] for r in rows
+                                       if r.get("sensitive_caution") in ("exclude", "caution")))
+            status = ", ".join(names) if names else "민감 피부 주의 목록에 있는 성분은 확인되지 않았어요."
+        lines.append(f"- **{product.product_name}**: {status}")
+    lines.append("처음 쓸 때는 좁은 부위에 먼저 사용해 확인해 주세요.")
+    response_text, _ = _normalize_response_text("\n".join(lines), products)
+    await _attach_fragrance_allergens(products)
+    response_text = _append_server_notes(response_text, [], products)
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    next_active = ({**active, "visible_products": _slim_products(products),
+                    "pending_categories": [], "turn_id": turn_id} if active else None)
+    await _store_turn(session_id, message, products, response_text, active_state=next_active)
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=products,
+                             response_text=response_text, model_used="deterministic",
+                             response_mode="followup_sensitive_use")
+
+
 async def _handle_followup(session_id: str, turn_id: str, message: str,
                            history: list[dict], active: dict | None = None) -> RecommendResponse:
     """후속 턴: 검색 스킵, 이전 추천 + 대화 맥락으로 답변(비교 등). 캐시 우회."""
@@ -1732,6 +1781,11 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     selected = ([p for p in visible if p.get("category") in requested or
                  (p.get("category") == "스킨" and "토너" in requested)]
                 if requested else visible)
+    # "1번 제품 어때?"처럼 직전 목록에서 제품을 지목하면 그 제품만 보고 답한다.
+    if not requested and not _is_product_comparison_request(message):
+        picked = _comparison_product_indexes(message, visible)
+        if picked:
+            selected = [visible[i] for i in picked]
     if not visible and not source:
         # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
         # 넘기지 않는다. 빈 컨텍스트 비교는 제품/성분을 새로 만들기 쉽다.
@@ -1861,9 +1915,17 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             products=products, response_text=response_text,
             model_used=settings.gpu_model, response_mode="followup_usage_order",
         )
+    if _SENSITIVE_USE_QUESTION.search(message):
+        return await _sensitive_use_followup(session_id, turn_id, message, selected, active)
     # Only the selected products are passed to generation and shown as cards.
     inci_all = {i for p in selected for i in (p.get("matched_ingredients") or [])}
     ing_kor = await query_ingredient_kor_names(sorted(inci_all))
+    # 효능 검사 허용 범위: 추천 턴에서 받은 근거 효능 + 그래프 전체 근거 효능(본 추천과 같은 기준).
+    claims = await query_supported_claims(sorted(inci_all))
+    for row in (active or {}).get("ingredients") or []:
+        if row.get("name") in inci_all:
+            claims.setdefault(row["name"], []).extend(
+                c for c in [row.get("claim"), *(row.get("supported_claims") or [])] if c)
     if active and active.get("base_message"):
         base_context = f"현재 피부 고민의 원래 질문: {active['base_message']}\n"
     else:
@@ -1903,7 +1965,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     for product in products:
         product.ingredient_explanations = explanations_by_id.get(product.product_id, [])
     response_text, hanja_removed = _normalize_response_text(response_text, products)
-    ingredients = [IngredientResult(name=inci, kor_name=kor) for inci, kor in ing_kor.items()]
+    ingredients = [IngredientResult(name=inci, kor_name=kor, supported_claims=list(dict.fromkeys(claims.get(inci, []))))
+                   for inci, kor in ing_kor.items()]
     excluded_names = {
         p.get("name") for p in source if p.get("name")
     } - {p.get("name") for p in selected if p.get("name")}
@@ -1912,7 +1975,10 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
     response_mode = "followup_filtered" if requested else "followup"
     fragrance_violation = _is_sensitivity_query(concerns) and mentions_excluded_rationale(response_text)
     claim_violation = has_ingredient_claim_violation(response_text, ingredients, products)
-    if not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation or claim_violation:
+    safety_violation = bool(_UNSUPPORTED_SAFETY.search(response_text))
+    script_violation = hanja_removed or bool(_FOREIGN_SCRIPT.search(response_text))
+    if (not response_text.strip() or integrity_issues or excluded_mentioned or fragrance_violation
+            or claim_violation or safety_violation or script_violation):
         products = _reconstruct_products(selected)  # discard ranking from corrupted prose
         for product in products:
             product.ingredient_explanations = explanations_by_id.get(product.product_id, [])

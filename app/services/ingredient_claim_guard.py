@@ -19,7 +19,7 @@ PATTERNS = {
     'antimicrobial': r'항균|antimicrob',
     'pores': r'모공\s*막힘|comedol',
     'repair': r'상처|피부\s*회복|wound',
-    'uv': r'자외선|photoprotect',
+    'uv': r'자외선(?!\s*차단제)|photoprotect',  # '자외선 차단제를 바르세요'는 사용 팁이다
     'blemish': r'트러블|여드름|blemish|acne',
 }
 SUPERLATIVE = re.compile(r'가장\s*(?:강력|효과|우수|좋|뛰어)|최고의?\s*효과|최강|가장\s*효과적인|most\s+effective|strongest', re.I)
