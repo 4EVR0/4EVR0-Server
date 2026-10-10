@@ -104,6 +104,8 @@ def _misattributed_ingredient(
     """제품과 성분을 잘못 연결한 문장을 찾는다.
 
     - 강조(*·**)한 제품명과 성분이 한 문장에 나오면, 그 성분은 언급한 제품 중 하나의 전성분에 있어야 한다.
+      제품을 3개 이상 나열한 문장은 "모두 들어 있다"는 뜻으로 보고, 나열한 제품 전부에 있어야 한다
+      (2개는 "A와 B는 각각 …"처럼 나눠 쓰는 경우가 흔해 하나에만 있어도 된다).
     - "모든 제품·각 제품·제품마다"라고 하면 그 성분은 보여 주는 제품 전부의 전성분에 있어야 한다.
       "A나 B"처럼 고르는 문장이면 제품마다 둘 중 하나만 있으면 된다. "여러 제품에 공통"은 전부가 아니다.
     부정 문장("~에는 없어요")은 보지 않는다. 전성분을 모르는 제품이 섞이면 판단하지 않는다.
@@ -153,6 +155,9 @@ def _misattributed_ingredient(
         for inci in said:
             holders = [product for product in shown if inci in contents[_field(product, "product_id")]]
             if everyone and len(holders) < len(shown):
+                return sentence.strip()
+            listed = list({id(product): product for product in mentioned}.values())
+            if len(listed) >= 3 and not all(product in holders for product in listed):
                 return sentence.strip()
             if mentioned and not any(product in holders for product in mentioned):
                 return sentence.strip()

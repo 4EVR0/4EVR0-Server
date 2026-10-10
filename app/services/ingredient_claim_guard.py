@@ -29,7 +29,16 @@ PATTERNS = {
 # 논문 건수는 연구 편수일 뿐 효과의 크기·순위가 아니고, 그래프에는 함량이 없다.
 UNSUPPORTED_ASSERTION = re.compile(
     r'가장\s*\S{0,6}\s*(?:강력|효과|우수|좋|뛰어)|최고|최상|최강|극대화|most\s+effective|strongest'
-    r'|주성분|주력|주된[^.\n]{0,10}?성분|고농도|농도가?\s*(?:높|진하)|입증|증명', re.I)
+    r'|주성분|주력|주된[^.\n]{0,10}?성분|고농도|농도가?\s*(?:높|진하)|농축|입증|증명'
+    r'|흡수가?\s*(?:빠|잘\s*되)', re.I)
+# 위 표현을 부정하는 문장("가장 강력하다고 단정할 수는 없습니다")은 주장이 아니다.
+HEDGE = re.compile(r'단정할\s*수\s*(?:는\s*)?없|단정하기\s*어렵|알\s*수\s*없|확인되지\s*않|입증되지\s*않|아닙니다')
+_SENTENCES = re.compile(r'(?<=[.!?])\s+|\n')
+
+
+def has_unsupported_assertion(text):
+    return any(UNSUPPORTED_ASSERTION.search(sentence) and not HEDGE.search(sentence)
+               for sentence in _SENTENCES.split(text))
 
 
 def benefits(text):
@@ -39,7 +48,7 @@ def benefits(text):
 def has_ingredient_claim_violation(text, ingredients, products=()):
     # Product section is server-authored or covered by the separate inclusion guard.
     prose = re.split(r'(?m)^\s*[#*\d. ]*추천 제품', text, maxsplit=1)[0]
-    if UNSUPPORTED_ASSERTION.search(prose):
+    if has_unsupported_assertion(prose):
         return True
     allowed = {}
     aliases = {}

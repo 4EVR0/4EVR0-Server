@@ -26,7 +26,7 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v25:"  # v25: 제품-성분 연결 검사, 첫 추천 민감 피부 단정 검사
+_KEY_PREFIX = "reccache:v26:"  # v26: 농축·흡수 단정 차단, 부정 문장 예외
 _client: aioredis.Redis | None = None
 
 

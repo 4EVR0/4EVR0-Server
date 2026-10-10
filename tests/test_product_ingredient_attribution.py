@@ -61,3 +61,11 @@ def test_first_turn_sensitive_assertion_only_in_ingredient_section():
     assert not _UNSUPPORTED_SAFETY.search(_ingredient_section(text))
     text = "고민 분석\n건조함이 고민이시군요.\n\n성분 설명\n- 콜로이달오트밀: 민감한 피부에도 적합합니다."
     assert _UNSUPPORTED_SAFETY.search(_ingredient_section(text))
+
+
+def test_three_or_more_listed_products_must_all_hold_each_ingredient():
+    three = ("**넘버즈인 4 번 세라 필 깐달걀 세럼**, **AHC 텐 레볼루션 리얼 아이크림**, **유세린 우레아 리페어 크림**은 "
+             "*{}*가 들어 있어요.")
+    assert codes(three.format("락틱애씨드")) == ["MISATTRIBUTED_INGREDIENT"]  # 세럼에는 없다
+    inventory = {pid: rows + [{"name": "GLYCERIN", "kor_name": "글리세린"}] for pid, rows in INVENTORY.items()}
+    assert [c for c, _ in find_response_integrity_issues(three.format("글리세린"), [], PRODUCTS, inventory, frozenset())] == []
