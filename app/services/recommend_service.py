@@ -1738,6 +1738,13 @@ _UNSUPPORTED_SAFETY = re.compile(
 _FOREIGN_SCRIPT = re.compile(r"[\u0400-\u04FF\u0E00-\u0E7F\u3040-\u30FF]")
 
 
+def _ingredient_section(text: str) -> str:
+    """생성 본문의 성분 설명 부분. '고민 분석'은 사용자 요청을 되풀이하는 곳이라("자극 없는 제품을 찾고 계신군요") 뺀다."""
+    prose = re.split(r"(?m)^\s*[#*\d. ]*추천 제품", text, maxsplit=1)[0]
+    parts = re.split(r"(?m)^.*성분 설명.*$", prose, maxsplit=1)
+    return parts[1] if len(parts) == 2 else prose
+
+
 async def _sensitive_use_followup(session_id: str, turn_id: str, message: str,
                                   selected: list[dict], active: dict | None) -> RecommendResponse:
     """선택 제품의 확인된 성분 중 민감 피부 주의 성분(sensitive_caution)을 제품별로 알린다."""
@@ -2392,8 +2399,9 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 integrity_issues.append(("HANJA_REMOVED", "한자를 지워 문장이 깨졌을 수 있음"))
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
-                                   or (response_mode == "generated" and has_ingredient_claim_violation(
-                                       response_text, ingredients, products)))
+                                   or (response_mode == "generated" and (
+                                       has_ingredient_claim_violation(response_text, ingredients, products)
+                                       or _UNSUPPORTED_SAFETY.search(_ingredient_section(response_text)))))
             fragrance_violation = ((_is_sensitivity_query(profile.concerns) or response_mode == "generated")
                                    and mentions_excluded_rationale(_strip_product_section(response_text)))
             if products and (integrity_issues or grounding_violation or fragrance_violation):
@@ -2893,8 +2901,9 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 integrity_issues.append(("HANJA_REMOVED", "한자를 지워 문장이 깨졌을 수 있음"))
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
-                                   or (response_mode == "generated" and has_ingredient_claim_violation(
-                                       response_text, ingredients, products)))
+                                   or (response_mode == "generated" and (
+                                       has_ingredient_claim_violation(response_text, ingredients, products)
+                                       or _UNSUPPORTED_SAFETY.search(_ingredient_section(response_text)))))
             fragrance_violation = ((_is_sensitivity_query(profile.concerns) or response_mode == "generated")
                                    and mentions_excluded_rationale(_strip_product_section(response_text)))
             if products and (integrity_issues or grounding_violation or fragrance_violation):

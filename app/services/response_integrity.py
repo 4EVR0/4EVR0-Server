@@ -88,6 +88,77 @@ def _unknown_ingredient(
     return None
 
 
+_SENTENCE_END = re.compile(r"(?<=[.!?。])\s+|\n")
+_ALL_PRODUCTS = re.compile(r"(?:모든|각|전)\s*제품|제품(?:\s*(?:모두|전부|마다))")
+# "우레아나 하이알루로닉애씨드" — 제품마다 둘 중 하나만 있으면 된다.
+_DISJUNCTION = re.compile(r"(?:나|또는|혹은)\s")
+_NEGATION = re.compile(r"없|빠져|제외|않")
+
+
+def _misattributed_ingredient(
+    text: str,
+    ingredients: Sequence[Any],
+    products: Sequence[Any],
+    inventory: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> str | None:
+    """제품과 성분을 잘못 연결한 문장을 찾는다.
+
+    - 강조(*·**)한 제품명과 성분이 한 문장에 나오면, 그 성분은 언급한 제품 중 하나의 전성분에 있어야 한다.
+    - "모든 제품·각 제품·제품마다"라고 하면 그 성분은 보여 주는 제품 전부의 전성분에 있어야 한다.
+      "A나 B"처럼 고르는 문장이면 제품마다 둘 중 하나만 있으면 된다. "여러 제품에 공통"은 전부가 아니다.
+    부정 문장("~에는 없어요")은 보지 않는다. 전성분을 모르는 제품이 섞이면 판단하지 않는다.
+    """
+    contents = {pid: {_key(str(row.get(field) or "")) for row in rows for field in ("name", "kor_name")} - {""}
+                for pid, rows in inventory.items()}
+    shown = [product for product in products if _field(product, "product_id") in contents]
+    if not shown:
+        return None
+    # 성분 이름(한글명 3자 이상·INCI 4자 이상) → INCI 키. 긴 이름부터 찾는다(세라마이드엔피 > 세라마이드).
+    names: dict[str, str] = {}
+    rows = [row for rows in inventory.values() for row in rows]
+    for name, kor in [(str(r.get("name") or ""), str(r.get("kor_name") or "")) for r in rows] + [
+            (_field(r, "name"), _field(r, "kor_name")) for r in ingredients]:
+        if len(_key(kor)) >= 3:
+            names.setdefault(_key(kor), _key(name))
+        if len(_key(name)) >= 4:
+            names.setdefault(_key(name), _key(name))
+    ordered = sorted(names, key=len, reverse=True)
+    product_keys = [(_key(_field(product, "product_name")), product) for product in shown]
+
+    for sentence in _SENTENCE_END.split(text):
+        if not sentence.strip() or _NEGATION.search(sentence):
+            continue
+        mentioned = []
+        rest = sentence
+        for match in _EMPHASIS.finditer(sentence):
+            key = _key(_PARENTHETICAL.sub("", match.group(1)))
+            hits = [product for pkey, product in product_keys if len(key) >= 4 and (key in pkey or pkey in key)]
+            if hits:
+                mentioned.extend(hits)
+                rest = rest.replace(match.group(0), " ")
+        everyone = bool(_ALL_PRODUCTS.search(rest))
+        if not mentioned and not everyone:
+            continue
+        folded = _key(rest)
+        said = []
+        for name in ordered:
+            if name in folded:
+                said.append(names[name])
+                folded = folded.replace(name, " ")
+        said = list(dict.fromkeys(said))
+        if everyone and said and _DISJUNCTION.search(rest):
+            if any(not any(inci in contents[_field(product, "product_id")] for inci in said) for product in shown):
+                return sentence.strip()
+            continue
+        for inci in said:
+            holders = [product for product in shown if inci in contents[_field(product, "product_id")]]
+            if everyone and len(holders) < len(shown):
+                return sentence.strip()
+            if mentioned and not any(product in holders for product in mentioned):
+                return sentence.strip()
+    return None
+
+
 def find_response_integrity_issues(
     text: str,
     ingredients: Sequence[Any],
@@ -132,4 +203,7 @@ def find_response_integrity_issues(
         unknown = _unknown_ingredient(text, ingredients, products, inventory, vocabulary)
         if unknown:
             issues.append(("UNKNOWN_INGREDIENT", f"확인되지 않은 성분명: {unknown[:80]}"))
+        misattributed = _misattributed_ingredient(text, ingredients, products, inventory)
+        if misattributed:
+            issues.append(("MISATTRIBUTED_INGREDIENT", f"제품에 없는 성분 연결: {misattributed[:80]}"))
     return issues
