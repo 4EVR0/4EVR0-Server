@@ -497,12 +497,29 @@ _CONSTRAINT_LABELS = {
 }
 
 
-def _remove_hanja(text: str) -> tuple[str, bool]:
-    """응답에 섞인 CJK 통합 한자를 결정론적으로 제거한다.
+# 생성 모델이 한글 문장 중간에 섞어 쓰는 한자 단어(간체·번체). 지우면 "장벽을하고"처럼 문장이 깨지므로
+# 먼저 한글로 바꾼다. 긴 단어부터 바꾼다.
+_HANJA_WORDS = {
+    "强化": "강화", "強化": "강화", "效果": "효과", "効果": "효과", "改善": "개선", "保湿": "보습", "保濕": "보습",
+    "水分": "수분", "皮肤": "피부", "皮膚": "피부", "屏障": "장벽", "镇静": "진정", "鎮靜": "진정", "镇定": "진정",
+    "舒缓": "완화", "缓解": "완화", "緩和": "완화", "美白": "미백", "抗氧化": "항산화", "成分": "성분", "角质": "각질",
+    "角質": "각질", "毛孔": "모공", "弹力": "탄력", "彈力": "탄력", "皱纹": "주름", "敏感": "민감", "刺激": "자극",
+    "维持": "유지", "維持": "유지", "吸收": "흡수", "预防": "예방", "預防": "예방", "抑制": "억제", "色素": "색소",
+    "炎症": "염증", "恢复": "회복", "恢復": "회복", "再生": "재생", "使用": "사용", "补充": "보충", "補充": "보충",
+    "供给": "공급", "供給": "공급", "调节": "조절", "調節": "조절", "促进": "촉진", "促進": "촉진", "保护": "보호",
+    "保護": "보호", "均匀": "균일", "滋润": "보습", "修复": "회복", "修復": "회복", "修护": "회복", "修護": "회복",
+    "肤感": "사용감", "膚感": "사용감",
+}
+_HANJA_WORD_PATTERN = re.compile("|".join(sorted(map(re.escape, _HANJA_WORDS), key=len, reverse=True)))
 
-    스트리밍에서는 이 함수를 청크별로 적용해 문자가 클라이언트에 전송되기 전에
-    차단한다. 반환 bool은 가드 메트릭을 응답당 한 번만 올리기 위한 표시다.
+
+def _remove_hanja(text: str) -> tuple[str, bool]:
+    """응답에 섞인 CJK 통합 한자를 결정론적으로 처리한다.
+
+    자주 나오는 단어는 한글로 바꾸고, 남은 한자만 지운다. 반환 bool은 한자를 지웠는지(=문장이
+    깨졌을 수 있는지)다. 한글로 바꾼 것만으로는 True가 아니다.
     """
+    text = _HANJA_WORD_PATTERN.sub(lambda m: _HANJA_WORDS[m.group(0)], text)
     cleaned = _HANJA_OUTPUT_PATTERN.sub("", text)
     return cleaned, cleaned != text
 
@@ -1357,8 +1374,12 @@ _FOLLOWUP_SYSTEM = (
     "Do NOT say a product or ingredient is safe, gentle, low-irritation, or fine for sensitive skin. "
     "Do NOT call an ingredient a main ingredient (주성분/주요 성분/주력/주된 성분/고농도) — ingredient amounts are unknown. "
     "Do NOT claim one product or ingredient is the most effective, strongest, or best (no 가장 강력·최고·최강·극대화); "
-    "paper counts are numbers of studies, not effect size or proof (no 입증·증명). Describe differences only by the listed "
+    "paper counts are numbers of studies, not effect size or proof: use neutral wording such as "
+    "'관련된 연구 결과가 있어요', never '효과가 확인된'·입증·증명. Describe differences only by the listed "
     "ingredients and category.\n"
+    "State ONLY facts in the given data. Do NOT make up product properties that are not given, such as "
+    "concentration (농도가 높다), ingredient amount, texture, absorption speed, or pH. Usage tips must stay "
+    "general; if you mention sunscreen, it is the LAST step of the morning routine.\n"
     "Keep the whole answer within ~700 Korean characters.\n"
     "If you recommend or rank specific products as better choices, END your answer with a separate "
     "final line EXACTLY: [추천순위] 제품명1 | 제품명2 (most to least recommended), all on that ONE line. "
@@ -2367,6 +2388,8 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                 response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(
                 response_text, ingredients, products, inventory, await query_ingredient_vocabulary())
+            if hanja_removed:
+                integrity_issues.append(("HANJA_REMOVED", "한자를 지워 문장이 깨졌을 수 있음"))
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
                                    or (response_mode == "generated" and has_ingredient_claim_violation(
@@ -2850,12 +2873,10 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                         if delta:
                             if ttft is None:
                                 ttft = time.perf_counter() - gen_start
-                            safe_delta, removed = _remove_hanja(delta)
-                            hanja_removed = hanja_removed or removed
-                            if safe_delta:
-                                chunks.append(safe_delta)
+                            chunks.append(delta)
                 gen_total = time.perf_counter() - gen_start
-                response_text = "".join(chunks)
+                # 청크 경계에 걸친 한자 단어도 바꾸도록 모은 뒤 처리한다(본문은 검사 뒤에 보낸다).
+                response_text, hanja_removed = _remove_hanja("".join(chunks))
                 spans["generate_ttft"] = ttft if ttft is not None else gen_total
                 spans["generate_decode"] = gen_total - spans["generate_ttft"]
                 response_text = _normalize_consumer_language(response_text)
@@ -2868,6 +2889,8 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                 response_text = _strip_product_section(response_text)
             integrity_issues = find_response_integrity_issues(
                 response_text, ingredients, products, inventory, await query_ingredient_vocabulary())
+            if hanja_removed:
+                integrity_issues.append(("HANJA_REMOVED", "한자를 지워 문장이 깨졌을 수 있음"))
             grounding_violation = ((products and not product_section
                                     and _has_product_grounding_violation(response_text, ingredients, products))
                                    or (response_mode == "generated" and has_ingredient_claim_violation(

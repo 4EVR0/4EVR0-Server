@@ -29,7 +29,7 @@ PATTERNS = {
 # 논문 건수는 연구 편수일 뿐 효과의 크기·순위가 아니고, 그래프에는 함량이 없다.
 UNSUPPORTED_ASSERTION = re.compile(
     r'가장\s*\S{0,6}\s*(?:강력|효과|우수|좋|뛰어)|최고|최상|최강|극대화|most\s+effective|strongest'
-    r'|주성분|주력|주된[^.\n]{0,10}?성분|고농도|입증|증명', re.I)
+    r'|주성분|주력|주된[^.\n]{0,10}?성분|고농도|농도가?\s*(?:높|진하)|입증|증명', re.I)
 
 
 def benefits(text):
