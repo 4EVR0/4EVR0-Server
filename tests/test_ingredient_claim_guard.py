@@ -19,7 +19,8 @@ def test_superlative_and_amount_claims_are_unsupported():
     for text in ('레티놀은 논문 근거 47건으로 가장 강력한 주름 개선 성분입니다.', '최고의 주름 개선 성분입니다.',
                  '주름 개선 효과를 극대화합니다.', '레티놀이 주력인 세럼입니다.', '레티놀이 주된 주름 개선 성분입니다.',
                  '레티놀이 고농도로 들어 있어요.', '레티놀은 47건의 논문에서 주름 개선 효과가 입증되었습니다.',
-                 '앰플 형태라 레티놀 농도가 높아 주름 관리에 좋아요.'):
+                 '앰플 형태라 레티놀 농도가 높아 주름 관리에 좋아요.', '앰플이라 레티놀이 농축돼 있어요.',
+                 '앰플 형태라 피부 흡수가 빠를 수 있습니다.'):
         assert has_ingredient_claim_violation('성분 설명\n'+text,[retinol()]), text
     assert not has_ingredient_claim_violation('성분 설명\n레티놀 (논문 근거 47건): 주름 관리에 도움을 줍니다.',[retinol()])
 
@@ -62,3 +63,8 @@ def test_fragrance_excluded_from_summary_count_and_keys():
 def test_sunscreen_tip_is_not_uv_claim():
     assert not has_ingredient_claim_violation('레티놀을 바른 뒤 자외선 차단제를 꼭 바르세요.', [retinol()])
     assert has_ingredient_claim_violation('레티놀이 자외선 차단 효과를 줍니다.', [retinol()])
+
+
+def test_hedged_sentence_is_not_an_assertion():
+    text = '성분 설명\n레티놀: 주름 관리에 도움을 줍니다.\n연구 수만으로 특정 성분이 가장 강력하거나 효과가 입증되었다고 단정할 수는 없습니다.'
+    assert not has_ingredient_claim_violation(text, [retinol()])
