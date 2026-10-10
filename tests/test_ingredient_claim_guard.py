@@ -39,3 +39,8 @@ def test_fragrance_excluded_from_summary_count_and_keys():
     summary=build_summary([Concern.ACNE],rows,functional={})
     assert summary['concerns'][0]['count']==1
     assert [x['inci_name'] for x in summary['key_ingredients']]==['PANTHENOL']
+
+
+def test_sunscreen_tip_is_not_uv_claim():
+    assert not has_ingredient_claim_violation('레티놀을 바른 뒤 자외선 차단제를 꼭 바르세요.', [retinol()])
+    assert has_ingredient_claim_violation('레티놀이 자외선 차단 효과를 줍니다.', [retinol()])

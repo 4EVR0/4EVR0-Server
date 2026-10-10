@@ -26,7 +26,7 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v19:"  # v19: 특정 제품 설명 요청(#124)
+_KEY_PREFIX = "reccache:v20:"  # v20: 자외선 차단제 사용 팁을 효능 주장으로 보지 않음
 _client: aioredis.Redis | None = None
 
 
