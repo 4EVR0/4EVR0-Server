@@ -1,12 +1,14 @@
 """Bounded ingredient/benefit guard, not a general natural-language entailment judge.
 
-Ambiguous multi-ingredient sentences fail conservatively. Inventory/product titles
+A sentence fails only when it states a benefit that none of its mentioned ingredients
+supports ("A와 B가 보습과 각질 연화를 돕는다" passes if A supports one and B the other).
+Superlatives are wording, not errors. Inventory/product titles
 are not parsed as generated claims. This guards benefits, not every mechanism.
 """
 import re
 from app.services.ingredient_explanations import product_explanations
 
-POLICY_VERSION = "ingredient-claim-guard-v1"
+POLICY_VERSION = "ingredient-claim-guard-v2"
 PATTERNS = {
     'tone': r'미백|색소|잡티|피부\s*톤|브라이트닝|whiten|brighten|depigment',
     'aging': r'주름|탄력|노화|리프팅|wrinkle|anti[- ]?aging',
@@ -22,7 +24,6 @@ PATTERNS = {
     'uv': r'자외선(?!\s*차단제)|photoprotect',  # '자외선 차단제를 바르세요'는 사용 팁이다
     'blemish': r'트러블|여드름|blemish|acne',
 }
-SUPERLATIVE = re.compile(r'가장\s*(?:강력|효과|우수|좋|뛰어)|최고의?\s*효과|최강|가장\s*효과적인|most\s+effective|strongest', re.I)
 
 
 def benefits(text):
@@ -32,8 +33,6 @@ def benefits(text):
 def has_ingredient_claim_violation(text, ingredients, products=()):
     # Product section is server-authored or covered by the separate inclusion guard.
     prose = re.split(r'(?m)^\s*[#*\d. ]*추천 제품', text, maxsplit=1)[0]
-    if SUPERLATIVE.search(prose):
-        return True
     allowed = {}
     aliases = {}
     for row in ingredients:
@@ -71,6 +70,7 @@ def has_ingredient_claim_violation(text, ingredients, products=()):
         subjects = mentioned or (current if in_section else [])
         if in_section and claims and not subjects:
             return True
-        if any(not claims <= allowed.get(name, set()) for name in subjects):
+        # 언급한 성분 중 누구도 근거가 없는 효능이 있을 때만 오류다.
+        if subjects and not claims <= set().union(*(allowed.get(name, set()) for name in subjects)):
             return True
     return False

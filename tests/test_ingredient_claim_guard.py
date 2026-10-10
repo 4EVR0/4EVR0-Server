@@ -8,10 +8,22 @@ def retinol():
     return IngredientResult(name='RETINOL', kor_name='레티놀', claim='Anti-aging')
 
 
-def test_rejects_unprovided_benefit_and_superlative():
-    for text in ('레티놀은 주름과 미백에 도움이 됩니다.', '레티놀은 가장 강력한 주름 개선 성분입니다.',
+def test_rejects_unprovided_benefit():
+    for text in ('레티놀은 주름과 미백에 도움이 됩니다.',
                  '레티놀: 주름 관리에 도움이 됩니다.\n미백에도 도움이 됩니다.'):
         assert has_ingredient_claim_violation('성분 설명\n'+text,[retinol()])
+
+
+def test_superlative_is_wording_not_error():
+    assert not has_ingredient_claim_violation('성분 설명\n레티놀은 가장 강력한 주름 개선 성분입니다.',[retinol()])
+
+
+def test_multi_ingredient_sentence_needs_some_support_for_each_benefit():
+    urea=IngredientResult(name='UREA',kor_name='우레아',supported_claims=['Hydrating','Keratolytic'])
+    glycerin=IngredientResult(name='GLYCERIN',kor_name='글리세린',supported_claims=['Hydrating'])
+    assert not has_ingredient_claim_violation('우레아와 글리세린이 각질 연화와 보습을 돕습니다.',[urea,glycerin])
+    # 둘 다 근거가 없는 효능(미백)은 오류다.
+    assert has_ingredient_claim_violation('우레아와 글리세린이 보습과 미백을 돕습니다.',[urea,glycerin])
 
 
 def test_does_not_transfer_other_ingredients_effect():

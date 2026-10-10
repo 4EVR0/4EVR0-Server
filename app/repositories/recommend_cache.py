@@ -26,7 +26,7 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v22:"  # v22: 성분 한글명 불일치 검사
+_KEY_PREFIX = "reccache:v23:"  # v23: 오류 중심 효능 검사(언급 성분 합집합, 최상급 허용)
 _client: aioredis.Redis | None = None
 
 
