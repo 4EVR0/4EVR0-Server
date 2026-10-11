@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     ingredient_product_bonus: float = 0.2
 
     gpu_server_url: str = "http://127.0.0.1:18000"
-    gpu_model: str = "Qwen/Qwen3-8B-FP8"
+    gpu_model: str = "Qwen/Qwen3.5-9B"  # vLLM이 서빙하는 모델명과 같아야 한다(2026-10-11 bf16 채택)
     gpu_timeout_seconds: int = 60
     # 서빙 엔드포인트 인증 토큰. 자체 vLLM은 인증이 없어 기본 "EMPTY"면 충분하지만,
     # 프록시(예: vast.ai Instance Portal의 Caddy)가 앞단에 붙으면 이 값이 필요하다.

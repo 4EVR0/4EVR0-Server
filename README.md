@@ -31,7 +31,7 @@
 | 서버 | MagicDNS 호스트명 | 역할 |
 |------|------------------|------|
 | 앱 서버 (Mac) | `macbook-pro-3.tailb70036.ts.net` | FastAPI + 웹 UI |
-| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net:18000` | vLLM (`Qwen3.5-9B` AWQ int4) |
+| GPU 서버 (Vast.ai) | `vast-gpu-server-2.tailb70036.ts.net:18000` | vLLM (`Qwen3.5-9B` bf16) |
 | Neo4j 서버 (EC2) | `ip-172-31-56-102.tailb70036.ts.net:7687` | Graph DB |
 | 모니터링 서버 (EC2) | `monitoring-server-1.tailb70036.ts.net` | Prometheus + Grafana |
 
@@ -69,6 +69,10 @@
 평균 Pearson은 `0.4835`였고 Judge가 평균 `+0.753` 과대평가해, 위 자동 점수는
 절대 품질 근거로 사용하지 않는다.
 트레이드오프는 TTFT +19%(전체에 묻힘)와 추출 precision 소폭 하락(recall은 상승)이다.
+
+> **2026-10-11 bf16으로 되돌림.** 실제 응답의 오류 건수(근거 없는 표현·데이터 언급·대체 응답)로 다시 비교하니
+> AWQ가 프롬프트 금지 표현을 더 자주 어겼다(생성 원문 기준 근거 없는 표현: 첫 추천 9 → 0, 후속 4 → 0).
+> 베타 전까지 정확성을 우선해 bf16을 쓰고, decode 속도(약 2.4배 느림)와 동시 처리량은 부하 측정으로 다시 확인한다.
 
 ### 3. 콜드스타트 — 진단하고 앱·인프라 양면에서 해결 (실측 검증) ⭐
 신규 GPU 대여 시 서버 준비까지의 비용을 실측 분해하고, 두 축으로 해결·검증:
