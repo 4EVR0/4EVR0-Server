@@ -26,7 +26,7 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v26:"  # v26: 농축·흡수 단정 차단, 부정 문장 예외
+_KEY_PREFIX = "reccache:v27:"  # v27: 생성 서버 장애 때의 안내를 캐시하지 않음(장애 중 저장된 v26 응답 무효화)
 _client: aioredis.Redis | None = None
 
 
@@ -147,6 +147,9 @@ async def single_flight(message: str, gen_prompt_name: str | None):
 async def set(message: str, gen_prompt_name: str | None, payload: dict) -> None:
     """추천 콘텐츠(dict)를 TTL과 함께 저장. 장애 시 조용히 무시."""
     if not settings.recommend_cache_enabled or payload.get("_profile", {}).get("constraints"):
+        return
+    # 생성 서버 장애 때의 간단 안내를 저장하면 복구 뒤에도 24시간 같은 안내가 나간다.
+    if payload.get("response_mode") == "llm_unavailable":
         return
     try:
         await _get_client().set(

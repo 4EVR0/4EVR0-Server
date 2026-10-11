@@ -12,6 +12,8 @@ from pathlib import Path
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
+from app.clients import llm_health
+from app.clients.llm_health import LLMUnavailableError
 from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import (
     query_cautioned_ingredients,
@@ -1338,12 +1340,13 @@ async def _llm_classify(message: str, history: list[dict]) -> str:
     prod_str = ", ".join(last_products[:6]) or "(없음)"
     try:
         client = get_async_llm_client()
-        resp = await client.chat.completions.create(
-            model=settings.gpu_model, temperature=0, max_tokens=8,
-            messages=[{"role": "system", "content": _CLASSIFY_SYSTEM},
-                      {"role": "user", "content": f"이전 추천 제품: {prod_str}\n새 메시지: {message}"}],
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
+        async with llm_health.guard():
+            resp = await client.chat.completions.create(
+                model=settings.gpu_model, temperature=0, max_tokens=8,
+                messages=[{"role": "system", "content": _CLASSIFY_SYSTEM},
+                          {"role": "user", "content": f"이전 추천 제품: {prod_str}\n새 메시지: {message}"}],
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
         out = (resp.choices[0].message.content or "").strip().upper()
         return "followup" if "FOLLOW" in out else "new"
     except Exception as exc:  # noqa: BLE001
@@ -1994,12 +1997,14 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
         response_text = resp.choices[0].message.content or ""
+        llm_unavailable = False
     except LLMOverCapacityError:
         metrics.recommend_requests_total.labels(status="rejected").inc()
         raise
-    except Exception:
-        metrics.recommend_requests_total.labels(status="error").inc()
-        raise
+    except Exception as exc:
+        # 생성 서버 장애: 아래 안전 응답(앞서 보여 준 제품과 확인된 성분)으로 바로 답한다.
+        logger.warning("followup generation failed: %s", exc)
+        response_text, llm_unavailable = "", True
     # LLM이 최종 추천 순위 마커를 냈으면 그 순서로 카드 재정렬(없으면 원래 순서 폴백).
     response_text, ranking = _extract_ranking(response_text)
     products = _reorder_by_ranking(_reconstruct_products(selected),
@@ -2029,8 +2034,10 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             product.ingredient_explanations = explanations_by_id.get(product.product_id, [])
         response_text, products = _build_safe_followup_response(message, products, ing_kor)
         response_text, _ = _normalize_response_text(response_text, products)
-        response_mode = "followup_quality_fallback"
-        metrics.recommend_output_guard_total.labels(kind="followup_quality_fallback").inc()
+        response_mode = "followup_llm_unavailable" if llm_unavailable else "followup_quality_fallback"
+        metrics.recommend_output_guard_total.labels(kind=response_mode).inc()
+        if llm_unavailable:
+            response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
     if hanja_removed:
         metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
     await _attach_fragrance_allergens(products)
@@ -2246,6 +2253,11 @@ async def _resolve_conversation_response(
     return None
 
 
+# 생성 서버(GPU)에 연결되지 않을 때 서버가 붙이는 안내. 이때 본문은 확인된 성분 근거로만 만든다.
+LLM_UNAVAILABLE_NOTE = ("지금은 답변 생성 서버에 연결되지 않아 확인된 성분 근거로만 간단히 안내해요. "
+                        "잠시 후 다시 물어보시면 자세히 설명해 드릴게요.")
+
+
 # ── 턴 결과 기록(버전 추적) ─────────────────────────────────────────────────
 # 이 턴이 응답 캐시에서 나왔는지. 캐시 조회 지점에서 정하고 턴 기록이 읽는다.
 _CACHE_HIT: ContextVar[bool | None] = ContextVar("recommend_cache_hit", default=None)
@@ -2420,6 +2432,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
             response_mode = "generated" if products else "no_products"
+            llm_unavailable = False
             study_match = _verified_study_match(generation_message, profile.concerns, candidate_ingredients, products)
             redness_match = _redness_study_match(profile.concerns, candidate_ingredients, products)
             if redness_match:
@@ -2441,7 +2454,13 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                 response_mode = "verified_study_template"
                 response_text = _build_verified_study_response(message, study_match)
             elif products:
-                response_text = await _build_llm_response(generation_message, ingredients, products, system_prompt)
+                try:
+                    response_text = await _build_llm_response(generation_message, ingredients, products, system_prompt)
+                except LLMUnavailableError:
+                    llm_unavailable = True
+                    response_mode = "llm_unavailable"
+                    response_text = _build_grounded_product_response(
+                        generation_message, candidate_ingredients, products, profile.concerns)
             else:
                 response_text = _build_no_product_response(
                     ingredients, constraints, profile.concerns, generation_message,
@@ -2472,6 +2491,9 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                 response_text = _build_grounded_product_response(
                     generation_message, candidate_ingredients, products, profile.concerns,
                 )
+            if llm_unavailable:
+                response_mode = "llm_unavailable"
+                metrics.recommend_output_guard_total.labels(kind="llm_unavailable").inc()
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
@@ -2482,6 +2504,8 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                 response_text = _append_server_notes(response_text, candidate_ingredients, products)
                 if skin_type_note:
                     response_text = f"{skin_type_note}\n\n{response_text}"
+                if llm_unavailable:
+                    response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -2709,16 +2733,9 @@ async def _build_llm_response(
         # 동시성 한도 초과는 템플릿 폴백으로 덮지 않고 거절(429)로 전파.
         raise
     except Exception as exc:
+        # 호출 쪽이 확인된 성분 근거로 안내하고, 그 응답은 캐시하지 않는다.
         logger.warning("LLM response generation failed: %s", exc)
-        if products:
-            prod_names = ", ".join(
-                _product_display_name(p.brand, p.product_name) for p in products[:3]
-            )
-            return f"피부 고민 분석 결과, 다음 제품들을 추천드립니다: {prod_names}"
-        if ingredients:
-            names = ", ".join(_ingredient_display_name(i) for i in ingredients[:5])
-            return f"피부 고민 분석 결과, 다음 성분들을 추천드립니다: {names}"
-        return "죄송합니다. 현재 추천 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        raise LLMUnavailableError(str(exc)) from exc
 
 
 def _sse(event: str, data: dict) -> str:
@@ -2923,6 +2940,7 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
             # 생성 스트리밍 (TTFT 측정). 제품 0건은 모델을 거치지 않는다.
             chunks: list[str] = []
             hanja_removed = False
+            llm_unavailable = False
             response_mode = "generated" if products else "no_products"
             if not products:
                 response_text = _build_no_product_response(
@@ -2957,23 +2975,33 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 user_content = _compose_user_content(generation_message, ingredients, products)
                 ttft: float | None = None
                 gen_start = time.perf_counter()
-                async with llm_slot():
-                    client = get_async_llm_client()
-                    stream = await client.chat.completions.create(
-                        model=settings.gpu_model,
-                        messages=[{"role": "system", "content": generation_system_prompt(system_prompt, products)},
-                                  {"role": "user", "content": user_content}],
-                        temperature=settings.gen_temperature,
-                        max_tokens=settings.gen_max_tokens,
-                        stream=True,
-                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                    )
-                    async for chunk in stream:
-                        delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
-                        if delta:
-                            if ttft is None:
-                                ttft = time.perf_counter() - gen_start
-                            chunks.append(delta)
+                try:
+                    async with llm_slot():
+                        client = get_async_llm_client()
+                        stream = await client.chat.completions.create(
+                            model=settings.gpu_model,
+                            messages=[{"role": "system", "content": generation_system_prompt(system_prompt, products)},
+                                      {"role": "user", "content": user_content}],
+                            temperature=settings.gen_temperature,
+                            max_tokens=settings.gen_max_tokens,
+                            stream=True,
+                            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                        )
+                        async for chunk in stream:
+                            delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+                            if delta:
+                                if ttft is None:
+                                    ttft = time.perf_counter() - gen_start
+                                chunks.append(delta)
+                except LLMOverCapacityError:
+                    raise
+                except Exception as exc:
+                    # 생성 서버 장애: 확인된 성분 근거로만 안내하고 캐시하지 않는다.
+                    logger.warning("streaming generation failed: %s", exc)
+                    llm_unavailable = True
+                    response_mode = "llm_unavailable"
+                    chunks = [_build_grounded_product_response(
+                        generation_message, candidate_ingredients, products, profile.concerns)]
                 gen_total = time.perf_counter() - gen_start
                 # 청크 경계에 걸친 한자 단어도 바꾸도록 모은 뒤 처리한다(본문은 검사 뒤에 보낸다).
                 response_text, hanja_removed = _remove_hanja("".join(chunks))
@@ -3006,6 +3034,9 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 response_text = _build_grounded_product_response(
                     generation_message, candidate_ingredients, products, profile.concerns,
                 )
+            if llm_unavailable:
+                response_mode = "llm_unavailable"
+                metrics.recommend_output_guard_total.labels(kind="llm_unavailable").inc()
             if product_section:
                 response_text = _finalize_with_product_section(response_text, products, candidate_ingredients)
             if products:  # 복합 고민 부분 충족은 서버가 명시한다(#113).
@@ -3016,6 +3047,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 response_text = _append_server_notes(response_text, candidate_ingredients, products)
                 if skin_type_note:
                     response_text = f"{skin_type_note}\n\n{response_text}"
+                if llm_unavailable:
+                    response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
