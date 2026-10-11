@@ -620,6 +620,27 @@ async def query_product_ingredient_facts(product_id: str) -> list[dict[str, Any]
         return None
 
 
+async def query_graph_version() -> dict[str, Any]:
+    """그래프 버전 지문: 마지막 제품 증분 적재(SyncLog)와 검토 근거 규모. 조회 실패는 status=unknown."""
+    try:
+        async with _get_driver().session() as session:
+            sync = await (await session.run(
+                "MATCH (s:SyncLog) RETURN s.batch_job AS batch_job, toString(s.synced_at) AS synced_at "
+                "ORDER BY s.synced_at DESC LIMIT 1")).single()
+            counts = await (await session.run(
+                "CALL { MATCH ()-[r:EVIDENCE_FOR]->() RETURN count(r) AS evidence_for } "
+                "CALL { MATCH (i:Ingredient) WHERE i.evidence_reviewed RETURN count(i) AS reviewed } "
+                "CALL { MATCH (p:Product) RETURN count(p) AS products } "
+                "RETURN evidence_for, reviewed, products")).single()
+        return {"product_sync": sync["batch_job"] if sync else None,
+                "product_synced_at": sync["synced_at"] if sync else None,
+                "products": counts["products"], "evidence_for_edges": counts["evidence_for"],
+                "reviewed_ingredients": counts["reviewed"]}
+    except Exception as exc:
+        logger.warning("Neo4j graph version query failed: %s", exc)
+        return {"status": "unknown"}
+
+
 _VOCAB_CACHE: dict[str, Any] = {"at": 0.0, "names": frozenset()}
 
 

@@ -6,6 +6,7 @@ import logging
 import re
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,7 +51,8 @@ from app.services.ingredient_explanations import (
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.fragrance_policy import eligible_rationale
-from app.services import product_info, sensitive_caution
+from app.services import product_info, release_info, sensitive_caution
+from app.repositories import turn_event_repository
 from app.services.skin_type_defaults import apply_skin_type_defaults
 from app.services.fragrance_allergens import allergen_note, allergens_in
 from app.services.ingredient_claim_guard import has_ingredient_claim_violation
@@ -2244,7 +2246,55 @@ async def _resolve_conversation_response(
     return None
 
 
+# ── 턴 결과 기록(버전 추적) ─────────────────────────────────────────────────
+# 이 턴이 응답 캐시에서 나왔는지. 캐시 조회 지점에서 정하고 턴 기록이 읽는다.
+_CACHE_HIT: ContextVar[bool | None] = ContextVar("recommend_cache_hit", default=None)
+_PENDING_RECORDS: set[asyncio.Task] = set()
+
+
+def _record_turn(*, turn_id: str, transport: str, status: str, response_mode: str | None,
+                 started: float, product_ids: list[str]) -> None:
+    """턴 결과 메타데이터를 백그라운드로 저장한다. 원문·세션 ID는 남기지 않는다.
+
+    릴리스가 등록된 운영 프로세스에서만 기록한다(테스트·평가 스크립트는 기록하지 않음).
+    """
+    release_id = release_info.current_id()
+    if release_id is None:
+        return
+
+    async def write():
+        try:
+            await turn_event_repository.record_turn(
+                turn_id=turn_id, release_id=release_id, transport=transport, status=status,
+                response_mode=response_mode, cache_hit=_cache_hit, latency_ms=latency_ms,
+                product_ids=product_ids)
+        except Exception as exc:
+            logger.warning("turn event record failed: %s", exc)
+
+    _cache_hit = _CACHE_HIT.get()
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    task = asyncio.create_task(write())
+    _PENDING_RECORDS.add(task)
+    task.add_done_callback(_PENDING_RECORDS.discard)
+
+
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
+    """일반 응답. 결과(완료·실패)를 릴리스 버전과 함께 기록한다."""
+    started = time.perf_counter()
+    _CACHE_HIT.set(None)
+    try:
+        response = await _recommend(session_id, message, gen_prompt_name)
+    except Exception:
+        _record_turn(turn_id=str(uuid.uuid4()), transport="batch", status="failed", response_mode=None,
+                     started=started, product_ids=[])
+        raise
+    _record_turn(turn_id=response.turn_id, transport="batch", status="completed",
+                 response_mode=response.response_mode, started=started,
+                 product_ids=[p.product_id for p in response.products])
+    return response
+
+
+async def _recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     turn_id = str(uuid.uuid4())
     reset_gate_wait()
     t_req = time.perf_counter()
@@ -2263,6 +2313,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
+        _CACHE_HIT.set(True)
         metrics.recommend_requests_total.labels(status="ok").inc()
         spans["total"] = time.perf_counter() - t_req
         spans["overhead"] = spans["total"] - spans["cache_lookup"]
@@ -2272,6 +2323,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
                           active_state=_cached_active(cached, message, turn_id, context))
         return RecommendResponse(session_id=session_id, turn_id=turn_id, **cached)
     metrics.recommend_cache_total.labels(result="miss").inc()
+    _CACHE_HIT.set(False)
 
     # gen_prompt_name 지정 시 응답 프롬프트 교체(실험용). 미지정이면 프로덕션 기본.
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
@@ -2286,6 +2338,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
             cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
+                _CACHE_HIT.set(True)
                 metrics.recommend_requests_total.labels(status="ok").inc()
                 spans["total"] = time.perf_counter() - t_req
                 spans["overhead"] = spans["total"] - spans["cache_lookup"] - spans["flight_wait"]
@@ -2674,6 +2727,35 @@ def _sse(event: str, data: dict) -> str:
 
 
 async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
+    """SSE 응답. done 프레임까지 보내면 완료, error 프레임은 실패, 중간에 끊기면 취소로 기록한다.
+
+    끊긴 스트리밍 답변을 완료된 답변으로 기록하지 않는다(배포 계획서 4장).
+    """
+    started = time.perf_counter()
+    _CACHE_HIT.set(None)
+    turn_id, mode, products, status = None, None, [], "cancelled"
+    try:
+        async for frame in _recommend_stream(session_id, message, gen_prompt_name):
+            event = frame.split("\n", 1)[0]
+            if event in ("event: meta", "event: done", "event: error"):
+                data = json.loads(frame.split("data: ", 1)[1])
+                turn_id = data.get("turn_id") or turn_id
+                if event == "event: meta":
+                    products = [p.get("product_id") for p in data.get("products") or [] if p.get("product_id")]
+                elif event == "event: done":
+                    mode, status = data.get("response_mode"), "completed"
+                else:
+                    status = "failed"
+            yield frame
+    except Exception:
+        status = "failed"
+        raise
+    finally:
+        _record_turn(turn_id=turn_id or str(uuid.uuid4()), transport="stream", status=status,
+                     response_mode=mode, started=started, product_ids=products)
+
+
+async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
     """SSE 추천: meta(구조 데이터 즉시) → delta(검증된 본문) → done.
 
     성분·제품 카드를 생성 전에 보내 빈 화면을 줄인다. 본문은 한자·
@@ -2719,6 +2801,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     spans["cache_lookup"] = time.perf_counter() - _t
     if cached is not None:
         metrics.recommend_cache_total.labels(result="hit").inc()
+        _CACHE_HIT.set(True)
         metrics.recommend_requests_total.labels(status="ok").inc()
         active_state = _cached_active(cached, message, turn_id, context)
         if active_state is not None:
@@ -2735,6 +2818,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
                             "response_mode": cached.get("response_mode", "generated")})
         return
     metrics.recommend_cache_total.labels(result="miss").inc()
+    _CACHE_HIT.set(False)
     system_prompt = load_prompt(gen_prompt_name) if gen_prompt_name else _SYSTEM_PROMPT
 
     try:
@@ -2747,6 +2831,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
             cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))
             if cached is not None:
                 metrics.recommend_cache_total.labels(result="coalesced").inc()
+                _CACHE_HIT.set(True)
                 metrics.recommend_requests_total.labels(status="ok").inc()
                 active_state = _cached_active(cached, message, turn_id, context)
                 if active_state is not None:
