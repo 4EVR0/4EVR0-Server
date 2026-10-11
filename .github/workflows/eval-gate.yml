@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 45
     env:
       # ── 비민감(기본값) — 필요 시 repo Variables 로 덮어쓰기 ──
-      GPU_MODEL: ${{ vars.GPU_MODEL || 'cyankiwi/Qwen3.5-9B-AWQ-4bit' }}
+      GPU_MODEL: ${{ vars.GPU_MODEL || 'Qwen/Qwen3.5-9B' }}
       POSTGRES_DSN: ${{ vars.POSTGRES_DSN || 'postgresql://cosmetic_user:cosmetic_pass@localhost:5432/cosmetic_db' }}
       REDIS_URL: ${{ vars.REDIS_URL || 'redis://localhost:6379' }}
       NEO4J_USER: ${{ vars.NEO4J_USER || 'neo4j' }}

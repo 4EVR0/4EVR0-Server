@@ -68,7 +68,7 @@ repo **Settings → Secrets and variables → Actions**:
 | Secret | `GPU_SERVER_URL` | `http://vast-gpu-server-2.tailb70036.ts.net:18000` |
 | Secret | `NEO4J_URI` | `bolt://ip-172-31-56-102.tailb70036.ts.net:7687` |
 | Secret | `NEO4J_PASSWORD` | (Neo4j 비번) |
-| Variable(선택) | `GPU_MODEL` | 기본 `cyankiwi/Qwen3.5-9B-AWQ-4bit` |
+| Variable(선택) | `GPU_MODEL` | 기본 `Qwen/Qwen3.5-9B`(bf16) |
 | Variable(선택) | `JUDGE_MODEL` | 기본 `gpt-4o-mini` |
 
 > pg/redis/neo4j_user 기본값은 워크플로우에 내장(로컬 docker 기준). 다르면 Variable로 덮어쓰기.
