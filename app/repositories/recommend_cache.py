@@ -20,13 +20,14 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 
+from app.clients import llm_health
 from app.core.config import settings
 from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v27:"  # v27: 생성 서버 장애 때의 안내를 캐시하지 않음(장애 중 저장된 v26 응답 무효화)
+_KEY_PREFIX = "reccache:v28:"  # v28: 생성 서버 장애 중 처리한 요청은 캐시하지 않음(장애 중 저장된 v27 응답 무효화)
 _client: aioredis.Redis | None = None
 
 
@@ -149,7 +150,7 @@ async def set(message: str, gen_prompt_name: str | None, payload: dict) -> None:
     if not settings.recommend_cache_enabled or payload.get("_profile", {}).get("constraints"):
         return
     # 생성 서버 장애 때의 간단 안내를 저장하면 복구 뒤에도 24시간 같은 안내가 나간다.
-    if payload.get("response_mode") == "llm_unavailable":
+    if payload.get("response_mode") == "llm_unavailable" or llm_health.request_degraded():
         return
     try:
         await _get_client().set(

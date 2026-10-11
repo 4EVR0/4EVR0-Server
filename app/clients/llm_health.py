@@ -7,6 +7,7 @@ GPU 서버에 연결되지 않으면(연결 실패·시간 초과) 일정 시간
 
 import time
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 
 import openai
 from prometheus_client import Counter
@@ -25,6 +26,17 @@ llm_unavailable_total = Counter(
 )
 
 _down_until = 0.0
+# 이번 요청에서 생성 서버 장애로 LLM 단계를 건너뛰었는지(추출이 규칙 기반으로 넘어간 경우 포함).
+# 이런 요청의 결과는 캐시하지 않는다 — 복구 뒤에도 24시간 낮은 품질의 응답이 나가지 않게.
+_degraded: ContextVar[bool] = ContextVar("llm_request_degraded", default=False)
+
+
+def start_request() -> None:
+    _degraded.set(False)
+
+
+def request_degraded() -> bool:
+    return _degraded.get()
 
 
 def is_down() -> bool:
@@ -33,6 +45,7 @@ def is_down() -> bool:
 
 def check() -> None:
     if is_down():
+        _degraded.set(True)
         llm_unavailable_total.labels(reason="skipped").inc()
         raise LLMUnavailableError("generation server unavailable (circuit open)")
 
@@ -40,6 +53,7 @@ def check() -> None:
 def record_failure(exc: BaseException) -> None:
     global _down_until
     if isinstance(exc, openai.APIConnectionError):  # APITimeoutError 포함
+        _degraded.set(True)
         _down_until = time.monotonic() + settings.llm_down_cooldown_seconds
         llm_unavailable_total.labels(reason="connection").inc()
 
