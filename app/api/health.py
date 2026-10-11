@@ -122,6 +122,14 @@ async def live(response: Response) -> dict[str, str]:
     return {"status": "alive"}
 
 
+@router.get("/release")
+async def release(response: Response) -> dict:
+    """지금 답변을 만드는 버전 묶음(모델·앱·프롬프트·그래프·캐시). 비밀값은 담지 않는다."""
+    response.headers["Cache-Control"] = "no-store"
+    from app.services import release_info
+    return release_info.current() or {"release_id": None, "components": release_info.static_components()}
+
+
 @router.get("/ready", response_model=HealthResponse)
 async def ready(response: Response) -> HealthResponse:
     """Recommendation dependencies must all work, including the configured model."""

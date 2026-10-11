@@ -19,6 +19,7 @@ from app.clients.llm_factory import close_llm_client
 from app.clients.llm_gate import LLMOverCapacityError
 from app.api import health, sessions, profile, recommend
 from app.repositories import recommend_cache
+from app.services import release_info
 # app.core.metrics 를 import 해 커스텀 메트릭을 기본 레지스트리에 등록한다.
 from app.core import metrics as _metrics  # noqa: F401
 
@@ -32,8 +33,11 @@ async def lifespan(app: FastAPI):
     # 워밍업은 백그라운드로 — 포트 바인딩(기동)을 막지 않는다. vLLM 준비 대기·더미 호출로
     # 첫-요청 페널티를 흡수한다(이슈 #36). 트래픽 라우팅은 /health readiness 게이트가 관리.
     warmup_task = asyncio.create_task(run_warmup())
+    # 답변별 버전 추적용 릴리스 등록(백그라운드, 실패해도 기동은 계속).
+    release_task = asyncio.create_task(release_info.register())
     yield
     warmup_task.cancel()
+    release_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await warmup_task
     # 프로세스 싱글턴 커넥션들 정리 (graceful shutdown)

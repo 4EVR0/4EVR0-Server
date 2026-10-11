@@ -18,6 +18,8 @@ COPY app/ ./app/
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/4EVR0/4EVR0-Server" \
       org.opencontainers.image.revision="${VCS_REF}"
+# 답변별 버전 추적(release_versions)에 앱 커밋을 남긴다.
+ENV APP_VCS_REF="${VCS_REF}"
 
 USER 10001:10001
 EXPOSE 8000
