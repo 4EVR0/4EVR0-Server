@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 
 from prometheus_client import Counter, Gauge
 
+from app.clients import llm_health
 from app.core.config import settings
 
 
@@ -64,9 +65,12 @@ async def llm_slot():
     """GPU 호출 1건의 슬롯을 확보한다.
 
     게이트 비활성 시 그대로 통과. reject 모드에서 빈 슬롯이 없으면 LLMOverCapacityError.
+    생성 서버 연결 장애로 차단 중이면 슬롯을 기다리지 않고 바로 LLMUnavailableError.
     """
+    llm_health.check()
     if not _enabled:
-        yield
+        async with llm_health.guard():
+            yield
         return
 
     # asyncio는 단일 스레드라, 동기 locked() 체크와 곧이은 acquire() 사이에 다른 코루틴이
@@ -80,7 +84,8 @@ async def llm_slot():
     _gate_wait_seconds.set(_gate_wait_seconds.get() + (time.perf_counter() - _wait_start))
     llm_inflight_requests.inc()
     try:
-        yield
+        async with llm_health.guard():
+            yield
     finally:
         llm_inflight_requests.dec()
         _semaphore.release()

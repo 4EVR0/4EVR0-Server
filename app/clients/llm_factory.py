@@ -1,3 +1,4 @@
+import httpx
 import openai
 
 from app.core.config import settings
@@ -15,7 +16,9 @@ def get_async_llm_client() -> openai.AsyncOpenAI:
         _client = openai.AsyncOpenAI(
             api_key=settings.gpu_api_key,
             base_url=base_url,
-            timeout=float(settings.gpu_timeout_seconds),
+            timeout=httpx.Timeout(float(settings.gpu_timeout_seconds),
+                                  connect=settings.gpu_connect_timeout_seconds),
+            max_retries=settings.gpu_max_retries,
         )
     return _client
 
