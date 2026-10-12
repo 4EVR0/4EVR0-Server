@@ -1304,11 +1304,28 @@ def _is_deictic(message: str) -> bool:
                 re.search(r"(?:이것|그것|저것)들", message))
 
 
+# "1번 제품", "두 번째"처럼 직전 목록의 번호를 가리키는 표현.
+_ORDINAL_PRODUCT_REF = re.compile(r"(?<!\d)([1-9])\s*번(?:째)?|(첫|두|세|네|다섯|여섯)\s*번째")
+_ORDINAL_WORDS = {"첫": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6}
+
+
+def _points_to_shown_product(message: str, history: list[dict]) -> bool:
+    """직전에 보여 준 제품 목록의 번호를 가리키는가. 생성 서버 없이도 후속 질문으로 판단할 수 있게 한다."""
+    last = next((t for t in reversed(history) if t.get("products")), None)
+    if not last:
+        return False
+    for match in _ORDINAL_PRODUCT_REF.finditer(message):
+        number = int(match.group(1)) if match.group(1) else _ORDINAL_WORDS[match.group(2)]
+        if number <= len(last["products"]):
+            return True
+    return False
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
         return "new"
-    if _has_followup_cue(message):
+    if _has_followup_cue(message) or _points_to_shown_product(message, history):
         return "followup"
     if _is_product_comparison_request(message) and any(
         _comparison_product_indexes(message, turn.get("products") or []) for turn in history[-3:]
@@ -2294,6 +2311,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     """일반 응답. 결과(완료·실패)를 릴리스 버전과 함께 기록한다."""
     started = time.perf_counter()
     _CACHE_HIT.set(None)
+    llm_health.start_request()
     try:
         response = await _recommend(session_id, message, gen_prompt_name)
     except Exception:
@@ -2750,6 +2768,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     """
     started = time.perf_counter()
     _CACHE_HIT.set(None)
+    llm_health.start_request()
     turn_id, mode, products, status = None, None, [], "cancelled"
     try:
         async for frame in _recommend_stream(session_id, message, gen_prompt_name):

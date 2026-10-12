@@ -17,8 +17,10 @@ from app.services import recommend_service as service
 @pytest.fixture(autouse=True)
 def _reset_breaker():
     llm_health.reset()
+    llm_health.start_request()
     yield
     llm_health.reset()
+    llm_health.start_request()
 
 
 def _connection_error():
@@ -94,3 +96,24 @@ def test_followup_generation_failure_answers_with_notice():
     assert response.response_text.startswith(service.LLM_UNAVAILABLE_NOTE)
     assert [p.product_id for p in response.products] == ["t", "c"]
     assert llm_health.is_down()
+
+
+def test_degraded_request_is_not_cached():
+    client = SimpleNamespace(set=AsyncMock())
+
+    async def degraded_then_set():
+        llm_health.start_request()
+        llm_health.record_failure(_connection_error())  # 추출이 규칙 기반으로 넘어간 요청
+        await recommend_cache.set("1번 제품 어때?", None, {"response_mode": "no_products", "_profile": {}})
+    with patch.object(recommend_cache, "_get_client", return_value=client), \
+            patch.object(recommend_cache.settings, "recommend_cache_enabled", True):
+        asyncio.run(degraded_then_set())
+    client.set.assert_not_awaited()
+
+
+def test_ordinal_reference_is_followup_without_llm():
+    history = [{"user": "속건조가 심해요", "products": [{"name": "A"}, {"name": "B"}, {"name": "C"}]}]
+    for message in ("1번 제품 어때?", "두 번째 거는 어때?", "3번은 어떻게 써?"):
+        assert service._heuristic_kind(message, history) == "followup", message
+    assert service._heuristic_kind("5번 제품 어때?", history) is None  # 목록 밖 번호는 판단을 미룬다
+    assert service._heuristic_kind("1번 제품 어때?", [{"user": "x", "products": []}]) is None
