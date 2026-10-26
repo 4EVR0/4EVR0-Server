@@ -2472,7 +2472,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
 
             # 그래프 장애로 제품을 못 찾았으면 "조건에 맞는 제품이 없다"가 아니라 장애로 안내한다.
             # 제품은 찾았고 부가 조회만 실패했으면 그대로 답한다(이 요청은 캐시하지 않는다).
-            if dependency_health.degraded("neo4j") and not products:
+            if not products and (dependency_health.degraded("neo4j") or dependency_health.NEO4J.is_open()):
                 return await _graph_unavailable_response(session_id, turn_id, message)
 
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
@@ -2974,7 +2974,7 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
             await _attach_concern_summaries(products, profile.concerns)
             await _attach_fragrance_allergens(products, inventory)
 
-            if dependency_health.degraded("neo4j") and not products:
+            if not products and (dependency_health.degraded("neo4j") or dependency_health.NEO4J.is_open()):
                 unavailable = await _graph_unavailable_response(session_id, turn_id, message)
                 yield _sse("meta", {"session_id": session_id, "turn_id": turn_id, "ingredients": [],
                                     "products": [], "model_used": "deterministic"})
