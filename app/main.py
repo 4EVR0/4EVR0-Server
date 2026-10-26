@@ -17,9 +17,9 @@ from app.core.warmup import run_warmup
 from app.clients import neo4j_client
 from app.clients.llm_factory import close_llm_client
 from app.clients.llm_gate import LLMOverCapacityError
-from app.api import health, sessions, profile, recommend
+from app.api import data_collection as data_api, health, sessions, profile, recommend
 from app.repositories import recommend_cache
-from app.services import release_info
+from app.services import data_collection, release_info
 # app.core.metrics 를 import 해 커스텀 메트릭을 기본 레지스트리에 등록한다.
 from app.core import metrics as _metrics  # noqa: F401
 
@@ -35,9 +35,12 @@ async def lifespan(app: FastAPI):
     warmup_task = asyncio.create_task(run_warmup())
     # 답변별 버전 추적용 릴리스 등록(백그라운드, 실패해도 기동은 계속).
     release_task = asyncio.create_task(release_info.register())
+    # 동의·피드백 테이블 준비와 보관 기한 지난 원문·메모·세션 정리(1시간마다).
+    maintenance_task = asyncio.create_task(data_collection.maintenance_loop())
     yield
     warmup_task.cancel()
     release_task.cancel()
+    maintenance_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await warmup_task
     # 프로세스 싱글턴 커넥션들 정리 (graceful shutdown)
@@ -65,6 +68,7 @@ app.include_router(health.router)
 app.include_router(sessions.router)
 app.include_router(profile.router)
 app.include_router(recommend.router)
+app.include_router(data_api.router)
 
 # 기본 HTTP 메트릭 계측 + GET /metrics 노출 (커스텀 비즈니스 메트릭도 함께 실림)
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
