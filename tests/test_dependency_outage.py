@@ -78,6 +78,7 @@ def test_history_unavailable_when_redis_down():
             return await service._resolve_conversation_response("s", "t", "1번 제품 어때?")
     response = asyncio.run(run())
     assert response.response_text == service.HISTORY_UNAVAILABLE_TEXT
+    assert response.response_mode == "history_unavailable"
 
 
 def test_session_create_returns_503_when_postgres_down():
@@ -86,3 +87,11 @@ def test_session_create_returns_503_when_postgres_down():
     with pytest.raises(HTTPException) as err:
         asyncio.run(sessions._create_session_or_503())
     assert err.value.status_code == 503 and "대화를 시작할 수 없어요" in err.value.detail
+
+
+def test_followup_without_products_during_graph_outage_says_unavailable():
+    NEO4J.failed(ConnectionError("down"))
+    with patch.object(service, "_store_turn", AsyncMock()):
+        response = asyncio.run(service._handle_followup(
+            "s", "t", "닥터지 레드 블레미쉬 수딩크림 어때?", [{"user": "건조해요", "products": []}], None))
+    assert response.response_mode == "graph_unavailable"

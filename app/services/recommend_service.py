@@ -1850,6 +1850,9 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
         picked = _comparison_product_indexes(message, visible)
         if picked:
             selected = [visible[i] for i in picked]
+    if not visible and not source and (dependency_health.NEO4J.is_open() or dependency_health.degraded("neo4j")):
+        # 그래프 장애로 앞선 턴에 제품이 없었던 경우: "조건에 맞는 제품이 없다"가 아니라 장애로 안내한다.
+        return await _graph_unavailable_response(session_id, turn_id, message)
     if not visible and not source:
         # 이전 턴이 안전한 0-product 거절이었다면 LLM에 빈 제품 컨텍스트를
         # 넘기지 않는다. 빈 컨텍스트 비교는 제품/성분을 새로 만들기 쉽다.
@@ -2267,7 +2270,8 @@ async def _resolve_conversation_response(
             ingredients=[],
             products=[],
             response_text=text,
-            model_used=settings.gpu_model,
+            model_used="deterministic",
+            response_mode="history_unavailable" if dependency_health.degraded("redis") else "history_missing",
         )
     return None
 
