@@ -1107,7 +1107,8 @@
         <button id="dp-close">닫기</button>
       </div>`;
     chat.prepend(panel);
-    panel.scrollIntoView({ block: 'nearest' });
+    // 패널은 대화 맨 위에 붙으므로, 아래로 스크롤된 상태에서도 보이게 맨 위로 이동한다.
+    chat.scrollTo({ top: 0, behavior: 'smooth' });
     const read = wireConsentChoices(panel, 'dp');
     panel.querySelector('#dp-close').addEventListener('click', () => panel.remove());
     panel.querySelector('#dp-save').addEventListener('click', async () => {
