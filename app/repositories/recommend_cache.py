@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 
 from app.clients import llm_health
+from app.clients.dependency_health import REDIS
+from app.clients import dependency_health
 from app.core.config import settings
 from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 
@@ -34,8 +36,16 @@ _client: aioredis.Redis | None = None
 def _get_client() -> aioredis.Redis:
     global _client
     if _client is None:
-        _client = aioredis.from_url(settings.redis_url, decode_responses=True, socket_timeout=3)
+        _client = aioredis.from_url(settings.redis_url, decode_responses=True,
+                                    socket_connect_timeout=settings.redis_connect_timeout_seconds,
+                                    socket_timeout=settings.redis_socket_timeout_seconds)
     return _client
+
+
+def _redis() -> aioredis.Redis:
+    """요청 경로의 Redis 클라이언트. 장애로 차단 중이면 바로 DependencyUnavailableError."""
+    REDIS.check()
+    return _get_client()
 
 
 async def ping() -> None:
@@ -80,8 +90,10 @@ async def get(message: str, gen_prompt_name: str | None) -> dict | None:
     if not settings.recommend_cache_enabled:
         return None
     try:
-        raw = await _get_client().get(_key(message, gen_prompt_name))
+        raw = await _redis().get(_key(message, gen_prompt_name))
+        REDIS.reset()
     except Exception as exc:  # Redis 장애는 본 경로를 막지 않는다
+        REDIS.failed(exc)
         logger.warning("recommend cache get failed: %s", exc)
         return None
     if not raw:
@@ -150,13 +162,15 @@ async def set(message: str, gen_prompt_name: str | None, payload: dict) -> None:
     if not settings.recommend_cache_enabled or payload.get("_profile", {}).get("constraints"):
         return
     # 생성 서버 장애 때의 간단 안내를 저장하면 복구 뒤에도 24시간 같은 안내가 나간다.
-    if payload.get("response_mode") == "llm_unavailable" or llm_health.request_degraded():
+    if (payload.get("response_mode") in ("llm_unavailable", "graph_unavailable")
+            or llm_health.request_degraded() or dependency_health.degraded()):
         return
     try:
-        await _get_client().set(
+        await _redis().set(
             _key(message, gen_prompt_name),
             json.dumps(payload, ensure_ascii=False),
             ex=settings.recommend_cache_ttl_seconds,
         )
     except Exception as exc:
+        REDIS.failed(exc)
         logger.warning("recommend cache set failed: %s", exc)

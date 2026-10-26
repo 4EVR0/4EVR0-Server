@@ -17,6 +17,7 @@ import logging
 import time
 
 from app.core.config import settings
+from app.clients.dependency_health import REDIS
 from app.repositories import recommend_cache
 
 logger = logging.getLogger(__name__)
@@ -38,11 +39,12 @@ async def save_active(session_id: str, state: dict) -> None:
     if not settings.conversation_enabled or not session_id:
         return
     try:
-        await recommend_cache._get_client().set(
+        await recommend_cache._redis().set(
             _active_key(session_id), json.dumps(state, ensure_ascii=False),
             ex=settings.conversation_ttl_seconds,
         )
     except Exception as exc:  # noqa: BLE001 — conversation is best-effort
+        REDIS.failed(exc)
         logger.warning("conversation state save failed (session=%s): %s", session_id, exc)
 
 
@@ -50,13 +52,14 @@ async def load_active(session_id: str) -> dict | None:
     if not settings.conversation_enabled or not session_id:
         return None
     try:
-        raw = await recommend_cache._get_client().get(_active_key(session_id))
+        raw = await recommend_cache._redis().get(_active_key(session_id))
         state = json.loads(raw) if raw else None
         return state if isinstance(state, dict) else None
     except (ValueError, TypeError) as exc:
         logger.warning("conversation state decode failed (session=%s): %s", session_id, exc)
         return None
     except Exception as exc:  # noqa: BLE001
+        REDIS.failed(exc)
         logger.warning("conversation state load failed (session=%s): %s", session_id, exc)
         return None
 
@@ -82,13 +85,14 @@ async def append_turn(
         "ts": time.time(),
     }
     try:
-        client = recommend_cache._get_client()
+        client = recommend_cache._redis()
         key = _key(session_id)
         await client.rpush(key, json.dumps(entry, ensure_ascii=False))
         # 최근 N턴만 유지 + TTL 갱신
         await client.ltrim(key, -settings.conversation_max_turns, -1)
         await client.expire(key, settings.conversation_ttl_seconds)
     except Exception as exc:  # noqa: BLE001 — 이력은 부가기능
+        REDIS.failed(exc)
         logger.warning("conversation append failed (session=%s): %s", session_id, exc)
 
 
@@ -98,7 +102,7 @@ async def load_recent(session_id: str, limit: int | None = None) -> list[dict]:
         return []
     n = limit or settings.conversation_max_turns
     try:
-        client = recommend_cache._get_client()
+        client = recommend_cache._redis()
         raw = await client.lrange(_key(session_id), -n, -1)
         out = []
         for item in raw:
@@ -108,6 +112,7 @@ async def load_recent(session_id: str, limit: int | None = None) -> list[dict]:
                 continue
         return out
     except Exception as exc:  # noqa: BLE001
+        REDIS.failed(exc)
         logger.warning("conversation load failed (session=%s): %s", session_id, exc)
         return []
 
@@ -117,6 +122,7 @@ async def clear(session_id: str) -> None:
     if not session_id:
         return
     try:
-        await recommend_cache._get_client().delete(_key(session_id), _active_key(session_id))
+        await recommend_cache._redis().delete(_key(session_id), _active_key(session_id))
     except Exception as exc:  # noqa: BLE001
+        REDIS.failed(exc)
         logger.warning("conversation clear failed (session=%s): %s", session_id, exc)

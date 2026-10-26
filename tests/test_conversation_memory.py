@@ -225,7 +225,7 @@ class ConversationTransportParityTest(unittest.IsolatedAsyncioTestCase):
             recommend_service.conversation_store,
             "load_recent",
             mock.AsyncMock(return_value=[]),
-        ):
+        ), mock.patch.object(recommend_service.conversation_store, "load_active", mock.AsyncMock(return_value=None)):
             response = await recommend_service._resolve_conversation_response(
                 "expired-session", "turn-1", "이 중에서 비교해줘"
             )

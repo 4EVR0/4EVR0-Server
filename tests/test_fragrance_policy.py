@@ -86,6 +86,10 @@ class FragranceFlowTest(unittest.IsolatedAsyncioTestCase):
               patch.object(service, "query_ingredients_by_effects", new=AsyncMock(return_value=[])),
               patch.object(service, "query_products_by_ingredients", new=AsyncMock(return_value=[product()])),
               patch.object(service, "query_product_fragrance_evidence", new=AsyncMock(return_value={})) as lookup,
+              # 그래프 부가 조회도 막는다(테스트 환경에는 Neo4j가 없어 연결 장애로 판단되지 않게).
+              patch.object(service, "query_product_ingredient_inventory", new=AsyncMock(return_value={})),
+              patch.object(service, "query_product_concern_evidence", new=AsyncMock(return_value=[])),
+              patch.object(service, "query_ingredient_vocabulary", new=AsyncMock(return_value=frozenset())),
               patch.object(service, "get_async_llm_client", side_effect=AssertionError("unexpected generation"))):
             result = await service.recommend("s", "무향료 토너 추천")
             frames = [frame async for frame in service.recommend_stream("s", "무향료 토너 추천")]
