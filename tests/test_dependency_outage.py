@@ -95,3 +95,13 @@ def test_followup_without_products_during_graph_outage_says_unavailable():
         response = asyncio.run(service._handle_followup(
             "s", "t", "닥터지 레드 블레미쉬 수딩크림 어때?", [{"user": "건조해요", "products": []}], None))
     assert response.response_mode == "graph_unavailable"
+
+
+def test_query_errors_do_not_open_breaker():
+    import neo4j.exceptions
+    dependency_health.start_request()
+    NEO4J.failed(neo4j.exceptions.CypherSyntaxError("bad query"))
+    NEO4J.failed(ValueError("bad row"))
+    assert not NEO4J.is_open() and not dependency_health.degraded("neo4j")
+    NEO4J.failed(neo4j.exceptions.ServiceUnavailable("down"))
+    assert NEO4J.is_open() and dependency_health.degraded("neo4j")

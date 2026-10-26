@@ -5,6 +5,7 @@
 요청마다 어떤 의존성이 실패했는지 기록해, 그 요청의 결과를 캐시하지 않거나 장애 안내로 바꾼다.
 """
 
+import asyncio
 import time
 from contextvars import ContextVar
 
@@ -36,6 +37,20 @@ def degraded(name: str | None = None) -> bool:
     return bool(names) if name is None else name in names
 
 
+def _is_connectivity_error(exc: BaseException) -> bool:
+    """접속 실패·시간 초과만 장애로 본다. 쿼리 오류(문법·데이터) 하나로 의존성 전체를 막지 않는다."""
+    import asyncpg
+    import neo4j.exceptions
+    import redis.exceptions
+
+    connectivity = (OSError, TimeoutError, asyncio.TimeoutError,
+                    neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.SessionExpired,
+                    redis.exceptions.ConnectionError, redis.exceptions.TimeoutError,
+                    asyncpg.exceptions.CannotConnectNowError, asyncpg.exceptions.ConnectionDoesNotExistError,
+                    asyncpg.exceptions.TooManyConnectionsError)
+    return isinstance(exc, connectivity)
+
+
 def _mark(name: str) -> None:
     _degraded.set(_degraded.get() | {name})
 
@@ -56,10 +71,16 @@ class Breaker:
             raise DependencyUnavailableError(f"{self.name} unavailable (circuit open)")
 
     def failed(self, exc: BaseException) -> None:
-        """호출 실패를 기록한다. 차단 중이라 건너뛴 경우는 쿨다운을 늘리지 않는다."""
-        _mark(self.name)
+        """호출 실패를 기록한다. 차단 중이라 건너뛴 경우는 쿨다운을 늘리지 않는다.
+
+        연결 장애가 아닌 오류(쿼리 오류 등)는 차단도, 요청 장애 표시도 하지 않는다(기존 동작 유지).
+        """
         if isinstance(exc, DependencyUnavailableError):
+            _mark(self.name)
             return
+        if not _is_connectivity_error(exc):
+            return
+        _mark(self.name)
         self._until = time.monotonic() + settings.dependency_down_cooldown_seconds
         dependency_unavailable_total.labels(dependency=self.name, reason="failure").inc()
 
