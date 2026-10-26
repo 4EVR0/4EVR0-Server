@@ -19,7 +19,12 @@ async def _resolve_session(body: RecommendRequest, request: Request) -> str:
     session_id = cookie_id or body.session_id
     if not session_id:
         raise HTTPException(status_code=401, detail="session required")
-    if not await conversation_repository.session_exists(session_id):
+    try:
+        exists = await conversation_repository.session_exists(session_id)
+    except Exception as exc:
+        # 세션 저장소(PostgreSQL) 장애: 오래 기다리거나 500으로 끝내지 않고 안내한다.
+        raise HTTPException(status_code=503, detail="지금은 대화를 이어갈 수 없어요. 잠시 후 다시 시도해 주세요.") from exc
+    if not exists:
         raise HTTPException(status_code=404, detail="session not found")
     return session_id
 

@@ -1,11 +1,15 @@
 """Anonymous, same-browser chat sessions; conversation contents live in Redis."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.repositories import conversation_repository, conversation_store
 from app.services.recommend_service import _reconstruct_products
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 COOKIE_NAME = "4evr0_session"
@@ -48,11 +52,23 @@ def set_session_cookie(response: Response, request: Request, session_id: str) ->
     response.headers["Cache-Control"] = "no-store"
 
 
+SESSION_UNAVAILABLE = "지금은 대화를 시작할 수 없어요. 잠시 후 다시 시도해 주세요."
+
+
+async def _create_session_or_503() -> str:
+    """세션 저장소(PostgreSQL) 장애면 기다리지 않고 503으로 안내한다."""
+    try:
+        await conversation_repository.ensure_table()
+        return await conversation_repository.create_session()
+    except Exception as exc:
+        logger.warning("session create failed: %s", exc)
+        raise HTTPException(status_code=503, detail=SESSION_UNAVAILABLE) from exc
+
+
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(request: Request, response: Response):
     _check_origin(request)
-    await conversation_repository.ensure_table()
-    session_id = await conversation_repository.create_session()
+    session_id = await _create_session_or_503()
     set_session_cookie(response, request, session_id)
     return SessionResponse(session_id=session_id)
 
@@ -61,8 +77,7 @@ async def create_session(request: Request, response: Response):
 async def create_browser_session(request: Request, response: Response):
     """Create a cookie session without exposing its bearer token to JavaScript."""
     _check_origin(request)
-    await conversation_repository.ensure_table()
-    session_id = await conversation_repository.create_session()
+    session_id = await _create_session_or_503()
     set_session_cookie(response, request, session_id)
     response.status_code = 201
     return response

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.clients.llm_factory import get_async_llm_client
 from app.clients.llm_fallback import extract_with_fallback
-from app.clients import llm_health
+from app.clients import dependency_health, llm_health
 from app.clients.llm_health import LLMUnavailableError
 from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import (
@@ -1288,7 +1288,8 @@ def _has_followup_cue(message: str) -> bool:
 
 def _has_missing_history_cue(message: str) -> bool:
     """Only an explicit prior reply/set can justify the expired-history answer."""
-    return bool(_PRIOR_REPLY_REF.search(message) or _DEICTIC_SET_REF.search(message))
+    return bool(_PRIOR_REPLY_REF.search(message) or _DEICTIC_SET_REF.search(message)
+                or re.search(r"(?<!\d)[1-9]\s*번\s*(?:째\s*)?제품|(?:첫|두|세|네|다섯|여섯)\s*번째", message))
 
 
 def _is_product_comparison_request(message: str) -> bool:
@@ -2256,7 +2257,8 @@ async def _resolve_conversation_response(
         return await _handle_followup(session_id, turn_id, message, history, active)
     if not history and not active and _has_missing_history_cue(message):
         metrics.recommend_requests_total.labels(status="ok").inc()
-        text = ("이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
+        text = (HISTORY_UNAVAILABLE_TEXT if dependency_health.degraded("redis") else
+                "이전 추천 내역을 찾지 못했어요. 세션이 새로 시작됐을 수 있어요.\n"
                 "어떤 피부 고민이 있으신지 말씀해 주시면 처음부터 추천해 드릴게요. "
                 "(예: \"여드름이랑 모공이 고민이에요\")")
         return RecommendResponse(
@@ -2273,6 +2275,22 @@ async def _resolve_conversation_response(
 # 생성 서버(GPU)에 연결되지 않을 때 서버가 붙이는 안내. 이때 본문은 확인된 성분 근거로만 만든다.
 LLM_UNAVAILABLE_NOTE = ("지금은 답변 생성 서버에 연결되지 않아 확인된 성분 근거로만 간단히 안내해요. "
                         "잠시 후 다시 물어보시면 자세히 설명해 드릴게요.")
+
+
+# 성분·제품 그래프(Neo4j)에 연결되지 않을 때. "조건에 맞는 제품이 없다"로 잘못 안내하지 않는다.
+GRAPH_UNAVAILABLE_TEXT = "지금은 성분·제품 정보를 불러올 수 없어요. 잠시 후 다시 시도해 주세요."
+# 대화 이력(Redis)을 읽지 못했을 때 번호·지시 표현 질문에 쓰는 안내.
+HISTORY_UNAVAILABLE_TEXT = ("지금은 이전 대화를 불러올 수 없어요. 잠시 후 다시 시도하시거나, "
+                            "피부 고민을 다시 말씀해 주시면 처음부터 추천해 드릴게요.")
+
+
+async def _graph_unavailable_response(session_id: str, turn_id: str, message: str) -> RecommendResponse:
+    metrics.recommend_output_guard_total.labels(kind="graph_unavailable").inc()
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    await _store_turn(session_id, message, [], GRAPH_UNAVAILABLE_TEXT)
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=[], products=[],
+                             response_text=GRAPH_UNAVAILABLE_TEXT, model_used="deterministic",
+                             response_mode="graph_unavailable")
 
 
 # ── 턴 결과 기록(버전 추적) ─────────────────────────────────────────────────
@@ -2312,6 +2330,7 @@ async def recommend(session_id: str, message: str, gen_prompt_name: str | None =
     started = time.perf_counter()
     _CACHE_HIT.set(None)
     llm_health.start_request()
+    dependency_health.start_request()
     try:
         response = await _recommend(session_id, message, gen_prompt_name)
     except Exception:
@@ -2446,6 +2465,11 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                 )
                 for row in raw_products
             ]
+
+            # 그래프 장애로 제품을 못 찾았으면 "조건에 맞는 제품이 없다"가 아니라 장애로 안내한다.
+            # 제품은 찾았고 부가 조회만 실패했으면 그대로 답한다(이 요청은 캐시하지 않는다).
+            if dependency_health.degraded("neo4j") and not products:
+                return await _graph_unavailable_response(session_id, turn_id, message)
 
             # 3) 응답 생성. 제품 0건은 LLM을 거치지 않아 제품명 날조를 차단.
             _t = time.perf_counter()
@@ -2769,6 +2793,7 @@ async def recommend_stream(session_id: str, message: str, gen_prompt_name: str |
     started = time.perf_counter()
     _CACHE_HIT.set(None)
     llm_health.start_request()
+    dependency_health.start_request()
     turn_id, mode, products, status = None, None, [], "cancelled"
     try:
         async for frame in _recommend_stream(session_id, message, gen_prompt_name):
@@ -2944,6 +2969,14 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
             await _attach_ingredient_explanations(products, profile.concerns, inventory)
             await _attach_concern_summaries(products, profile.concerns)
             await _attach_fragrance_allergens(products, inventory)
+
+            if dependency_health.degraded("neo4j") and not products:
+                unavailable = await _graph_unavailable_response(session_id, turn_id, message)
+                yield _sse("meta", {"session_id": session_id, "turn_id": turn_id, "ingredients": [],
+                                    "products": [], "model_used": "deterministic"})
+                yield _sse("delta", {"text": unavailable.response_text})
+                yield _sse("done", {"finish_reason": "stop", "response_mode": unavailable.response_mode})
+                return
 
             # 구조 데이터는 생성 전에 확보되므로 즉시 전송 → 사용자는 빈 화면 대신 성분·제품을 바로 본다.
             active_state = _active_recommendation(

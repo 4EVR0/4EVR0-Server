@@ -4,6 +4,7 @@ from typing import Any
 
 from neo4j import AsyncGraphDatabase
 
+from app.clients.dependency_health import NEO4J, DependencyUnavailableError
 from app.core.config import settings
 from app.services.fragrance_policy import FRAGRANCE_RATIONALE_EXCLUSIONS
 
@@ -26,8 +27,32 @@ def _get_driver():
         _driver = AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
+            connection_timeout=settings.neo4j_connection_timeout_seconds,
+            connection_acquisition_timeout=settings.neo4j_acquisition_timeout_seconds,
         )
     return _driver
+
+
+class _UnavailableDriver:
+    """차단 중에 쓰는 드라이버 대역. 세션을 열면 바로 DependencyUnavailableError(각 조회의 except가 받는다)."""
+
+    def session(self, *args, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        NEO4J.check()
+        raise DependencyUnavailableError("neo4j unavailable (circuit open)")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+_UNAVAILABLE = _UnavailableDriver()
+
+
+def _graph_driver():
+    """요청 경로의 드라이버. 장애로 차단 중이면 세션을 열 때 바로 실패하는 대역을 돌려준다."""
+    return _UNAVAILABLE if NEO4J.is_open() else _get_driver()
 
 
 async def ping() -> None:
@@ -68,7 +93,7 @@ async def query_products_by_ingredients(
     if not ingredient_scores:
         return []
 
-    driver = _get_driver()
+    driver = _graph_driver()
     params: dict[str, Any] = {
         "ingredient_scores": ingredient_scores,
         "appropriate_categories": appropriate_categories,
@@ -144,6 +169,7 @@ async def query_products_by_ingredients(
         return rows
     except Exception as exc:
         logger.warning("Neo4j product query failed: %s", exc)
+        NEO4J.failed(exc)
         return []
 
 
@@ -165,7 +191,7 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
     """
     try:
         start = time.perf_counter()
-        driver = _get_driver()
+        driver = _graph_driver()
         async with driver.session() as session:
             result = await session.run(query, product_ids=list(dict.fromkeys(product_ids)))
             rows = [dict(record) async for record in result]
@@ -174,6 +200,7 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
         return {row["product_id"]: row["ingredients"] for row in rows}
     except Exception as exc:
         logger.warning("Neo4j product ingredient inventory query failed: %s", exc)
+        NEO4J.failed(exc)
         return {}
 
 
@@ -222,7 +249,7 @@ async def query_product_concern_evidence(product_ids: list[str], effect_codes: l
               "by_concern": bool(concern_codes), "concerns": list(concern_codes or [])}
     try:
         start = time.perf_counter()
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(query, **params)
             rows = [dict(record) async for record in result]
             if concern_codes:
@@ -236,6 +263,7 @@ async def query_product_concern_evidence(product_ids: list[str], effect_codes: l
         return out
     except Exception as exc:
         logger.warning("Neo4j product concern evidence query failed: %s", exc)
+        NEO4J.failed(exc)
         return {}
 
 
@@ -245,7 +273,7 @@ async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, 
         return {}
     try:
         start = time.perf_counter()
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(
                 "MATCH (p:Product) WHERE p.product_id IN $ids "
                 "RETURN p.product_id AS product_id, p.fragrance_evidence AS evidence",
@@ -257,6 +285,7 @@ async def query_product_fragrance_evidence(product_ids: list[str]) -> dict[str, 
         return rows
     except Exception as exc:
         logger.warning("Neo4j fragrance evidence query failed: %s", exc)
+        NEO4J.failed(exc)
         return {}
 
 
@@ -336,11 +365,12 @@ async def query_supported_claims(names: list[str]) -> dict[str, list[str]]:
     if not names:
         return {}
     try:
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(_SUPPORTED_CLAIMS_QUERY, names=list(names))
             return {record.get("name"): [c for c in record.get("claims") or [] if c] async for record in result}
     except Exception as exc:
         logger.warning("Neo4j supported claims query failed: %s", exc)
+        NEO4J.failed(exc)
         return {}
 
 
@@ -389,7 +419,7 @@ async def query_ingredients_by_effects(
     if not effects:
         return []
 
-    driver = _get_driver()
+    driver = _graph_driver()
     # head(collect()) 패턴으로 성분당 최강 근거 1건만 남김 → LIMIT = distinct 성분 수 보장
     query = """
     UNWIND $effects AS effect_code
@@ -452,6 +482,7 @@ async def query_ingredients_by_effects(
         return rows
     except Exception as exc:
         logger.warning("Neo4j query failed: %s", exc)
+        NEO4J.failed(exc)
         return []
 
 
@@ -463,7 +494,7 @@ async def query_cautioned_ingredients(concern_codes: list[str]) -> set[str]:
     """
     if not concern_codes:
         return set()
-    driver = _get_driver()
+    driver = _graph_driver()
     query = """
     MATCH (i:Ingredient)-[:CAUTION]->(c:Concern)
     WHERE c.concern_code IN $codes
@@ -476,6 +507,7 @@ async def query_cautioned_ingredients(concern_codes: list[str]) -> set[str]:
             return set(rec["names"]) if rec and rec["names"] else set()
     except Exception as exc:
         logger.warning("Neo4j caution query failed: %s", exc)
+        NEO4J.failed(exc)
         return set()
 
 
@@ -484,7 +516,7 @@ async def query_ingredient_kor_names(inci_names: list[str]) -> dict[str, str]:
     미존재/장애 시 빈 맵(호출측이 INCI만 표시하도록 폴백)."""
     if not inci_names:
         return {}
-    driver = _get_driver()
+    driver = _graph_driver()
     query = """
     UNWIND $names AS nm
     MATCH (i:Ingredient {inci_name: nm})
@@ -497,6 +529,7 @@ async def query_ingredient_kor_names(inci_names: list[str]) -> dict[str, str]:
             return {r["inci"]: r["kor"] async for r in result}
     except Exception as exc:
         logger.warning("Neo4j kor_name query failed: %s", exc)
+        NEO4J.failed(exc)
         return {}
 
 
@@ -505,7 +538,7 @@ async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
     if not effects:
         return []
 
-    driver = _get_driver()
+    driver = _graph_driver()
     query = """
     UNWIND $effects AS effect_code
     MATCH (e:Effect {effect_code: effect_code})<-[r:AFFECTS]-(i:Ingredient)<-[:CONTAINS]-(prod:Product)
@@ -542,6 +575,7 @@ async def query_path_by_effects(effects: list[str]) -> list[dict[str, Any]]:
         return paths
     except Exception as exc:
         logger.warning("Neo4j path query failed: %s", exc)
+        NEO4J.failed(exc)
         return []
 
 
@@ -567,12 +601,13 @@ async def query_products_by_name_tokens(tokens: list[str], limit: int = 21) -> l
         return []
     try:
         start = time.perf_counter()
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(_PRODUCTS_BY_NAME_QUERY, tokens=list(tokens), limit=int(limit))
             rows = [dict(record) async for record in result]
         _log_query("query_products_by_name_tokens", {"tokens": tokens}, (time.perf_counter() - start) * 1000, len(rows))
     except Exception as exc:
         logger.warning("Neo4j product name query failed: %s", exc)
+        NEO4J.failed(exc)
         return []
     seen: set[str] = set()
     unique = []
@@ -609,7 +644,7 @@ async def query_product_ingredient_facts(product_id: str) -> list[dict[str, Any]
     """제품의 확인된 성분과 성분별 근거. 조회 실패는 None(성분이 없는 것과 구분)."""
     try:
         start = time.perf_counter()
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(_PRODUCT_INGREDIENT_FACTS_QUERY, product_id=product_id)
             rows = [dict(record) async for record in result]
         _log_query("query_product_ingredient_facts", {"product_id": product_id},
@@ -617,13 +652,14 @@ async def query_product_ingredient_facts(product_id: str) -> list[dict[str, Any]
         return rows
     except Exception as exc:
         logger.warning("Neo4j product ingredient facts query failed: %s", exc)
+        NEO4J.failed(exc)
         return None
 
 
 async def query_graph_version() -> dict[str, Any]:
     """그래프 버전 지문: 마지막 제품 증분 적재(SyncLog)와 검토 근거 규모. 조회 실패는 status=unknown."""
     try:
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             sync = await (await session.run(
                 "MATCH (s:SyncLog) RETURN s.batch_job AS batch_job, toString(s.synced_at) AS synced_at "
                 "ORDER BY s.synced_at DESC LIMIT 1")).single()
@@ -638,6 +674,7 @@ async def query_graph_version() -> dict[str, Any]:
                 "reviewed_ingredients": counts["reviewed"]}
     except Exception as exc:
         logger.warning("Neo4j graph version query failed: %s", exc)
+        NEO4J.failed(exc)
         return {"status": "unknown"}
 
 
@@ -650,7 +687,7 @@ async def query_ingredient_vocabulary(ttl_seconds: float = 3600.0) -> frozenset[
     if _VOCAB_CACHE["names"] and now - _VOCAB_CACHE["at"] < ttl_seconds:
         return _VOCAB_CACHE["names"]
     try:
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(
                 "MATCH (i:Ingredient) UNWIND [i.inci_name, i.kor_name] AS n "
                 "WITH n WHERE n IS NOT NULL AND n <> '' "
@@ -658,6 +695,7 @@ async def query_ingredient_vocabulary(ttl_seconds: float = 3600.0) -> frozenset[
             names = frozenset([record["name"] async for record in result])
     except Exception as exc:
         logger.warning("Neo4j ingredient vocabulary query failed: %s", exc)
+        NEO4J.failed(exc)
         return _VOCAB_CACHE["names"]
     _VOCAB_CACHE.update(at=now, names=names)
     return names
@@ -672,13 +710,14 @@ async def query_product_brands(ttl_seconds: float = 3600.0) -> frozenset[str]:
     if _BRANDS_CACHE["brands"] and now - _BRANDS_CACHE["at"] < ttl_seconds:
         return _BRANDS_CACHE["brands"]
     try:
-        async with _get_driver().session() as session:
+        async with _graph_driver().session() as session:
             result = await session.run(
                 "MATCH (p:Product) WHERE p.brand IS NOT NULL AND p.brand <> '' "
                 "RETURN DISTINCT toLower(replace(replace(p.brand, ' ', ''), '-', '')) AS brand")
             brands = frozenset([record["brand"] async for record in result])
     except Exception as exc:
         logger.warning("Neo4j brand query failed: %s", exc)
+        NEO4J.failed(exc)
         return _BRANDS_CACHE["brands"]
     _BRANDS_CACHE.update(at=now, brands=brands)
     return brands

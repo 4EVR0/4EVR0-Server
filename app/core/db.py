@@ -9,6 +9,7 @@ import asyncio
 
 import asyncpg
 
+from app.clients.dependency_health import POSTGRES
 from app.core.config import settings
 
 _pool: asyncpg.Pool | None = None
@@ -21,11 +22,18 @@ async def get_pool() -> asyncpg.Pool:
     if _pool is None:
         async with _pool_lock:
             if _pool is None:
-                _pool = await asyncpg.create_pool(
-                    settings.postgres_dsn,
-                    min_size=settings.pg_pool_min_size,
-                    max_size=settings.pg_pool_max_size,
-                )
+                POSTGRES.check()
+                try:
+                    _pool = await asyncpg.create_pool(
+                        settings.postgres_dsn,
+                        min_size=settings.pg_pool_min_size,
+                        max_size=settings.pg_pool_max_size,
+                        timeout=settings.pg_connect_timeout_seconds,
+                        command_timeout=settings.pg_command_timeout_seconds,
+                    )
+                except Exception as exc:
+                    POSTGRES.failed(exc)
+                    raise
     return _pool
 
 

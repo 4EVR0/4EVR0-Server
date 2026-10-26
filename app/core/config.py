@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     gpu_max_retries: int = 1
     # 연결 장애 뒤 LLM 호출을 건너뛰는 시간(초). 지나면 다음 요청이 다시 시도한다.
     llm_down_cooldown_seconds: float = 30.0
+    # 저장소 의존성 연결 제한(초). 응답 없는 서버를 오래 기다리지 않는다.
+    redis_connect_timeout_seconds: float = 0.5
+    redis_socket_timeout_seconds: float = 1.0
+    neo4j_connection_timeout_seconds: float = 3.0
+    neo4j_acquisition_timeout_seconds: float = 5.0
+    pg_connect_timeout_seconds: float = 3.0
+    pg_command_timeout_seconds: float = 5.0
+    # 저장소 의존성 장애 뒤 호출을 건너뛰는 시간(초).
+    dependency_down_cooldown_seconds: float = 30.0
     # 서빙 엔드포인트 인증 토큰. 자체 vLLM은 인증이 없어 기본 "EMPTY"면 충분하지만,
     # 프록시(예: vast.ai Instance Portal의 Caddy)가 앞단에 붙으면 이 값이 필요하다.
     # Authorization: Bearer <값> 으로 전달된다(OpenAI SDK 기본 동작).
