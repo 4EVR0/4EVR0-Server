@@ -7,6 +7,7 @@ from app.clients.neo4j_client import query_path_by_effects
 from app.repositories import conversation_repository
 from app.api.sessions import COOKIE_NAME
 from app.schemas.recommend import PathResponse, PathResult, PathStep, RecommendRequest, RecommendResponse
+from app.services import data_collection as collection
 from app.services.recommend_service import recommend, recommend_stream
 
 router = APIRouter(prefix="/api/v1/recommend", tags=["recommend"])
@@ -41,10 +42,30 @@ async def _browser_stream(stream):
             yield frame
 
 
+async def _collect_stream(stream, session_id: str, subject_id: str | None, message: str):
+    """스트리밍 프레임을 그대로 흘리며, done까지 받은 턴만 수집 대상으로 넘긴다(끊긴 답변은 넘기지 않는다)."""
+    turn: dict = {}
+    texts: list[str] = []
+    async for frame in stream:
+        event = frame.split("\n", 1)[0]
+        if event in ("event: meta", "event: delta", "event: done"):
+            data = json.loads(frame.split("data: ", 1)[1])
+            if event == "event: meta":
+                turn.update(turn_id=data.get("turn_id"), products=data.get("products") or [],
+                            ingredients=data.get("ingredients") or [])
+            elif event == "event: delta":
+                texts.append(data.get("text") or "")
+            else:
+                turn.update(response_mode=data.get("response_mode"), response_text="".join(texts))
+                collection.after_turn(session_id, subject_id, message, "stream", turn)
+        yield frame
+
+
 @router.post("", response_model=RecommendResponse)
 async def recommend_endpoint(body: RecommendRequest, request: Request):
     session_id = await _resolve_session(body, request)
     result = await recommend(session_id, body.message)
+    collection.after_turn(session_id, collection.subject_from(request), body.message, "batch", result.model_dump())
     if request.cookies.get(COOKIE_NAME):
         return JSONResponse(result.model_dump(exclude={"session_id"}), headers={"Cache-Control": "no-store"})
     return result
@@ -54,7 +75,8 @@ async def recommend_endpoint(body: RecommendRequest, request: Request):
 async def recommend_stream_endpoint(body: RecommendRequest, request: Request):
     """SSE 추천 — meta(구조 데이터 즉시) → delta(검증된 본문) → done."""
     session_id = await _resolve_session(body, request)
-    stream = recommend_stream(session_id, body.message)
+    stream = _collect_stream(recommend_stream(session_id, body.message), session_id,
+                             collection.subject_from(request), body.message)
     if request.cookies.get(COOKIE_NAME):
         stream = _browser_stream(stream)
     return StreamingResponse(

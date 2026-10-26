@@ -405,6 +405,21 @@
     .ingredient-claim { text-align: left; justify-self: start; }
     .dashboard-link, #model-badge, .status-pill { font-size: 11px; padding: 7px 9px; }
   }
+  /* 동의·피드백·내 데이터 관리 */
+  .consent-card, .data-panel { border: 1px solid var(--line); border-radius: 14px; background: #fbfdf6; padding: 14px 16px; margin: 0 0 14px; font-size: 13px; color: #33402b; }
+  .consent-card p, .data-panel p { margin: 0 0 8px; line-height: 1.55; }
+  .consent-card label, .data-panel label { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; line-height: 1.5; cursor: pointer; }
+  .consent-card label.disabled, .data-panel label.disabled { opacity: .5; cursor: default; }
+  .consent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .consent-actions button { border: 1px solid var(--line); border-radius: 10px; background: white; padding: 7px 11px; cursor: pointer; font-size: 12px; }
+  .consent-actions button.primary { background: #4d7c0f; color: white; border-color: #4d7c0f; }
+  .consent-actions button.danger { color: #a33; border-color: #e7c4c4; }
+  .muted-note { color: #6b7563; font-size: 12px; }
+  .feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: #5c6754; }
+  .feedback button { border: 1px solid var(--line); border-radius: 999px; background: white; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .feedback button.on { background: #f0f8dc; border-color: #b9d58a; }
+  .feedback .issues { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+  .feedback textarea { width: 100%; min-height: 54px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: inherit; }
 </style>
 </head>
 <body>
@@ -436,7 +451,7 @@
           <h2>Ingredient Concierge</h2>
           <p>피부 고민, 사용 중인 제품, 원하는 제형을 자연어로 적어보세요.</p>
         </div>
-        <div class="chat-actions"><button class="new-chat" id="new-chat" disabled>새 대화</button><div class="sparkle">✨</div></div>
+        <div class="chat-actions"><button class="new-chat" id="my-data" title="동의 설정과 저장된 데이터 삭제">내 데이터 관리</button><button class="new-chat" id="new-chat" disabled>새 대화</button><div class="sparkle">✨</div></div>
       </div>
 
       <div id="chat">
@@ -525,6 +540,7 @@
       chat.innerHTML = initialChatHtml;
       msgEl.value = '';
       await createSession();
+      if (consent && !consent.decided) showConsentCard();
       sessionReady = true;
       msgEl.disabled = false;
       sendBtn.disabled = false;
@@ -736,7 +752,7 @@
   }
 
   // replaceEl 을 주면 그 자리에 갈아끼운다(스트리밍 중 버블 → 최종 버블).
-  function appendAIBubble(responseText, ingredients, products, modelUsed, replaceEl) {
+  function appendAIBubble(responseText, ingredients, products, modelUsed, replaceEl, turnId) {
     if (modelUsed) { badge.textContent = modelUsed; badge.style.display = 'inline-flex'; }
     const hasProducts = !!(products && products.length);
     const { intro, productSection } = splitResponse(responseText);
@@ -810,6 +826,7 @@
         <div class="answer-body">${renderAnswerBody(bodyText, ingredients)}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
+    if (turnId) row.querySelector('.bubble.ai').appendChild(feedbackBar(turnId));
     if (replaceEl) replaceEl.replaceWith(row); else chat.appendChild(row);
     scrollBottom();
     return row;
@@ -888,9 +905,11 @@
       });
     };
 
-    const finalize = () => {
+    // completed: done까지 받은 턴만 의견을 받는다(끊긴 답변은 완료된 답변이 아니다).
+    const finalize = (completed) => {
       removeTyping();
-      if (row) appendAIBubble(acc, meta.ingredients, meta.products, meta.model_used, row);
+      if (row) appendAIBubble(acc, meta.ingredients, meta.products, meta.model_used, row,
+                              completed ? meta.turn_id : null);
     };
 
     try {
@@ -913,6 +932,7 @@
               ingredients: payload.ingredients || [],
               products:    payload.products || [],
               model_used:  payload.model_used,
+              turn_id:     payload.turn_id,
             };
             removeTyping();
             // 생성이 시작되기도 전에 카드가 뜬다 — 체감 지연을 줄이는 실체.
@@ -928,7 +948,7 @@
             appendError(payload.message || '일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요.');
             return;
           } else if (evt === 'done') {
-            finalize();
+            finalize(true);
             return;
           }
         }
@@ -965,7 +985,7 @@
       return;
     }
     const data = await res.json();
-    appendAIBubble(data.response_text, data.ingredients, data.products, data.model_used);
+    appendAIBubble(data.response_text, data.ingredients, data.products, data.model_used, null, data.turn_id);
   }
 
   async function send() {
@@ -1009,6 +1029,141 @@
 
   sendBtn.addEventListener('click', send);
   newChatBtn.addEventListener('click', startNewChat);
+
+  // ── 동의·피드백·내 데이터 관리 ─────────────────────────────────────────
+  let consent = null;  // GET /api/v1/consents 결과
+
+  async function loadConsent() {
+    try {
+      const res = await fetch('/api/v1/consents', { cache: 'no-store' });
+      if (!res.ok) return;
+      consent = await res.json();
+      if (!consent.decided) showConsentCard();
+    } catch (e) { /* 동의 정보를 못 불러와도 채팅은 계속 */ }
+  }
+
+  function consentChoicesHtml(prefix) {
+    const t = consent.texts;
+    return `
+      <label><input type="checkbox" id="${prefix}-quality" ${consent.quality_storage ? 'checked' : ''}> <span>${escHtml(t.quality_storage)}</span></label>
+      <label id="${prefix}-training-label" class="${consent.quality_storage ? '' : 'disabled'}"><input type="checkbox" id="${prefix}-training" ${consent.training_use ? 'checked' : ''} ${consent.quality_storage ? '' : 'disabled'}> <span>${escHtml(t.training_use)}</span></label>`;
+  }
+
+  function wireConsentChoices(root, prefix) {
+    const q = root.querySelector(`#${prefix}-quality`), tr = root.querySelector(`#${prefix}-training`);
+    q.addEventListener('change', () => {
+      tr.disabled = !q.checked;
+      if (!q.checked) tr.checked = false;
+      root.querySelector(`#${prefix}-training-label`).classList.toggle('disabled', !q.checked);
+    });
+    return () => ({ quality_storage: q.checked, training_use: q.checked && tr.checked });
+  }
+
+  async function saveConsent(choice) {
+    const res = await fetch('/api/v1/consents', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(choice),
+    });
+    if (!res.ok) throw new Error('consent save failed');
+    consent = { ...consent, ...choice, decided: true };
+  }
+
+  function showConsentCard() {
+    if (document.getElementById('consent-card')) return;
+    const card = document.createElement('div');
+    card.className = 'consent-card';
+    card.id = 'consent-card';
+    card.innerHTML = `
+      <p>${escHtml(consent.texts.intro)}</p>
+      ${consentChoicesHtml('cc')}
+      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p>
+      <div class="consent-actions">
+        <button class="primary" id="cc-save">선택한 대로 시작</button>
+        <button id="cc-skip">저장하지 않고 시작</button>
+      </div>`;
+    chat.prepend(card);
+    const read = wireConsentChoices(card, 'cc');
+    const done = async (choice) => {
+      try { await saveConsent(choice); card.remove(); }
+      catch (e) { appendError('동의 설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
+    };
+    card.querySelector('#cc-save').addEventListener('click', () => done(read()));
+    card.querySelector('#cc-skip').addEventListener('click', () => done({ quality_storage: false, training_use: false }));
+  }
+
+  function openDataPanel() {
+    if (!consent) { appendError('지금은 설정을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.'); return; }
+    document.getElementById('data-panel')?.remove();
+    const panel = document.createElement('div');
+    panel.className = 'data-panel';
+    panel.id = 'data-panel';
+    panel.innerHTML = `
+      <p><b>내 데이터 관리</b></p>
+      ${consentChoicesHtml('dp')}
+      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p>
+      <p class="muted-note">${escHtml(consent.texts.new_chat_note)}</p>
+      <div class="consent-actions">
+        <button class="primary" id="dp-save">설정 저장</button>
+        <button class="danger" id="dp-delete">저장된 데이터 삭제·동의 철회</button>
+        <button id="dp-close">닫기</button>
+      </div>`;
+    chat.prepend(panel);
+    panel.scrollIntoView({ block: 'nearest' });
+    const read = wireConsentChoices(panel, 'dp');
+    panel.querySelector('#dp-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('#dp-save').addEventListener('click', async () => {
+      try { await saveConsent(read()); document.getElementById('consent-card')?.remove(); panel.remove(); }
+      catch (e) { appendError('설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
+    });
+    panel.querySelector('#dp-delete').addEventListener('click', async () => {
+      if (!confirm('저장된 대화와 의견을 삭제하고 동의를 철회할까요? 화면의 대화는 그대로 남아요.')) return;
+      try {
+        const res = await fetch('/api/v1/my-data', { method: 'DELETE' });
+        if (!res.ok) throw new Error('delete failed');
+        const data = await res.json();
+        consent = { ...consent, quality_storage: false, training_use: false, decided: true };
+        panel.remove();
+        appendError(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback}건을 삭제하고 동의를 철회했어요.`);
+      } catch (e) { appendError('삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
+    });
+  }
+
+  function feedbackBar(turnId) {
+    const bar = document.createElement('div');
+    bar.className = 'feedback';
+    bar.innerHTML = `<span>답변이 도움이 됐나요?</span><button data-v="1" aria-label="도움이 됐어요">👍</button><button data-v="0" aria-label="아쉬워요">👎</button>`;
+    const submit = async (helpful, issues, note) => {
+      try {
+        const res = await fetch('/api/v1/feedback', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ turn_id: turnId, helpful, issues, note: note || null }),
+        });
+        if (!res.ok) throw new Error('feedback failed');
+        bar.innerHTML = '<span>의견 감사해요.</span>';
+      } catch (e) { bar.innerHTML = '<span>의견을 보내지 못했어요. 잠시 후 다시 시도해 주세요.</span>'; }
+    };
+    bar.querySelector('[data-v="1"]').addEventListener('click', () => submit(true, [], null));
+    bar.querySelector('[data-v="0"]').addEventListener('click', (ev) => {
+      ev.currentTarget.classList.add('on');
+      if (bar.querySelector('.issues')) return;
+      const issues = (consent && consent.feedback_issues) || {};
+      const box = document.createElement('div');
+      box.className = 'issues';
+      box.innerHTML = Object.entries(issues).map(([code, label]) => `<button data-issue="${escAttr(code)}">${escHtml(label)}</button>`).join('')
+        + (consent && consent.quality_storage
+            ? `<textarea maxlength="500" placeholder="불편했던 점을 적어 주세요(선택). 이름·연락처는 적지 말아 주세요."></textarea>`
+            : `<span class="muted-note">자세한 메모는 대화 저장에 동의하면 남길 수 있어요.</span>`)
+        + `<button class="send-feedback">보내기</button>`;
+      bar.appendChild(box);
+      box.querySelectorAll('[data-issue]').forEach(b => b.addEventListener('click', () => b.classList.toggle('on')));
+      box.querySelector('.send-feedback').addEventListener('click', () => {
+        const picked = [...box.querySelectorAll('[data-issue].on')].map(b => b.dataset.issue);
+        submit(false, picked, box.querySelector('textarea')?.value.trim());
+      });
+    });
+    return bar;
+  }
+
+  document.getElementById('my-data').addEventListener('click', openDataPanel);
 
   chat.addEventListener('click', e => {
     const prompt = e.target.closest('.prompt-chip');
@@ -1138,6 +1293,7 @@
   }
 
   initSession();
+  loadConsent();
 </script>
 </body>
 </html>
