@@ -37,6 +37,38 @@ prometheus.scrape "node" {
   forward_to = [prometheus.relabel.add_host.receiver]
 }
 
+// 합성 확인: 트래픽과 무관하게 60초마다 /ready 호출(DB·Redis·Neo4j·GPU 연결 검사, 추천 생성은 안 함)
+prometheus.exporter.blackbox "ready" {
+  config = "{ modules: { http_ready: { prober: http, timeout: 10s, http: { valid_status_codes: [200] } } } }"
+
+  target {
+    name    = "ready"
+    address = "http://app:8000/ready"
+    module  = "http_ready"
+  }
+}
+
+// exporter 기본 job(integrations/blackbox/ready)·instance(컨테이너 ID)를 알아보기 쉽게
+discovery.relabel "ready" {
+  targets = prometheus.exporter.blackbox.ready.targets
+  rule {
+    target_label = "job"
+    replacement  = "beta-probe"
+  }
+  rule {
+    target_label = "instance"
+    replacement  = "app:8000/ready"
+  }
+}
+
+prometheus.scrape "ready" {
+  targets         = discovery.relabel.ready.output
+  job_name        = "beta-probe"
+  scrape_interval = "60s"
+  scrape_timeout  = "15s"
+  forward_to      = [prometheus.relabel.add_host.receiver]
+}
+
 // 컨테이너 로그: 이 compose 프로젝트의 app·caddy·redis만
 discovery.docker "beta" {
   host = "unix:///var/run/docker.sock"
