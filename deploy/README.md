@@ -68,7 +68,27 @@ docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml exec -T ap
 ```
 
 외부 HTTPS에서는 상태·문서·메트릭 경로가 404다. 나머지 UI/API는 초대 인증이 필요하다.
-Prometheus/Alloy 연결은 비공개 경로를 마련하는 후속 작업이며 메트릭을 공개하지 않는다.
+
+## 관측 (Alloy → 모니터링 서버)
+
+`alloy`가 내부망에서 앱 `/metrics`와 `node-exporter`를 수집하고, Docker 로그(app·caddy·redis)를
+모니터링 서버로 push한다. 호스트 포트·공개 경로는 열지 않는다.
+
+- EC2가 모니터링 서버와 **같은 tailnet**(`tailb70036`)에 가입돼 있어야 한다.
+- 목적지는 Tailscale **IP**로 적는다. 컨테이너에서 MagicDNS(`*.ts.net`)가 풀린다고 가정하지 않는다.
+- `observe.env.example`을 `observe.env`로 복사하고 `export OBSERVE_ENV_FILE="$PWD/deploy/observe.env"`를 추가한다.
+- Alloy는 `docker.sock`(읽기 전용 마운트)으로 로그를 읽는다. 소켓 API 자체는 제한되지 않으므로
+  Alloy 이미지·설정 변경은 리뷰를 거친다.
+
+연결 확인(EC2 호스트):
+
+```bash
+curl -fsS http://100.105.250.65:9090/-/ready && curl -fsS http://100.105.250.65:3100/ready
+docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml logs --tail 50 alloy
+```
+
+Grafana에서 `up{host="beta-app"}`(job `beta-app`·`beta-node`)과 Loki `{job="beta-app"}`이 보이면 정상이다.
+`-p` 프로젝트 이름을 바꾸면 `COMPOSE_PROJECT_NAME`도 같은 값으로 지정한다(로그 수집 대상 필터).
 SSE는 Caddy의 기본 event-stream 전달을 이용한다. 운영 GPU를 연결한 후 실제 생성 취소·지연도 별도로 검증한다.
 
 ## 데이터, 중단 및 롤백
