@@ -18,7 +18,6 @@ services:
       proxy:
         ipv4_address: ${APP_IP:-172.30.90.3}
       datastore: {}
-      observe: {}
     depends_on:
       redis:
         condition: service_healthy
@@ -64,40 +63,6 @@ services:
       app:
         condition: service_healthy
     logging: *logging
-  # 관측: 호스트 포트 없음. 메트릭·로그는 Alloy가 모니터링 서버로 push
-  node-exporter:
-    image: prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706
-    restart: unless-stopped
-    command: ["--path.rootfs=/host"]
-    pid: host
-    volumes: ["/:/host:ro,rslave"]
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    networks: [observe]
-    logging: *logging
-  alloy:
-    image: grafana/alloy:v1.8.3@sha256:ab04df3936e4d71d31b6f55e0c58a7e749091f59635dd8c2bc731ba1b6c93701
-    restart: unless-stopped
-    env_file:
-      - path: ${OBSERVE_ENV_FILE:?Set OBSERVE_ENV_FILE}
-        format: raw
-    environment:
-      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-4evr0-beta}
-    # 이미지 기본 경로(/var/lib/alloy, alloy:0770)는 cap_drop 상태의 root가 못 들어가서 별도 경로 사용
-    command: [run, /etc/alloy/config.alloy, --storage.path=/alloy-data]
-    volumes:
-      - ./deploy/alloy-beta.alloy:/etc/alloy/config.alloy:ro
-      # 로그 수집용(컨테이너 목록·stdout 조회)
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      # WAL·로그 읽은 위치 보존(재시작 시 중복·유실 방지)
-      - alloy_data:/alloy-data
-    read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    networks: [observe]
-    logging: *logging
 networks:
   proxy:
     ipam:
@@ -105,10 +70,7 @@ networks:
         - subnet: ${PROXY_SUBNET:-172.30.90.0/28}
   datastore:
     internal: true
-  # 외부 송신 필요(Tailscale 경유 모니터링 서버)라 internal 아님
-  observe: {}
 volumes:
   redis_data:
   caddy_data:
   caddy_config:
-  alloy_data:
