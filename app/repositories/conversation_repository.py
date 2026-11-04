@@ -5,6 +5,8 @@ from app.core.db import get_pool
 
 
 async def ensure_table() -> None:
+    if not settings.db_auto_create_schema:
+        return
     pool = await get_pool()
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS sessions (

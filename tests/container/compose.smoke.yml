@@ -33,9 +33,6 @@ services:
     env_file: !reset []
     environment:
       SITE_ADDRESS: beta.localhost
-      BETA_USER: smoke
-      # Public test credential: hiccup. NEVER use outside this isolated fixture.
-      BETA_PASSWORD_HASH: $$2a$$14$$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
     networks:
       proxy:
         aliases: [beta.localhost]

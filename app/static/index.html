@@ -3,479 +3,61 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>4EVR0 · 화장품 성분 추천</title>
-<style>
-  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-  :root {
-    --bg: #f7faf2;
-    --panel: rgba(255, 255, 255, 0.92);
-    --panel-strong: #ffffff;
-    --line: rgba(60, 80, 34, 0.14);
-    --text: #182010;
-    --muted: #6b765e;
-    --soft: #3f4b35;
-    --brand: #9BCE26;
-    --brand-2: #6BAA18;
-    --brand-3: #EEF8D8;
-    --danger: #ef4444;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    min-height: 100vh;
-    height: 100vh;
-    overflow: hidden;
-    color: var(--text);
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    background:
-      radial-gradient(circle at 12% 10%, rgba(155, 206, 38, 0.20), transparent 32%),
-      radial-gradient(circle at 82% 16%, rgba(229, 245, 183, 0.55), transparent 30%),
-      linear-gradient(135deg, #ffffff 0%, #f7faf2 52%, #eef6df 100%);
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.38;
-    background-image:
-      linear-gradient(rgba(107, 170, 24, 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(107, 170, 24, 0.06) 1px, transparent 1px);
-    background-size: 48px 48px;
-    mask-image: radial-gradient(circle at center, black, transparent 76%);
-  }
-
-  .app-shell {
-    position: relative;
-    z-index: 1;
-    height: 100vh;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    padding: 20px;
-    gap: 18px;
-  }
-
-  header {
-    min-height: 68px;
-    border: 1px solid var(--line);
-    border-radius: 24px;
-    padding: 14px 16px 14px 20px;
-    background: rgba(255, 255, 255, 0.86);
-    backdrop-filter: blur(22px);
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    box-shadow: 0 18px 60px rgba(60, 80, 34, 0.10);
-  }
-  .brand-mark {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: #ffffff;
-    overflow: hidden;
-  }
-  .brand-mark img { width: 100%; height: 100%; object-fit: contain; display: block; }
-
-  .logo { font-size: 19px; font-weight: 850; letter-spacing: -0.7px; }
-  .sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
-  .header-spacer { flex: 1; }
-
-  #model-badge, .dashboard-link, .status-pill {
-    border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.78);
-    color: var(--soft);
-    font-size: 12px;
-    text-decoration: none;
-    border-radius: 999px;
-    padding: 9px 12px;
-  }
-  .dashboard-link:hover { border-color: rgba(155, 206, 38, 0.7); color: #3f6212; }
-  #model-badge { display: none; color: #5f8f13; }
-  .status-pill { display: flex; align-items: center; gap: 8px; }
-  #status-dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
-    box-shadow: 0 0 16px rgba(251, 113, 133, 0.7);
-    transition: background 0.3s, box-shadow 0.3s;
-  }
-  #status-dot.ok { background: var(--brand); box-shadow: 0 0 16px rgba(155, 206, 38, 0.75); }
-
-  .main {
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(320px, 0.88fr) minmax(520px, 1.12fr);
-    gap: 18px;
-  }
-
-  .hero, .chat-panel {
-    min-height: 0;
-    border: 1px solid var(--line);
-    border-radius: 30px;
-    background: var(--panel);
-    backdrop-filter: blur(24px);
-    box-shadow: 0 22px 70px rgba(60, 80, 34, 0.12);
-    overflow: hidden;
-  }
-
-  .hero {
-    position: relative;
-    padding: 34px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-  }
-  .hero::after {
-    content: "";
-    position: absolute;
-    width: 360px; height: 360px;
-    right: -130px; bottom: -120px;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(155,206,38,0.34), rgba(238,248,216,0.55) 52%, transparent 68%);
-  }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    width: fit-content;
-    padding: 8px 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(155, 206, 38, 0.42);
-    color: #4d7c0f;
-    background: rgba(238, 248, 216, 0.82);
-    font-size: 12px;
-    font-weight: 700;
-  }
-  .hero h1 {
-    margin-top: 24px;
-    max-width: 560px;
-    font-size: clamp(42px, 5.6vw, 76px);
-    line-height: 0.93;
-    letter-spacing: -4px;
-  }
-  .hero h1 span {
-    color: transparent;
-    background: linear-gradient(90deg, #182010, #6BAA18 50%, #9BCE26);
-    -webkit-background-clip: text;
-    background-clip: text;
-  }
-  .hero-copy {
-    margin-top: 22px;
-    max-width: 520px;
-    color: #56624b;
-    font-size: 15px;
-    line-height: 1.75;
-  }
-
-
-  .chat-panel { display: grid; grid-template-rows: auto 1fr auto; }
-  .chat-head {
-    padding: 22px 24px;
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    background: rgba(249, 252, 242, 0.76);
-  }
-  .chat-head h2 { font-size: 18px; letter-spacing: -0.4px; }
-  .chat-head p { margin-top: 5px; color: var(--muted); font-size: 12px; }
-  .chat-actions { display: flex; align-items: center; gap: 10px; }
-  .new-chat { border: 1px solid var(--line); border-radius: 12px; background: white; padding: 9px 12px; color: #405234; cursor: pointer; white-space: nowrap; }
-  .new-chat:disabled { opacity: .5; cursor: not-allowed; }
-  .sparkle { width: 42px; height: 42px; display:grid; place-items:center; border-radius: 16px; background: rgba(238, 248, 216, 0.92); border: 1px solid rgba(155,206,38,0.28); }
-
-  #chat {
-    min-height: 0;
-    overflow-y: auto;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    scroll-behavior: smooth;
-  }
-  #chat::-webkit-scrollbar { width: 10px; }
-  #chat::-webkit-scrollbar-thumb { background: rgba(107, 170, 24, 0.22); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
-
-  .welcome-card {
-    border: 1px solid rgba(155, 206, 38, 0.28);
-    border-radius: 24px;
-    padding: 20px;
-    background: linear-gradient(135deg, rgba(238,248,216,0.92), rgba(255,255,255,0.94));
-  }
-  .sys-msg { font-size: 13px; color: #56624b; line-height: 1.65; }
-  .prompt-grid { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .prompt-chip {
-    text-align: left;
-    cursor: pointer;
-    border: 1px solid rgba(60, 80, 34, 0.12);
-    border-radius: 16px;
-    padding: 13px 14px;
-    background: #ffffff;
-    color: #26311d;
-    font: inherit;
-    line-height: 1.45;
-    transition: transform 0.18s, border-color 0.18s, background 0.18s;
-  }
-  .prompt-chip:hover { transform: translateY(-2px); border-color: rgba(155,206,38,0.7); background: #f7fceb; }
-
-  .row { display: flex; gap: 12px; align-items: flex-start; }
-  .row.user { flex-direction: row-reverse; }
-  .avatar {
-    width: 36px; height: 36px; border-radius: 15px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 800; flex-shrink: 0;
-  }
-  .avatar.user { background: linear-gradient(135deg, #9BCE26, #6BAA18); color: white; }
-  .avatar.ai { background: #f3f8e8; color: #5f8f13; border: 1px solid var(--line); overflow: hidden; }
-  .avatar.ai img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
-
-  .bubble {
-    max-width: min(78%, 680px);
-    padding: 14px 17px;
-    border-radius: 20px;
-    font-size: 14px;
-    line-height: 1.68;
-    word-break: break-word;
-  }
-  .bubble.user { background: linear-gradient(135deg, #9BCE26, #6BAA18); color: white; border-radius: 20px 7px 20px 20px; box-shadow: 0 16px 36px rgba(107,170,24,0.18); }
-  .bubble.ai { background: #ffffff; border: 1px solid var(--line); border-radius: 7px 20px 20px 20px; color: var(--text); box-shadow: 0 14px 34px rgba(60, 80, 34, 0.07); }
-  .answer-kicker { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 9px; color: #5f8f13; font-size: 11px; font-weight: 800; letter-spacing: -0.1px; }
-  .answer-kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
-  .answer-body { color: #25301d; }
-  .answer-h { margin: 17px 0 7px; color: #5f8f13; font-size: 16px; font-weight: 850; letter-spacing: -0.3px; }
-  .answer-h:first-child { margin-top: 0; }
-  .answer-line { line-height: 1.72; }
-  .answer-line.bulleted { padding-left: 16px; text-indent: -16px; }
-  .answer-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); border-radius: 12px; }
-  .answer-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
-  .answer-table th, .answer-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-  .answer-table th { background: #f4f8ec; color: #405b2b; font-weight: 800; white-space: nowrap; }
-  .answer-table tr:last-child td { border-bottom: 0; }
-  .study-link { color: #5f8f13; font-weight: 750; text-decoration: underline; text-underline-offset: 2px; }
-  .bullet { color: #9bce26; font-weight: 900; margin-right: 6px; }
-  .ing-emph { color: #5f8f13; font-weight: 800; }
-  .prod-emph { color: #182010; font-weight: 850; }
-  .effect-emph { color: #2f3d26; font-weight: 750; }
-  .product-section { margin-top: 16px; }
-  .product-card {
-    cursor: pointer;
-    border: 1px solid rgba(155, 206, 38, 0.34);
-    border-radius: 22px;
-    background: linear-gradient(135deg, #ffffff, #fbfdf6);
-    overflow: hidden;
-    transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
-  }
-  .product-card:hover { transform: translateY(-2px); border-color: rgba(155, 206, 38, 0.72); box-shadow: 0 18px 42px rgba(60, 80, 34, 0.12); }
-  .product-card:focus { outline: none; box-shadow: 0 0 0 4px rgba(155,206,38,0.16); }
-  .product-main { display: grid; grid-template-columns: 112px 1fr auto; gap: 16px; align-items: center; padding: 16px; }
-  .product-image-slot {
-    width: 112px;
-    aspect-ratio: 1;
-    border-radius: 18px;
-    border: 1px dashed rgba(107, 170, 24, 0.42);
-    background: radial-gradient(circle at 35% 25%, #ffffff, #eef8d8);
-    display: grid;
-    place-items: center;
-    color: #6b765e;
-    font-size: 12px;
-    font-weight: 700;
-    overflow: hidden;
-  }
-  .product-image-slot img { width: 100%; height: 100%; object-fit: cover; }
-  .product-label { color: #5f8f13; font-size: 11px; font-weight: 850; margin-bottom: 5px; }
-  .product-name { color: #182010; font-size: 18px; font-weight: 850; letter-spacing: -0.5px; }
-  .product-desc { margin-top: 7px; color: #56624b; font-size: 13px; line-height: 1.55; }
-  .product-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-  .product-meta span { padding: 5px 9px; border-radius: 999px; background: #f0f8dc; color: #4d7c0f; font-size: 11px; font-weight: 750; }
-  .product-meta span.rating-pill { background: #fff3d6; color: #a9781a; }
-  .product-meta span.review-pill { background: #eaf3ff; color: #2f6aa0; }
-  .product-link { display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 800; color: #4d7c0f; text-decoration: none; padding: 6px 12px; border: 1px solid rgba(155,206,38,0.5); border-radius: 999px; transition: background 0.15s; }
-  .product-link:hover { background: #f0f8dc; }
-  .product-toggle { color: #6b765e; font-size: 20px; transition: transform 0.18s; }
-  .product-card.open .product-toggle { transform: rotate(180deg); }
-  .product-ingredients { display: none; border-top: 1px solid rgba(60, 80, 34, 0.10); padding: 14px 16px 16px; background: #ffffff; }
-  .product-card.open .product-ingredients { display: block; }
-  .product-rationale { margin-bottom: 14px; padding: 12px 14px; background: #f4faf3; border-left: 3px solid var(--green, #4caf72); border-radius: 8px; color: #3a4a33; font-size: 13px; line-height: 1.6; }
-  .ingredients-heading { margin-bottom: 10px; color: #3f4b35; font-size: 12px; font-weight: 850; }
-  .ingredients-grid { display: grid; gap: 8px; }
-  .ingredient-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 10px 18px;
-    align-items: center;
-    padding: 10px 16px;
-    border-radius: 14px;
-    background: #fbfdf7;
-    border: 1px solid rgba(60, 80, 34, 0.10);
-  }
-  .ingredient-name { color: #5f8f13; font-size: 13px; font-weight: 850; }
-  .ingredient-claim { color: #56624b; font-size: 12px; line-height: 1.45; text-align: right; justify-self: end; }
-  .tier { font-size: 10px; padding: 4px 9px; border-radius: 999px; font-weight: 800; white-space: nowrap; letter-spacing: 0.2px; }
-  .tier-confirmed { background: rgba(20, 83, 45, 0.9); color: #bbf7d0; }
-  .tier-promising { background: rgba(113, 63, 18, 0.9); color: #fde68a; }
-  .tier-preliminary { background: rgba(30, 58, 95, 0.9); color: #bfdbfe; }
-  .tier-insufficient { background: rgba(30, 30, 46, 0.9); color: #9ca3af; }
-
-  .typing { display: flex; gap: 5px; align-items: center; padding: 7px 2px; }
-  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); animation: pulse 1.2s ease-in-out infinite; }
-  .typing span:nth-child(2) { animation-delay: 0.2s; }
-  .typing span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes pulse { 0%,80%,100%{opacity:0.24;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }
-  /* 생성 중 커서 — 스트리밍이 진행 중임을 시각적으로 알린다. */
-  .stream-caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px;
-                  vertical-align: -0.14em; background: var(--brand); animation: caret 1s steps(2) infinite; }
-  @keyframes caret { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
-  .bubble.error { background: rgba(69, 10, 10, 0.82); border-color: rgba(248, 113, 113, 0.38); color: #fecaca; }
-
-  #input-area {
-    padding: 18px;
-    border-top: 1px solid var(--line);
-    background: rgba(249, 252, 242, 0.78);
-    display: flex;
-    gap: 12px;
-    align-items: flex-end;
-  }
-  .composer-wrap {
-    flex: 1;
-    min-height: 52px;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 20px;
-    background: #ffffff;
-    display: flex;
-    align-items: flex-end;
-    padding: 5px 6px 5px 16px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .composer-wrap:focus-within { border-color: rgba(155, 206, 38, 0.75); box-shadow: 0 0 0 4px rgba(155,206,38,0.12); }
-  #msg {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: none;
-    padding: 11px 0;
-    color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
-    resize: none;
-    outline: none;
-    min-height: 44px;
-    max-height: 124px;
-    line-height: 1.5;
-  }
-  #msg::placeholder { color: #64748b; }
-  #msg:disabled { opacity: 0.45; }
-  #send {
-    background: linear-gradient(135deg, var(--brand-2), var(--brand));
-    border: none;
-    border-radius: 16px;
-    width: 44px; height: 44px;
-    cursor: pointer;
-    color: white;
-    font-size: 20px;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
-    transition: transform 0.18s, filter 0.18s, opacity 0.18s;
-  }
-  #send:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
-  #send:disabled { opacity: 0.42; cursor: default; }
-
-  @media (max-width: 980px) {
-    body { overflow: auto; }
-    .app-shell { height: auto; min-height: 100vh; }
-    .main { grid-template-columns: 1fr; }
-    .hero { min-height: 440px; }
-    .chat-panel { min-height: 650px; }
-  }
-
-  @media (max-width: 620px) {
-    .app-shell { padding: 10px; gap: 10px; }
-    header { border-radius: 20px; flex-wrap: wrap; }
-    .hero, .chat-panel { border-radius: 24px; }
-    .hero { padding: 24px; }
-    .hero h1 { letter-spacing: -2.3px; }
-    .prompt-grid { grid-template-columns: 1fr; }
-    .bubble { max-width: 86%; }
-    .product-main { grid-template-columns: 86px 1fr auto; gap: 12px; padding: 13px; }
-    .product-image-slot { width: 86px; border-radius: 15px; }
-    .ingredient-row { grid-template-columns: 1fr; gap: 5px; }
-    .ingredient-claim { text-align: left; justify-self: start; }
-    .dashboard-link, #model-badge, .status-pill { font-size: 11px; padding: 7px 9px; }
-  }
-  /* 동의·피드백·내 데이터 관리 */
-  .consent-card, .data-panel { border: 1px solid var(--line); border-radius: 14px; background: #fbfdf6; padding: 14px 16px; margin: 0 0 14px; font-size: 13px; color: #33402b; }
-  .consent-card p, .data-panel p { margin: 0 0 8px; line-height: 1.55; }
-  .consent-card label, .data-panel label { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; line-height: 1.5; cursor: pointer; }
-  .consent-card label.disabled, .data-panel label.disabled { opacity: .5; cursor: default; }
-  .consent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  .consent-actions button { border: 1px solid var(--line); border-radius: 10px; background: white; padding: 7px 11px; cursor: pointer; font-size: 12px; }
-  .consent-actions button.primary { background: #4d7c0f; color: white; border-color: #4d7c0f; }
-  .consent-actions button.danger { color: #a33; border-color: #e7c4c4; }
-  .muted-note { color: #6b7563; font-size: 12px; }
-  .feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: #5c6754; }
-  .feedback button { border: 1px solid var(--line); border-radius: 999px; background: white; padding: 4px 10px; cursor: pointer; font-size: 12px; }
-  .feedback button.on { background: #f0f8dc; border-color: #b9d58a; }
-  .feedback .issues { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
-  .feedback textarea { width: 100%; min-height: 54px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: inherit; }
-</style>
+<meta name="theme-color" content="#eff1e8">
+<meta name="description" content="피부 고민부터 성분과 제품까지. 성분 근거를 바탕으로 나에게 맞는 화장품을 함께 찾아보는 4EVR0 스킨케어 컨시어지.">
+<title>4EVR0 · 나를 위한 스킨케어 컨시어지</title>
+<link rel="icon" href="/static/logo.png">
+<link rel="stylesheet" href="/static/olive.css">
 </head>
 <body>
+
 <div class="app-shell">
-  <header>
-    <div class="brand-mark"><img src="/static/logo.png" alt="4EVR0"></div>
-    <div>
-      <div class="logo">4EVR0</div>
-      <div class="sub">GraphRAG 기반 화장품 성분 추천 AI</div>
-    </div>
-    <div class="header-spacer"></div>
-    <div id="model-badge"></div>
-    <div class="status-pill"><span id="status-dot" title="연결 중..."></span><span>Live API</span></div>
-  </header>
-
-  <main class="main">
-    <section class="hero" aria-label="4EVR0 소개">
-      <div>
-        <h1>내 피부 고민에<br><span>딱 맞는 성분</span> 찾기</h1>
-        <p class="hero-copy">
-          올리브영을 둘러보듯 쉽고 가볍게 질문하세요. 4EVR0가 논문 클레임과 성분 그래프를 연결해 제품을 고르기 전 확인할 만한 핵심 성분을 정리해드립니다.
-        </p>
-      </div>
-    </section>
-
-    <section class="chat-panel" aria-label="성분 추천 채팅">
-      <div class="chat-head">
-        <div>
-          <h2>Ingredient Concierge</h2>
-          <p>피부 고민, 사용 중인 제품, 원하는 제형을 자연어로 적어보세요.</p>
-        </div>
-        <div class="chat-actions"><button class="new-chat" id="my-data" title="동의 설정과 저장된 데이터 삭제">내 데이터 관리</button><button class="new-chat" id="new-chat" disabled>새 대화</button><div class="sparkle">✨</div></div>
-      </div>
-
-      <div id="chat">
+  <button class="mobile-overlay" aria-label="메뉴 닫기" tabindex="-1"></button>
+  <aside class="sidebar" aria-label="메인 메뉴" id="sidebar">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true" class="brand-symbol"><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg><div><div class="wordmark">4EVR0<span style="color:#89996c">.</span></div><div class="brand-caption">YOUR SKIN, UNDERSTOOD</div></div></div>
+    <button class="new-chat" id="new-chat" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 5v14M5 12h14"/></svg>새로운 상담 시작</button>
+    <nav class="nav-group" aria-label="상담 메뉴">
+      <div class="nav-label">MY SKINCARE</div>
+      <button class="nav-item active" id="nav-chat"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M20 11a8 8 0 0 1-8 8H5l-3 3v-11a9 9 0 1 1 18 0Z"/><path d="M7 9h8M7 13h5"/></svg>피부 상담<span class="nav-count">AI</span></button>
+      <button class="nav-item" id="saved-products"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 20-8-8a5 5 0 0 1 8-6 5 5 0 0 1 8 6Z"/></svg>관심 제품<span class="nav-count" id="saved-count">0</span></button>
+      <button class="nav-item" id="open-guide"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 5v15M12 5C8 2 3 3 3 3v15s5-1 9 2c4-3 9-2 9-2V3s-5-1-9 2Z"/></svg>4EVR0 사용 가이드</button>
+    </nav>
+    <div class="skin-card"><div class="skin-card-head"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg>나의 피부 프로필</div><p id="skin-summary">피부를 조금 더 알려주세요.<br>나에게 맞는 추천의 시작이에요.</p><button class="skin-edit" data-open-profile>피부 설정하기 <span>↗</span></button></div>
+    <div class="sidebar-footer"><button id="my-data"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg>내 데이터 관리</button><small>© 2026 4EVR0 · Made for your skin</small></div>
+  </aside>
+  <main class="workspace">
+    <header class="topbar"><div class="page-name"><button class="mobile-menu" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>스킨케어 컨시어지 <span class="beta">BETA</span></div><div class="topbar-right"><span class="no-login"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 3 8 3v5c0 6-8 10-8 10S4 17 4 11V6Z"/><path d="m8 11 3 3 5-5"/></svg>로그인 없이, 편안하게</span><div class="status-pill" role="status"><span id="status-dot" title="연결 중"></span><span id="connection-label">연결 중</span></div><span id="model-badge"></span></div></header>
+    <section class="chat-panel" aria-label="화장품 추천 상담">
+      <div id="chat" role="log" aria-label="상담 대화" aria-relevant="additions">
         <div class="welcome-card">
-          <div class="sys-msg" id="sys-init">세션을 시작하는 중...</div>
+          <div class="welcome-eyebrow"><span></span>SKIN FIRST. SCIENCE ALWAYS.</div>
+          <h1>당신의 피부를 위한,<br><em>조금 더 똑똑한 선택.</em></h1>
+          <p class="welcome-copy">수많은 화장품 사이, 내 피부에 맞는 건 뭘까요?<br>피부 고민부터 성분과 제품까지, 함께 찾아봐요.</p>
+          <svg class="botanical" viewBox="0 0 180 200" aria-hidden="true"><path d="M43 184c13-58 51-95 92-154M75 128C17 132 13 83 25 68c46 7 59 25 50 60ZM96 99c-9-48 16-71 50-71 3 37-8 62-50 71ZM59 153c38-37 61-25 76-4-19 31-49 37-76 4Z"/><path d="m75 128-40-47m62 18 39-59m-77 113 64-4M43 184l-12-1"/></svg>
           <div class="prompt-grid" aria-label="추천 질문 예시">
-            <button class="prompt-chip" data-prompt="민감하고 건조한 피부인데 장벽 회복에 도움되는 성분을 추천해줘">민감·건조 피부 장벽 성분</button>
-            <button class="prompt-chip" data-prompt="여드름 흔적과 붉은기가 고민인데 근거가 있는 성분을 알려줘">흔적·붉은기 케어 성분</button>
-            <button class="prompt-chip" data-prompt="미백 기능성 성분 중 논문 근거가 강한 성분 위주로 비교해줘">미백 성분 근거 비교</button>
-            <button class="prompt-chip" data-prompt="레티놀을 쓰고 싶은데 초보자가 같이 보면 좋은 성분 조합을 알려줘">레티놀 초보 조합</button>
+            <button class="prompt-chip" data-prompt="피부가 건조하고 속당김이 있어요. 보습과 피부 장벽 관리에 도움되는 제품을 추천해줘."><span class="prompt-icon"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 3S5 11 5 15a7 7 0 0 0 14 0c0-4-7-12-7-12Z"/><path d="M8 15a4 4 0 0 0 4 4"/></svg></span><span class="prompt-arrow">↗</span><span class="prompt-title">건조함·속당김</span><span class="prompt-sub">촉촉함을 오래 지키는<br>보습 성분을 찾고 싶어요</span></button>
+            <button class="prompt-chip" data-prompt="민감하고 붉어지는 피부예요. 주의할 성분과 진정에 도움되는 제품을 추천해줘."><span class="prompt-icon"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg></span><span class="prompt-arrow">↗</span><span class="prompt-title">민감함·붉은기</span><span class="prompt-sub">예민해진 피부를 위한<br>성분부터 살펴볼까요?</span></button>
+            <button class="prompt-chip" data-prompt="트러블과 과도한 피지가 고민이에요. 관련 성분 근거와 함께 제품을 추천해줘."><span class="prompt-icon"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg></span><span class="prompt-arrow">↗</span><span class="prompt-title">트러블·피지</span><span class="prompt-sub">반복되는 피부 고민,<br>성분에서 답을 찾아봐요</span></button>
           </div>
+          <div class="suggestion-label">이런 고민도 이야기해 보세요</div>
+          <div class="concern-chips"><button class="concern-chip" data-prompt="미백과 잡티 관리에 도움되는 성분과 제품을 추천해줘.">미백·잡티</button><button class="concern-chip" data-prompt="탄력과 주름이 고민이에요. 근거가 있는 성분과 제품을 추천해줘.">탄력·주름</button><button class="concern-chip" data-prompt="모공과 블랙헤드가 고민이에요. 관련 성분과 제품을 추천해줘.">모공·블랙헤드</button><button class="concern-chip" data-start-product>쓰고 있는 제품 알아보기 ↗</button></div>
+          <div class="welcome-divider">성분의 근거를 살피고, 당신의 피부를 생각합니다</div>
         </div>
+        <div class="sys-msg" id="sys-init" role="status">상담을 준비하고 있어요.</div>
       </div>
-
-      <div id="input-area">
-        <div class="composer-wrap">
-          <textarea id="msg" placeholder="예: 속건조와 붉은기가 있는데 세라마이드 말고도 볼 성분이 있을까?" rows="1" disabled></textarea>
-        </div>
-        <button id="send" disabled>↑</button>
+      <div class="composer-section">
+        <div class="compare-bar" id="compare-bar" hidden><span id="compare-label"></span><div><button id="clear-compare">취소</button><button class="compare-send" id="compare-send" disabled>선택 제품 비교하기 ↗</button></div></div>
+        <div class="followups" id="followups" hidden aria-label="이어서 질문하기"><button data-followup="추천한 제품들의 성분을 비교해줘.">제품 성분 비교해 줘</button><button data-followup="추천한 제품들을 어떤 순서로 사용하면 돼?">사용 순서 알려줘</button><button data-followup="추천한 제품 중 크림만 보여줘.">크림만 볼래</button></div>
+        <div id="input-area"><div class="composer-wrap"><label for="msg" hidden>피부 고민 입력</label><textarea id="msg" placeholder="어떤 피부 고민이 있나요? 편하게 이야기해 주세요." rows="1" maxlength="2000" disabled></textarea><button id="send" aria-label="메시지 보내기" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 19V5m-5 5 5-5 5 5"/></svg></button></div><div class="composer-bottom"><button class="profile-trigger" data-open-profile><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg><span id="composer-profile">내 피부 설정</span></button><span class="keyboard-hint">Enter 전송 · Shift + Enter 줄바꿈</span></div></div>
+        <p class="composer-disclaimer">성분 근거를 바탕으로 한 추천이며, 개인에 따른 사용감과 효과는 다를 수 있어요.</p>
       </div>
     </section>
   </main>
 </div>
-
+<dialog class="dialog" id="profile-dialog" aria-labelledby="profile-title"><form id="profile-form"><div class="dialog-header"><h2 id="profile-title">내 피부에 한 걸음 더.</h2><button type="button" class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>선택한 정보는 다음 질문에 함께 전달돼요.<br>이 페이지에서만 유지되며, 언제든 바꿀 수 있어요.</p><fieldset style="border:0"><legend class="field-title">피부 타입</legend><div class="choice-group"><label><input type="radio" name="skin" value="건성"><span>건성</span></label><label><input type="radio" name="skin" value="지성"><span>지성</span></label><label><input type="radio" name="skin" value="복합성"><span>복합성</span></label><label><input type="radio" name="skin" value="중성"><span>중성</span></label><label><input type="radio" name="skin" value="잘 모르겠어요"><span>잘 모르겠어요</span></label></div></fieldset><fieldset style="border:0"><legend class="field-title">요즘 신경 쓰이는 고민 <span class="muted-note">여러 개 선택할 수 있어요</span></legend><div class="choice-group"><label><input type="checkbox" name="concern" value="속건조"><span>속건조</span></label><label><input type="checkbox" name="concern" value="민감함"><span>민감함</span></label><label><input type="checkbox" name="concern" value="붉은기"><span>붉은기</span></label><label><input type="checkbox" name="concern" value="트러블"><span>트러블</span></label><label><input type="checkbox" name="concern" value="피지"><span>피지</span></label><label><input type="checkbox" name="concern" value="미백·잡티"><span>미백·잡티</span></label><label><input type="checkbox" name="concern" value="탄력·주름"><span>탄력·주름</span></label></div></fieldset><button class="primary-action" type="submit">이 피부 정보로 상담하기</button><button type="button" id="clear-profile" style="display:block;margin:14px auto 0;border:0;background:none;color:#879376;font-size:11px">피부 설정 초기화</button></form></dialog>
+<dialog class="dialog" id="saved-dialog" aria-labelledby="saved-title"><div class="dialog-header"><h2 id="saved-title">마음에 담아둔 제품</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>이 브라우저에 제품만 보관해요. 로그인은 필요 없어요.</p><div class="saved-list" id="saved-list"></div></dialog>
+<dialog class="dialog" id="guide-dialog" aria-labelledby="guide-title"><div class="dialog-header"><h2 id="guide-title">나에게 맞는 선택의 시작</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>4EVR0와 이렇게 이야기해 보세요.</p><div class="guide-step"><span class="guide-number">01</span><div><h3>피부 고민을 편하게 알려주세요</h3><p>“속당김이 있고 볼이 자주 붉어져요.”<br>피부 타입과 원하는 제형을 함께 적으면 좋아요.</p></div></div><div class="guide-step"><span class="guide-number">02</span><div><h3>추천의 이유를 확인해 보세요</h3><p>제품의 성분 상세를 펼쳐 관련 성분과 주의사항을 확인해요. 성분 근거가 제품의 효과를 보장하지는 않아요.</p></div></div><div class="guide-step"><span class="guide-number">03</span><div><h3>비교하고, 이어서 물어보세요</h3><p>제품 2~3개를 선택해 성분을 비교하거나 “사용 순서를 알려줘”, “토너만 보여줘”라고 물어보세요.</p></div></div><button class="primary-action" data-close-dialog>상담 시작하기</button></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
 <script>
   const chat    = document.getElementById('chat');
   const msgEl   = document.getElementById('msg');
@@ -492,7 +74,8 @@
     const res = await fetch('/api/v1/sessions/browser', { method: 'POST', cache: 'no-store' });
     if (!res.ok) throw new Error('session creation failed');
     document.getElementById('sys-init').textContent =
-      '새 대화가 시작되었습니다. 아래 예시를 누르거나 피부 고민을 직접 입력해보세요.';
+      '준비됐어요. 피부 고민을 들려주세요.';
+    msgEl.placeholder = '어떤 피부 고민이 있나요? 편하게 이야기해 주세요.';
   }
 
   async function initSession() {
@@ -518,13 +101,15 @@
       sessionReady = true;
       dot.classList.add('ok');
       dot.title = '연결됨';
+      document.getElementById('connection-label').textContent = '상담 준비 완료';
       msgEl.disabled = false;
       sendBtn.disabled = false;
       newChatBtn.disabled = false;
       msgEl.focus();
     } catch (e) {
-      document.getElementById('sys-init').textContent =
-        '서버에 연결할 수 없습니다. 페이지를 새로고침해주세요.';
+      document.getElementById('sys-init').textContent = '지금은 상담에 연결할 수 없어요. 새 상담 버튼으로 다시 시도해 주세요.';
+      document.getElementById('connection-label').textContent = '연결 확인 필요';
+      newChatBtn.disabled = false;
     }
   }
 
@@ -538,27 +123,41 @@
       if (!res.ok) throw new Error('session reset failed');
       sessionReady = false;
       chat.innerHTML = initialChatHtml;
+      resetRecommendationUI();
+      document.querySelector('.chat-panel').classList.remove('has-conversation');
+      profilePending = true;
       msgEl.value = '';
       await createSession();
       if (consent && !consent.decided) showConsentCard();
       sessionReady = true;
+      dot.classList.add('ok');
+      document.getElementById('connection-label').textContent = '상담 준비 완료';
       msgEl.disabled = false;
       sendBtn.disabled = false;
       msgEl.focus();
     } catch (e) {
+      sessionReady = false;
+      dot.classList.remove('ok');
+      document.getElementById('connection-label').textContent = '연결 확인 필요';
       appendError('새 대화를 시작하지 못했습니다. 페이지를 새로고침해주세요.');
     } finally {
-      newChatBtn.disabled = !sessionReady;
+      newChatBtn.disabled = false;
     }
   }
 
   function markSessionExpired() {
     sessionReady = false;
+    msgEl.disabled = true;
+    sendBtn.disabled = true;
+    dot.classList.remove('ok');
+    document.getElementById('connection-label').textContent = '새 상담이 필요해요';
     appendError('대화 시간이 만료되었습니다. 새 대화를 눌러 다시 시작해 주세요.');
     newChatBtn.disabled = false;
   }
 
   function appendUserBubble(text) {
+    document.querySelector('.chat-panel').classList.add('has-conversation');
+    closeSidebar();
     const row = document.createElement('div');
     row.className = 'row user';
     row.innerHTML = `
@@ -744,7 +343,7 @@
         if (!line || !line.includes(name)) continue;
         let d = line.replace(/^[-•*]\s*/, '').replace(/^\s*\[[^\]]*\]\s*/, '');
         const ni = d.indexOf(name);
-        if (ni >= 0) d = d.slice(ni + name.length).replace(/^\s*[은는이가을를]\s*/, '').trim();
+        if (ni >= 0) d = d.slice(ni + name.length).replace(/^[*\s:：—–-]+/, '').replace(/^[은는이가을를]\s*/, '').trim();
         if (d) return d;
       }
     }
@@ -759,16 +358,16 @@
     const bodyText = hasProducts ? intro : String(responseText || '');
 
     const productCardsHtml = products && products.length
-      ? `<div class="product-section">${products.map(product => `
-          <div class="product-card" role="button" tabindex="0" aria-expanded="false">
+      ? `<div class="product-section">${products.map((product, index) => `
+          <article class="product-card">
             <div class="product-main">
               <div class="product-image-slot">
-                ${productImageUrl(product)
-                  ? `<img src="${escAttr(productImageUrl(product))}" alt="${escAttr(product.product_name)}">`
+                ${safeExternalUrl(productImageUrl(product))
+                  ? `<img src="${escAttr(safeExternalUrl(productImageUrl(product)))}" loading="lazy" alt="${escAttr(product.product_name)}">`
                   : '<span>제품 이미지</span>'}
               </div>
               <div class="product-info">
-                <div class="product-label">${escHtml(product.brand)}</div>
+                <div class="product-label">${String(index + 1).padStart(2, "0")} / ${escHtml(product.brand)}</div>
                 <div class="product-name">${escHtml(product.product_name)}</div>
                 <div class="product-desc">추천 성분 ${escHtml(product.matched_count)}개가 매칭된 ${escHtml(product.category)} 제품입니다.</div>
                 <div class="product-meta">
@@ -776,10 +375,11 @@
                   ${product.rating ? `<span class="rating-pill">⭐ ${escHtml(product.rating)} · 리뷰 ${escHtml(product.review_count || 0)}</span>` : ''}
                   ${reviewHighlight(product) ? `<span class="review-pill">${escHtml(reviewHighlight(product))}</span>` : ''}
                 </div>
-                ${product.product_url ? `<a class="product-link" href="${escAttr(product.product_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">올리브영에서 보기 →</a>` : ''}
+                ${safeExternalUrl(product.product_url) ? `<a class="product-link" href="${escAttr(safeExternalUrl(product.product_url))}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">올리브영에서 보기 →</a>` : ''}
               </div>
-              <div class="product-toggle">⌄</div>
+              <button class="product-toggle" aria-label="성분 상세 펼치기" aria-expanded="false" data-toggle-product>⌄</button>
             </div>
+            <div class="product-tools"><button data-save-product="${index}" aria-pressed="${isSaved(product)}">${isSaved(product) ? '♥ 관심 제품에 담았어요' : '♡ 관심 제품 담기'}</button><button data-compare-product="${index}" aria-pressed="false">+ 비교에 담기</button><button data-ask-product="${index}">이 제품 더 알아보기 ↗</button></div>
             <div class="product-ingredients">
               <div class="product-rationale">${escHtml(productDescription(product, productSection, ingredients))}</div>
               <div class="ingredients-heading">이 화장품에 포함된 추천 성분</div>
@@ -787,35 +387,18 @@
                 <div class="ingredient-row">
                   <div class="ingredient-name">${ingredientNameByInci(name, ingredients)}</div>
                   <div class="ingredient-claim">${ingredientClaimByInci(name, ingredients)}</div>
+                  ${ingredientNotes(name, ingredients)}
                 </div>`).join('')}</div>
+              ${product.fragrance_allergens?.length ? `<div class="caution-note">표시 대상 향료 알레르기 성분: ${product.fragrance_allergens.map(escHtml).join(', ')}</div>` : ''}
+              ${product.fragrance_free_source_url && safeExternalUrl(product.fragrance_free_source_url) ? `<a class="product-link" href="${escAttr(safeExternalUrl(product.fragrance_free_source_url))}" target="_blank" rel="noopener noreferrer">제조사 무향료 안내 확인 ↗</a>` : ''}
+              ${(product.ingredient_explanations || []).map(i => `<div class="source-note"><b>${escHtml(i.kor_name)}</b> · ${escHtml(i.explanation)}<br>출처: ${escHtml(i.source_id)} · ${escHtml(i.source_page)}쪽</div>`).join('')}
+              <p class="source-note">추천과 관련해 확인된 성분만 표시해요. 전체 성분표와 함량은 제품 상세 페이지에서 확인해 주세요. 리뷰는 사용자의 경험이며 성분 근거와 구분해 참고해 주세요.</p>
             </div>
-          </div>`).join('')}</div>`
+          </article>`).join('')}</div>`
       : '';
 
-    const ingredientCardsHtml = !productCardsHtml && ingredients && ingredients.length
-      ? `<div class="product-section">
-          <div class="product-card" role="button" tabindex="0" aria-expanded="false">
-            <div class="product-main">
-              <div class="product-image-slot"><span>제품 이미지</span></div>
-              <div class="product-info">
-                <div class="product-label">추천 화장품</div>
-                <div class="product-name">피부 고민 맞춤 추천 제품</div>
-                <div class="product-desc">답변에서 제안한 핵심 성분이 포함된 제품을 이 영역에 연결해 보여줄 수 있습니다.</div>
-                <div class="product-meta"><span>추천 성분 ${ingredients.length}개</span><span>클릭해서 전성분 보기</span></div>
-              </div>
-              <div class="product-toggle">⌄</div>
-            </div>
-            <div class="product-ingredients">
-              <div class="ingredients-heading">이 화장품에 포함된 추천 성분</div>
-              <div class="ingredients-grid">${ingredients.map(ing => `
-                <div class="ingredient-row">
-                  <div class="ingredient-name">${ingredientName(ing)}</div>
-                  <div class="ingredient-claim" title="${escAttr(ing.claim || '')}">${claimKo(ing.claim)}</div>
-                </div>`).join('')}</div>
-            </div>
-          </div>
-        </div>`
-      : '';
+    const ingredientCardsHtml = !hasProducts && ingredients?.length
+      ? `<div class="product-section"><div class="ingredients-heading">관련 성분 살펴보기</div><div class="ingredients-grid">${ingredients.map(ing => `<div class="ingredient-row"><div class="ingredient-name">${ingredientName(ing)}</div><div class="ingredient-claim">${claimKo(ing.claim)}</div>${ingredientNotes(ing.name, ingredients)}</div>`).join('')}</div></div>` : '';
 
     const row = document.createElement('div');
     row.className = 'row';
@@ -826,8 +409,10 @@
         <div class="answer-body">${renderAnswerBody(bodyText, ingredients)}</div>
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
+    row._products = products || [];
     if (turnId) row.querySelector('.bubble.ai').appendChild(feedbackBar(turnId));
     if (replaceEl) replaceEl.replaceWith(row); else chat.appendChild(row);
+    syncRecommendationUI(products || [], row);
     scrollBottom();
     return row;
   }
@@ -910,6 +495,7 @@
       removeTyping();
       if (row) appendAIBubble(acc, meta.ingredients, meta.products, meta.model_used, row,
                               completed ? meta.turn_id : null);
+      if (!completed) resetRecommendationUI();
     };
 
     try {
@@ -945,6 +531,7 @@
           } else if (evt === 'error') {
             removeTyping();
             if (row) row.remove();
+            resetRecommendationUI();
             appendError(payload.message || '일시적인 오류가 발생했어요. 잠시 후 다시 시도해 주세요.');
             return;
           } else if (evt === 'done') {
@@ -953,12 +540,12 @@
           }
         }
       }
-      // done 없이 스트림이 끊긴 경우: 받은 만큼은 확정 렌더, 아무것도 못 받았으면 폴백.
-      if (row) finalize();
+      // A partial response stays visible, but never receives completed-turn feedback.
+      if (row) { finalize(); appendError('답변 연결이 중간에 끊겼어요. 잠시 후 다시 질문해 주세요.'); }
       else throw { fallback: true };
     } catch (e) {
       // 이미 렌더가 시작됐다면 재요청하지 않는다(GPU 중복 호출·버블 중복 방지).
-      if (row) { finalize(); return; }
+      if (row) { finalize(); appendError('답변 연결이 중간에 끊겼어요. 잠시 후 다시 질문해 주세요.'); return; }
       throw (e && (e.fallback || e.status)) ? e : { fallback: true };
     } finally {
       chat.removeEventListener('scroll', onScroll);
@@ -986,14 +573,20 @@
     }
     const data = await res.json();
     appendAIBubble(data.response_text, data.ingredients, data.products, data.model_used, null, data.turn_id);
+    return true;
   }
 
   async function send() {
     if (sending || !sessionReady) return;
     const text = msgEl.value.trim();
     if (!text) return;
+    const includedProfile = profilePending;
+    const requestText = profilePending && profileDescription() ? `${profileDescription()}\n${text}` : text;
+    profilePending = false;
 
     sending = true;
+    chat.setAttribute('aria-busy', 'true');
+    document.getElementById('connection-label').textContent = '성분 근거를 살피고 있어요';
     msgEl.value   = '';
     msgEl.style.height = '';
     msgEl.disabled  = true;
@@ -1004,15 +597,16 @@
     appendTyping();
 
     try {
-      await streamRecommend(text);
+      await streamRecommend(requestText);
     } catch (e) {
+      profilePending = includedProfile;
       if (e && e.status) {
         removeTyping();
         if (e.status === 401 || e.status === 404) markSessionExpired();
         else appendError(`오류 (${e.status}): ${e.detail || '알 수 없는 오류'}`);
       } else {
         try {
-          await batchRecommend(text);
+          if (await batchRecommend(requestText)) profilePending = false;
         } catch (e2) {
           removeTyping();
           appendError('서버와 통신 중 오류가 발생했습니다.');
@@ -1020,6 +614,9 @@
       }
     } finally {
       sending = false;
+      chat.setAttribute('aria-busy', 'false');
+      document.getElementById('connection-label').textContent = sessionReady ? '상담 준비 완료' : '새 상담이 필요해요';
+      updateComparison();
       msgEl.disabled = !sessionReady;
       sendBtn.disabled = !sessionReady;
       newChatBtn.disabled = false;
@@ -1073,14 +670,16 @@
     card.className = 'consent-card';
     card.id = 'consent-card';
     card.innerHTML = `
+      <p class="muted-note">대화 저장과 학습 이용은 선택 사항이에요. 동의하지 않아도 서비스를 이용할 수 있어요.</p>
+      <details><summary>더 나은 추천을 위한 선택 안내</summary>
       <p>${escHtml(consent.texts.intro)}</p>
       ${consentChoicesHtml('cc')}
-      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p>
+      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p></details>
       <div class="consent-actions">
         <button class="primary" id="cc-save">선택한 대로 시작</button>
         <button id="cc-skip">저장하지 않고 시작</button>
       </div>`;
-    chat.prepend(card);
+    document.getElementById('sys-init').after(card);
     const read = wireConsentChoices(card, 'cc');
     const done = async (choice) => {
       try { await saveConsent(choice); card.remove(); }
@@ -1106,13 +705,15 @@
         <button class="danger" id="dp-delete">저장된 데이터 삭제·동의 철회</button>
         <button id="dp-close">닫기</button>
       </div>`;
+    document.querySelector('.chat-panel').classList.add('has-conversation');
     chat.prepend(panel);
+    closeSidebar();
     // 패널은 대화 맨 위에 붙으므로, 아래로 스크롤된 상태에서도 보이게 맨 위로 이동한다.
     chat.scrollTo({ top: 0, behavior: 'smooth' });
     const read = wireConsentChoices(panel, 'dp');
-    panel.querySelector('#dp-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('#dp-close').addEventListener('click', () => { closeDataPanel(panel); });
     panel.querySelector('#dp-save').addEventListener('click', async () => {
-      try { await saveConsent(read()); document.getElementById('consent-card')?.remove(); panel.remove(); }
+      try { await saveConsent(read()); document.getElementById('consent-card')?.remove(); closeDataPanel(panel); }
       catch (e) { appendError('설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
     });
     panel.querySelector('#dp-delete').addEventListener('click', async () => {
@@ -1126,6 +727,11 @@
         appendError(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback}건을 삭제하고 동의를 철회했어요.`);
       } catch (e) { appendError('삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
     });
+  }
+
+  function closeDataPanel(panel) {
+    panel.remove();
+    if (!chat.querySelector('.row.user')) document.querySelector('.chat-panel').classList.remove('has-conversation');
   }
 
   function feedbackBar(turnId) {
@@ -1167,7 +773,13 @@
   document.getElementById('my-data').addEventListener('click', openDataPanel);
 
   chat.addEventListener('click', e => {
-    const prompt = e.target.closest('.prompt-chip');
+    if (e.target.closest('[data-start-product]')) {
+      msgEl.placeholder = '예: 궁금한 브랜드와 제품명을 적고, 성분을 설명해 달라고 해보세요.';
+      msgEl.focus();
+      notify('궁금한 제품명과 함께 질문을 입력해 주세요.');
+      return;
+    }
+    const prompt = e.target.closest('[data-prompt]');
     if (prompt) {
       if (msgEl.disabled) return;
       msgEl.value = prompt.dataset.prompt;
@@ -1177,19 +789,24 @@
     }
     const card = e.target.closest('.product-card');
     if (!card) return;
+    const row = card.closest('.row');
+    const save = e.target.closest('[data-save-product]');
+    const compare = e.target.closest('[data-compare-product]');
+    const ask = e.target.closest('[data-ask-product]');
+    if (save) { toggleSaved(row._products[Number(save.dataset.saveProduct)]); return; }
+    if (compare) { toggleCompare(Number(compare.dataset.compareProduct), row); return; }
+    if (ask) { if (row !== activeProductRow) { notify('이전 추천은 제품명을 직접 입력해 주세요.'); return; } askQuestion(`${Number(ask.dataset.askProduct) + 1}번 제품의 성분과 추천 이유를 자세히 알려줘.`); return; }
+    if (e.target.closest('a')) return;
     card.classList.toggle('open');
-    card.setAttribute('aria-expanded', card.classList.contains('open') ? 'true' : 'false');
-  });
-
-  chat.addEventListener('keydown', e => {
-    const card = e.target.closest('.product-card');
-    if (!card || (e.key !== 'Enter' && e.key !== ' ')) return;
-    e.preventDefault();
-    card.click();
+    const toggle = card.querySelector('[data-toggle-product]');
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(card.classList.contains('open')));
+      toggle.setAttribute('aria-label', card.classList.contains('open') ? '성분 상세 접기' : '성분 상세 펼치기');
+    }
   });
 
   msgEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });
 
   msgEl.addEventListener('input', () => {
@@ -1292,6 +909,182 @@
     };
     return map[tier] || 'tier-insufficient';
   }
+
+  let skinProfile = { skin: '', concerns: [] };
+  let profilePending = true;
+  let latestProducts = [];
+  let activeProductRow = null;
+  const comparison = new Set();
+  let savedProducts = [];
+  let toastTimer;
+  try {
+    const parsed = JSON.parse(localStorage.getItem('4evr0.saved-products.v1') || '[]');
+    if (Array.isArray(parsed)) savedProducts = parsed.filter(p => p && typeof p.product_id === 'string' && typeof p.product_name === 'string').slice(0, 50);
+  } catch (_) { /* Private mode and unavailable storage still support the current visit. */ }
+
+  function safeExternalUrl(value) {
+    try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; }
+    catch (_) { return ''; }
+  }
+  function ingredientNotes(name, ingredients) {
+    const ing = ingredientByInci(name, ingredients);
+    if (!ing) return '';
+    return [ing.sensitive_note, ing.kr_reg_status === 'restricted' ? ing.kr_limit_note : null]
+      .filter(Boolean).map(note => `<div class="ingredient-note">${escHtml(note)}</div>`).join('');
+  }
+  function notify(message) {
+    clearTimeout(toastTimer);
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
+  }
+  function profileDescription() {
+    const parts = [];
+    if (skinProfile.skin && skinProfile.skin !== '잘 모르겠어요') parts.push(`피부 타입: ${skinProfile.skin}`);
+    if (skinProfile.concerns.length) parts.push(`피부 고민: ${skinProfile.concerns.join(', ')}`);
+    return parts.join('. ');
+  }
+  function updateProfile() {
+    const text = [skinProfile.skin, ...skinProfile.concerns].filter(Boolean).join(' · ');
+    document.getElementById('skin-summary').textContent = text || '피부를 조금 더 알려주세요. 나에게 맞는 추천의 시작이에요.';
+    document.getElementById('composer-profile').textContent = text || '내 피부 설정';
+  }
+  function openDialog(id) { closeSidebar(); document.getElementById(id).showModal(); }
+  document.querySelectorAll('[data-open-profile]').forEach(button => button.addEventListener('click', () => openDialog('profile-dialog')));
+  document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
+  document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('click', event => {
+    if (event.target !== dialog) return;
+    const box = dialog.getBoundingClientRect();
+    if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+  }));
+  document.getElementById('profile-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    skinProfile = { skin: data.get('skin') || '', concerns: data.getAll('concern') };
+    profilePending = true;
+    updateProfile();
+    document.getElementById('profile-dialog').close();
+    notify('선택한 피부 정보를 다음 질문에 반영할게요.');
+    msgEl.focus();
+  });
+  document.getElementById('clear-profile').addEventListener('click', () => {
+    document.getElementById('profile-form').reset();
+    skinProfile = { skin: '', concerns: [] };
+    profilePending = true;
+    updateProfile();
+    notify('이 페이지의 피부 설정을 초기화했어요.');
+  });
+  function isSaved(product) { return savedProducts.some(p => p.product_id === product.product_id); }
+  function syncSavedButtons() {
+    document.getElementById('saved-count').textContent = savedProducts.length;
+    chat.querySelectorAll('[data-save-product]').forEach(button => {
+      const product = button.closest('.row')._products[Number(button.dataset.saveProduct)];
+      const saved = isSaved(product);
+      button.setAttribute('aria-pressed', String(saved));
+      button.textContent = saved ? '♥ 관심 제품에 담았어요' : '♡ 관심 제품 담기';
+    });
+  }
+  function toggleSaved(product) {
+    if (!product) return;
+    if (isSaved(product)) savedProducts = savedProducts.filter(p => p.product_id !== product.product_id);
+    else {
+      if (savedProducts.length >= 50) { notify('관심 제품은 최대 50개까지 보관할 수 있어요.'); return; }
+      savedProducts.push({ product_id: product.product_id, product_name: product.product_name, brand: product.brand, product_url: safeExternalUrl(product.product_url) });
+    }
+    try { localStorage.setItem('4evr0.saved-products.v1', JSON.stringify(savedProducts)); }
+    catch (_) { notify('브라우저 저장이 제한되어 이번 방문 동안만 보관해요.'); }
+    syncSavedButtons();
+    renderSavedProducts();
+  }
+  function renderSavedProducts() {
+    const list = document.getElementById('saved-list');
+    list.innerHTML = savedProducts.length ? savedProducts.map((p, index) => `<article class="saved-item"><small>${escHtml(p.brand || '')}</small><h3>${escHtml(p.product_name)}</h3><div class="saved-item-actions">${safeExternalUrl(p.product_url) ? `<a href="${escAttr(safeExternalUrl(p.product_url))}" target="_blank" rel="noopener noreferrer">올리브영에서 보기 ↗</a>` : ''}<button data-remove-saved="${index}">관심 해제</button></div></article>`).join('') : '<div class="empty-saved"><p>아직 담아둔 제품이 없어요.<br>추천 카드에서 ♡ 관심 제품 담기를 눌러보세요.</p></div>';
+  }
+  document.getElementById('saved-products').addEventListener('click', () => { renderSavedProducts(); openDialog('saved-dialog'); });
+  document.getElementById('saved-list').addEventListener('click', event => {
+    const button = event.target.closest('[data-remove-saved]');
+    if (button) toggleSaved(savedProducts[Number(button.dataset.removeSaved)]);
+  });
+  document.getElementById('open-guide').addEventListener('click', () => openDialog('guide-dialog'));
+  const mobileLayout = window.matchMedia('(max-width: 760px)');
+  function updateSidebarAccess() {
+    document.getElementById('sidebar').inert = mobileLayout.matches && !document.body.classList.contains('sidebar-open');
+  }
+  mobileLayout.addEventListener('change', updateSidebarAccess);
+  updateSidebarAccess();
+  function closeSidebar() {
+    document.body.classList.remove('sidebar-open');
+    updateSidebarAccess();
+    document.querySelector('.mobile-menu').setAttribute('aria-expanded', 'false');
+  }
+  document.querySelector('.mobile-menu').addEventListener('click', () => {
+    const open = document.body.classList.toggle('sidebar-open');
+    updateSidebarAccess();
+    document.querySelector('.mobile-menu').setAttribute('aria-expanded', String(open));
+  });
+  document.querySelector('.mobile-overlay').addEventListener('click', closeSidebar);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') closeSidebar(); });
+  document.getElementById('nav-chat').addEventListener('click', () => { closeSidebar(); msgEl.focus(); });
+  function askQuestion(text) {
+    if (sending) { notify('답변이 끝나면 이어서 질문할 수 있어요.'); return; }
+    if (!sessionReady) { notify('상담 연결을 먼저 확인해 주세요.'); return; }
+    msgEl.value = text;
+    msgEl.dispatchEvent(new Event('input'));
+    send();
+  }
+  document.getElementById('followups').addEventListener('click', event => {
+    const button = event.target.closest('[data-followup]');
+    if (button) askQuestion(button.dataset.followup);
+  });
+  function resetRecommendationUI() {
+    latestProducts = [];
+    activeProductRow = null;
+    comparison.clear();
+    chat.querySelectorAll('[data-compare-product], [data-ask-product]').forEach(button => { button.disabled = true; });
+    document.getElementById('followups').hidden = true;
+    updateComparison();
+  }
+  function syncRecommendationUI(products, row) {
+    if (latestProducts.map(p => p.product_id).join('|') !== products.map(p => p.product_id).join('|')) comparison.clear();
+    latestProducts = products;
+    activeProductRow = row;
+    document.getElementById('followups').hidden = !products.length;
+    chat.querySelectorAll('[data-compare-product], [data-ask-product]').forEach(button => { button.disabled = button.closest('.row') !== row; });
+    updateComparison();
+    syncSavedButtons();
+  }
+  function toggleCompare(index, row) {
+    if (row !== activeProductRow) return;
+    if (comparison.has(index)) comparison.delete(index);
+    else {
+      if (comparison.size >= 3) { notify('비교는 한 번에 최대 3개까지 가능해요.'); return; }
+      comparison.add(index);
+    }
+    updateComparison();
+  }
+  function updateComparison() {
+    document.getElementById('compare-bar').hidden = !comparison.size;
+    document.getElementById('compare-label').textContent = `${[...comparison].sort((a,b) => a-b).map(i => i + 1).join(' · ')}번 제품 선택 (${comparison.size}/3)`;
+    document.getElementById('compare-send').disabled = comparison.size < 2 || sending;
+    activeProductRow?.querySelectorAll('[data-compare-product]').forEach(button => {
+      const selected = comparison.has(Number(button.dataset.compareProduct));
+      button.setAttribute('aria-pressed', String(selected));
+      button.textContent = selected ? '✓ 비교에 담았어요' : '+ 비교에 담기';
+    });
+  }
+  document.getElementById('clear-compare').addEventListener('click', () => { comparison.clear(); updateComparison(); });
+  document.getElementById('compare-send').addEventListener('click', () => {
+    if (comparison.size < 2 || sending) return;
+    const numbers = [...comparison].sort((a,b) => a-b).map(i => `${i + 1}번`).join(', ');
+    askQuestion(`${numbers} 제품의 성분을 비교해줘.`);
+  });
+  chat.addEventListener('error', event => {
+    if (event.target.tagName !== 'IMG') return;
+    const slot = event.target.closest('.product-image-slot');
+    if (slot) slot.textContent = '이미지 준비 중';
+  }, true);
+  syncSavedButtons();
 
   initSession();
   loadConsent();
