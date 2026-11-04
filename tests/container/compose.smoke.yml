@@ -39,3 +39,8 @@ services:
     networks:
       proxy:
         aliases: [beta.localhost]
+  # 관측 스택은 실제 모니터링 목적지가 필요해 스모크에서 제외 (profile 미지정 시 기동 안 함)
+  node-exporter:
+    profiles: [observe]
+  alloy:
+    profiles: [observe]
