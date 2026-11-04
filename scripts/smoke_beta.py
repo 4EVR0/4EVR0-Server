@@ -21,7 +21,6 @@ def main():
     subnet = next(ipaddress.ip_network(f"172.29.{i}.0/28") for i in range(1, 255)
                   if not any(ipaddress.ip_network(f"172.29.{i}.0/28").overlaps(n) for n in used if n.version == 4))
     env = {**os.environ, "APP_IMAGE": args.image, "RUNTIME_ENV_FILE": "/dev/null", "PROXY_ENV_FILE": "/dev/null",
-           "OBSERVE_ENV_FILE": "/dev/null",
            "PROXY_SUBNET": str(subnet), "CADDY_IP": str(subnet.network_address + 2),
            "APP_IP": str(subnet.network_address + 3)}
     compose = ["docker", "compose", "--project-name", project, "--env-file", "/dev/null",
