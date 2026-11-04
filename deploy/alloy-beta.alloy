@@ -60,10 +60,21 @@ discovery.relabel "beta" {
   }
 }
 
-// 라벨은 job/host/service만 (trace_id·level 등은 LogQL json 필터로)
+// 라벨은 job/host/service(+graph_query의 func)만 (trace_id·level 등은 LogQL json 필터로)
 loki.source.docker "beta" {
   host       = "unix:///var/run/docker.sock"
   targets    = discovery.relabel.beta.output
   labels     = {job = "beta-app", host = sys.env("HOST_NAME")}
+  forward_to = [loki.process.beta.receiver]
+}
+
+// Neo4j 쿼리 로그(event=graph_query)의 함수명을 func 라벨로 (neo4j 대시보드용, 값 종류 적음)
+loki.process "beta" {
+  stage.regex {
+    expression = `event=graph_query func=(?P<func>[^\s"]+)`
+  }
+  stage.labels {
+    values = {func = ""}
+  }
   forward_to = [loki.write.monitoring.receiver]
 }
