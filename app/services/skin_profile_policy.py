@@ -18,7 +18,7 @@ def cache_identity(message: str) -> str:
     profile = current.get()
     data = {'skin': profile.skin, 'concerns': sorted(set(profile.concerns))} if profile else {}
     digest = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    return f'skin-exclusions-v1|{digest}|{message}'
+    return f'skin-exclusions-v2|{digest}|{message}'
 
 
 async def filter_products(products: list[dict]) -> list[dict]:

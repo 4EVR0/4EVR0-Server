@@ -473,6 +473,12 @@ def _finalize_ingredients(
     raw_ingredients: list[dict], raw_products: list[dict], candidates: list[IngredientResult],
 ) -> list[IngredientResult]:
     """후보 성분에서 최종 추천 성분을 고른다(6장 규칙). 비활성이면 후보 전체."""
+    skin = skin_profile_policy.current.get()
+    if skin and skin.sensitive:
+        # The response must not reintroduce an excluded active as an alternative.
+        matched = {name for product in raw_products for name in product.get('matched_ingredients', [])}
+        candidates = [item for item in candidates if item.name in matched]
+        raw_ingredients = [row for row in raw_ingredients if row.get('name') in matched]
     if not settings.ingredient_selection_enabled:
         return candidates
     picked = select_recommended_ingredients(
@@ -626,6 +632,10 @@ async def _filter_products_with_constraints(products: list[dict], constraints: l
 
 
 def _build_no_product_response(*args, **kwargs) -> str:
+    if skin_profile_policy.note():
+        return ('질문하신 목적의 제품 중 피부 프로필의 제외 조건까지 충족하는 후보를 확인하지 못했어요. '
+                '현재 데이터에서는 구체적인 제품이나 제외된 성분을 대안으로 추천하지 않을게요.\n\n'
+                + skin_profile_policy.note())
     text = _build_no_product_response_base(*args, **kwargs)
     return _append_coverage_note(text, skin_profile_policy.note())
 

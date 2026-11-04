@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.domain.enums import Concern
-from app.schemas.recommend import SkinProfile, RecommendResponse
+from app.schemas.recommend import SkinProfile, IngredientResult
 from app.services import skin_profile_policy as policy, recommend_service as service
 
 
@@ -49,6 +49,16 @@ class SkinProfilePolicyTest(unittest.IsolatedAsyncioTestCase):
     async def test_inventory_failure_does_not_restore_excluded_candidates(self):
         with patch.object(policy, 'query_product_ingredient_inventory', AsyncMock(return_value={})):
             self.assertEqual([], await policy.filter_products([{'product_id': 'p'}]))
+
+    async def test_excluded_ingredients_are_not_recommended_in_empty_or_nonempty_response(self):
+        ingredients = [IngredientResult(name='SALICYLIC ACID'), IngredientResult(name='NIACINAMIDE')]
+        with patch.object(service.settings, 'ingredient_selection_enabled', False):
+            self.assertEqual([], service._finalize_ingredients([], [], ingredients))
+            allowed = service._finalize_ingredients([], [{'matched_ingredients': ['NIACINAMIDE']}], ingredients)
+            self.assertEqual(['NIACINAMIDE'], [item.name for item in allowed])
+        text = service._build_no_product_response(ingredients, [], [Concern.ACNE], '여드름 추천')
+        self.assertNotIn('SALICYLIC ACID', text)
+        self.assertIn('제외 조건', text)
 
     async def test_cache_isolated_by_profile_and_order_is_canonical(self):
         a = policy.cache_identity('여드름 세럼')
