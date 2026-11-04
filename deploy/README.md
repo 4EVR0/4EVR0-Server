@@ -102,6 +102,23 @@ docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml exec -T ap
 
 외부 HTTPS에서는 상태·문서·메트릭 경로가 404다. 나머지 UI/API는 로그인 없이 접근한다.
 
+## 상품 사진과 피부 프로필
+
+상품 사진은 비공개 S3의 JPG/PNG/WebP/GIF 원본을 운영자 인증으로 캐시한 후 Caddy에서
+`/product-images/goodsNo=…/main.jpg`로 제공한다. JPG 주소도 실제 PNG 원본을 찾으며 올바른 MIME을 반환한다.
+버킷을 공개하거나 앱 컨테이너에 AWS 키·호스트 메타데이터 접근을 허용하지 않는다.
+`scripts/sync_product_images.py --goods-file goods.json --output-dir /path/to/product-images --profile OPERATOR`
+명령의 `goods.json`은 그래프에 등록된 공개 상품 번호의 JSON 배열이다. 캐시를 EC2로 옮긴 뒤
+`PRODUCT_IMAGE_DIR=/srv/4evr0/product-images`로 Caddy에 읽기 전용 마운트하고, 앱의
+`PRODUCT_IMAGE_BASE_URL=https://실제도메인/product-images`를 지정한다. 원본이 없는 제품에는 사진 없음이 표시된다.
+
+브라우저는 질문 `message`와 선택한 `skin_profile`을 별도 JSON 필드로 매 요청 전달한다.
+프로필의 고민은 검색·LLM 추출·순위에 더하지 않는다. 민감함·붉은기는 질문 목적의 후보를 찾은 후
+전체 매핑 성분의 `sensitive_caution`(exclude/caution) 또는 민감성 CAUTION 근거로 제품을 제외한다.
+여드름 목적과 함께 있어도 이 제외를 완화하지 않는다. 성분 정보가 없거나 조회가 실패하면 해당 제품을 남기지 않는다.
+제외는 최종 개수 제한 전에 적용하며, 프로필별 캐시와 후속 제품 복원에도 동일한 조건을 적용한다.
+이 필터는 전성분 완전성이나 개인별 안전을 보증하지 않는다. 기존 수집 동의와 별개로 프로필 자체를 원문에 합치거나 보관하지 않는다.
+
 ## 관측 (Alloy → 모니터링 서버)
 
 `alloy`가 내부망에서 앱 `/metrics`와 `node-exporter`를 수집하고, Docker 로그(app·caddy·redis)를

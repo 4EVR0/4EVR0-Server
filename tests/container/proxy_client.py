@@ -25,9 +25,16 @@ with request("/") as response:
 with request("/static/olive.css") as response:
     assert response.status == 200
     assert b".composer-section" in response.read(), "UI stylesheet missing"
+with request('/product-images/goodsNo=A000000000001/main.jpg') as response:
+    assert response.status == 200
+    assert response.headers['Content-Type'].startswith('image/png')
+    assert response.read().startswith(b'\x89PNG'), 'PNG source must work through the product image route'
+with request('/product-images/goodsNo=A000000000002/main.jpg') as response:
+    assert response.status == 404
 with request("/api/v1/sessions/current") as response:
     assert response.status == 404, "anonymous visitor must reach session API without a login prompt"
-with request("/api/v1/sessions/browser", method="POST", data=b"x" * 17000) as response:
+with request("/api/v1/recommend/stream", method="POST", headers={'Content-Type': 'application/json'},
+             data=json.dumps({'message': 'x' * 17000}).encode()) as response:
     assert response.status == 413, "oversized request must be rejected by the proxy"
 for path in ("/health", "/live", "/ready", "/metrics", "/docs", "/openapi.json"):
     with request(path) as response:

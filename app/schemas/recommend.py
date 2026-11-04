@@ -1,10 +1,22 @@
+from typing import Literal
 from pydantic import BaseModel, Field
+
+
+class SkinProfile(BaseModel):
+    """Optional exclusion context; never merged into the current search intent."""
+    skin: Literal['', '건성', '지성', '복합성', '중성', '잘 모르겠어요'] = ''
+    concerns: list[Literal['속건조', '민감함', '붉은기', '트러블', '피지', '미백·잡티', '탄력·주름']] = Field(default_factory=list, max_length=7)
+
+    @property
+    def sensitive(self) -> bool:
+        return bool({'민감함', '붉은기'}.intersection(self.concerns))
 
 
 class RecommendRequest(BaseModel):
     session_id: str | None = None
     message: str
     category: str | None = None
+    skin_profile: SkinProfile | None = None
 
 
 class IngredientResult(BaseModel):

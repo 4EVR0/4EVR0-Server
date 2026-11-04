@@ -139,6 +139,26 @@ async def test_cookie_cannot_be_overridden_by_body(app, session_backend, monkeyp
 
 
 @async_test
+async def test_profile_is_separate_from_question_for_batch_and_stream(app, session_backend, monkeypatch):
+    calls = []
+    async def fake_recommend(sid, message, *, skin_profile):
+        calls.append((message, skin_profile.model_dump()))
+        return RecommendResponse(session_id=sid, turn_id='t', ingredients=[], products=[],
+                                 response_text='진정 목적 유지', model_used='test')
+    async def fake_stream(sid, message, *, skin_profile):
+        calls.append((message, skin_profile.model_dump()))
+        yield 'event: done\ndata: {}\n\n'
+    monkeypatch.setattr(recommend, 'recommend', fake_recommend)
+    monkeypatch.setattr(recommend, 'recommend_stream', fake_stream)
+    payload = {'message': '진정 세럼 추천해줘', 'skin_profile': {'skin': '지성', 'concerns': ['피지']}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://127.0.0.1') as client:
+        await client.post('/api/v1/sessions/browser')
+        assert (await client.post('/api/v1/recommend', json=payload)).status_code == 200
+        assert (await client.post('/api/v1/recommend/stream', json=payload)).status_code == 200
+    assert calls == [(payload['message'], payload['skin_profile'])] * 2
+
+
+@async_test
 async def test_missing_or_expired_session_is_not_reused(app, session_backend):
     live, _, _ = session_backend
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:

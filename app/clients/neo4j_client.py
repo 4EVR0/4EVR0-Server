@@ -186,7 +186,15 @@ async def query_product_ingredient_inventory(product_ids: list[str]) -> dict[str
     UNWIND $product_ids AS product_id
     MATCH (p:Product {product_id: product_id})-[:CONTAINS]->(i:Ingredient)
     WHERE i.inci_name IS NOT NULL AND i.inci_name <> ''
-    WITH product_id, collect(DISTINCT {name: i.inci_name, kor_name: i.kor_name}) AS ingredients
+    WITH product_id, collect(DISTINCT {
+        name: i.inci_name, kor_name: i.kor_name,
+        sensitive_caution: coalesce(i.sensitive_caution, ''),
+        sensitivity_caution: EXISTS {
+            MATCH (i)-[:CAUTION]->(c:Concern)
+            WHERE c.concern_code IN ['SENSITIVE_SKIN', 'REDNESS', 'IRRITATED_SKIN',
+                                    'ATOPIC_PRONE', 'ROSACEA_PRONE', 'BARRIER_DAMAGE']
+        }
+    }) AS ingredients
     RETURN product_id, ingredients
     """
     try:

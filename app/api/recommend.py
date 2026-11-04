@@ -64,7 +64,8 @@ async def _collect_stream(stream, session_id: str, subject_id: str | None, messa
 @router.post("", response_model=RecommendResponse)
 async def recommend_endpoint(body: RecommendRequest, request: Request):
     session_id = await _resolve_session(body, request)
-    result = await recommend(session_id, body.message)
+    options = {'skin_profile': body.skin_profile} if body.skin_profile is not None else {}
+    result = await recommend(session_id, body.message, **options)
     collection.after_turn(session_id, collection.subject_from(request), body.message, "batch", result.model_dump())
     if request.cookies.get(COOKIE_NAME):
         return JSONResponse(result.model_dump(exclude={"session_id"}), headers={"Cache-Control": "no-store"})
@@ -75,7 +76,8 @@ async def recommend_endpoint(body: RecommendRequest, request: Request):
 async def recommend_stream_endpoint(body: RecommendRequest, request: Request):
     """SSE 추천 — meta(구조 데이터 즉시) → delta(검증된 본문) → done."""
     session_id = await _resolve_session(body, request)
-    stream = _collect_stream(recommend_stream(session_id, body.message), session_id,
+    options = {'skin_profile': body.skin_profile} if body.skin_profile is not None else {}
+    stream = _collect_stream(recommend_stream(session_id, body.message, **options), session_id,
                              collection.subject_from(request), body.message)
     if request.cookies.get(COOKIE_NAME):
         stream = _browser_stream(stream)

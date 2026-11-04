@@ -14,7 +14,7 @@
 <div class="app-shell">
   <button class="mobile-overlay" aria-label="메뉴 닫기" tabindex="-1"></button>
   <aside class="sidebar" aria-label="메인 메뉴" id="sidebar">
-    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true" class="brand-symbol"><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg><div><div class="wordmark">4EVR0<span style="color:#89996c">.</span></div><div class="brand-caption">YOUR SKIN, UNDERSTOOD</div></div></div>
+    <button type="button" class="brand" id="go-home" aria-label="4EVR0 홈으로"><svg viewBox="0 0 24 24" aria-hidden="true" class="brand-symbol"><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg><div><div class="wordmark">4EVR0<span style="color:#89996c">.</span></div><div class="brand-caption">YOUR SKIN, UNDERSTOOD</div></div></button>
     <button class="new-chat" id="new-chat" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 5v14M5 12h14"/></svg>새로운 상담 시작</button>
     <nav class="nav-group" aria-label="상담 메뉴">
       <div class="nav-label">MY SKINCARE</div>
@@ -26,7 +26,7 @@
     <div class="sidebar-footer"><button id="my-data"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg>내 데이터 관리</button><small>© 2026 4EVR0 · Made for your skin</small></div>
   </aside>
   <main class="workspace">
-    <header class="topbar"><div class="page-name"><button class="mobile-menu" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>스킨케어 컨시어지 <span class="beta">BETA</span></div><div class="topbar-right"><span class="no-login"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 3 8 3v5c0 6-8 10-8 10S4 17 4 11V6Z"/><path d="m8 11 3 3 5-5"/></svg>로그인 없이, 편안하게</span><div class="status-pill" role="status"><span id="status-dot" title="연결 중"></span><span id="connection-label">연결 중</span></div><span id="model-badge"></span></div></header>
+    <header class="topbar"><div class="page-name"><button class="mobile-menu" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>스킨케어 컨시어지 <span class="beta">BETA</span></div><div class="topbar-right"><span class="no-login"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 3 8 3v5c0 6-8 10-8 10S4 17 4 11V6Z"/><path d="m8 11 3 3 5-5"/></svg>로그인 없이, 편안하게</span><div class="status-pill" role="status" hidden><span id="status-dot" title="연결 중"></span><span id="connection-label">연결 중</span></div><span id="model-badge"></span></div></header>
     <section class="chat-panel" aria-label="화장품 추천 상담">
       <div id="chat" role="log" aria-label="상담 대화" aria-relevant="additions">
         <div class="welcome-card">
@@ -54,7 +54,7 @@
     </section>
   </main>
 </div>
-<dialog class="dialog" id="profile-dialog" aria-labelledby="profile-title"><form id="profile-form"><div class="dialog-header"><h2 id="profile-title">내 피부에 한 걸음 더.</h2><button type="button" class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>선택한 정보는 다음 질문에 함께 전달돼요.<br>이 페이지에서만 유지되며, 언제든 바꿀 수 있어요.</p><fieldset style="border:0"><legend class="field-title">피부 타입</legend><div class="choice-group"><label><input type="radio" name="skin" value="건성"><span>건성</span></label><label><input type="radio" name="skin" value="지성"><span>지성</span></label><label><input type="radio" name="skin" value="복합성"><span>복합성</span></label><label><input type="radio" name="skin" value="중성"><span>중성</span></label><label><input type="radio" name="skin" value="잘 모르겠어요"><span>잘 모르겠어요</span></label></div></fieldset><fieldset style="border:0"><legend class="field-title">요즘 신경 쓰이는 고민 <span class="muted-note">여러 개 선택할 수 있어요</span></legend><div class="choice-group"><label><input type="checkbox" name="concern" value="속건조"><span>속건조</span></label><label><input type="checkbox" name="concern" value="민감함"><span>민감함</span></label><label><input type="checkbox" name="concern" value="붉은기"><span>붉은기</span></label><label><input type="checkbox" name="concern" value="트러블"><span>트러블</span></label><label><input type="checkbox" name="concern" value="피지"><span>피지</span></label><label><input type="checkbox" name="concern" value="미백·잡티"><span>미백·잡티</span></label><label><input type="checkbox" name="concern" value="탄력·주름"><span>탄력·주름</span></label></div></fieldset><button class="primary-action" type="submit">이 피부 정보로 상담하기</button><button type="button" id="clear-profile" style="display:block;margin:14px auto 0;border:0;background:none;color:#879376;font-size:11px">피부 설정 초기화</button></form></dialog>
+<dialog class="dialog" id="profile-dialog" aria-labelledby="profile-title"><form id="profile-form"><div class="dialog-header"><h2 id="profile-title">내 피부에 한 걸음 더.</h2><button type="button" class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>질문하신 고민을 먼저 찾고, 피부 정보는 제품 제외 조건으로만 활용해요.<br>민감함·붉은기를 선택하면 확인된 주의 성분이 있는 제품을 제외해요. 정보는 이 페이지에서만 유지돼요.</p><fieldset style="border:0"><legend class="field-title">피부 타입</legend><div class="choice-group"><label><input type="radio" name="skin" value="건성"><span>건성</span></label><label><input type="radio" name="skin" value="지성"><span>지성</span></label><label><input type="radio" name="skin" value="복합성"><span>복합성</span></label><label><input type="radio" name="skin" value="중성"><span>중성</span></label><label><input type="radio" name="skin" value="잘 모르겠어요"><span>잘 모르겠어요</span></label></div></fieldset><fieldset style="border:0"><legend class="field-title">요즘 신경 쓰이는 고민 <span class="muted-note">여러 개 선택할 수 있어요</span></legend><div class="choice-group"><label><input type="checkbox" name="concern" value="속건조"><span>속건조</span></label><label><input type="checkbox" name="concern" value="민감함"><span>민감함</span></label><label><input type="checkbox" name="concern" value="붉은기"><span>붉은기</span></label><label><input type="checkbox" name="concern" value="트러블"><span>트러블</span></label><label><input type="checkbox" name="concern" value="피지"><span>피지</span></label><label><input type="checkbox" name="concern" value="미백·잡티"><span>미백·잡티</span></label><label><input type="checkbox" name="concern" value="탄력·주름"><span>탄력·주름</span></label></div></fieldset><button class="primary-action" type="submit">이 피부 정보로 상담하기</button><button type="button" id="clear-profile" style="display:block;margin:14px auto 0;border:0;background:none;color:#879376;font-size:11px">피부 설정 초기화</button></form></dialog>
 <dialog class="dialog" id="saved-dialog" aria-labelledby="saved-title"><div class="dialog-header"><h2 id="saved-title">마음에 담아둔 제품</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>이 브라우저에 제품만 보관해요. 로그인은 필요 없어요.</p><div class="saved-list" id="saved-list"></div></dialog>
 <dialog class="dialog" id="guide-dialog" aria-labelledby="guide-title"><div class="dialog-header"><h2 id="guide-title">나에게 맞는 선택의 시작</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>4EVR0와 이렇게 이야기해 보세요.</p><div class="guide-step"><span class="guide-number">01</span><div><h3>피부 고민을 편하게 알려주세요</h3><p>“속당김이 있고 볼이 자주 붉어져요.”<br>피부 타입과 원하는 제형을 함께 적으면 좋아요.</p></div></div><div class="guide-step"><span class="guide-number">02</span><div><h3>추천의 이유를 확인해 보세요</h3><p>제품의 성분 상세를 펼쳐 관련 성분과 주의사항을 확인해요. 성분 근거가 제품의 효과를 보장하지는 않아요.</p></div></div><div class="guide-step"><span class="guide-number">03</span><div><h3>비교하고, 이어서 물어보세요</h3><p>제품 2~3개를 선택해 성분을 비교하거나 “사용 순서를 알려줘”, “토너만 보여줘”라고 물어보세요.</p></div></div><button class="primary-action" data-close-dialog>상담 시작하기</button></dialog>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -101,7 +101,7 @@
       sessionReady = true;
       dot.classList.add('ok');
       dot.title = '연결됨';
-      document.getElementById('connection-label').textContent = '상담 준비 완료';
+      document.getElementById('connection-label').textContent = '';
       msgEl.disabled = false;
       sendBtn.disabled = false;
       newChatBtn.disabled = false;
@@ -125,13 +125,12 @@
       chat.innerHTML = initialChatHtml;
       resetRecommendationUI();
       document.querySelector('.chat-panel').classList.remove('has-conversation');
-      profilePending = true;
       msgEl.value = '';
       await createSession();
       if (consent && !consent.decided) showConsentCard();
       sessionReady = true;
       dot.classList.add('ok');
-      document.getElementById('connection-label').textContent = '상담 준비 완료';
+      document.getElementById('connection-label').textContent = '';
       msgEl.disabled = false;
       sendBtn.disabled = false;
       msgEl.focus();
@@ -362,8 +361,8 @@
           <article class="product-card">
             <div class="product-main">
               <div class="product-image-slot">
-                ${safeExternalUrl(productImageUrl(product))
-                  ? `<img src="${escAttr(safeExternalUrl(productImageUrl(product)))}" loading="lazy" alt="${escAttr(product.product_name)}">`
+                ${safeImageUrl(productImageUrl(product))
+                  ? `<img src="${escAttr(safeImageUrl(productImageUrl(product)))}" loading="lazy" alt="${escAttr(product.product_name)}">`
                   : '<span>제품 이미지</span>'}
               </div>
               <div class="product-info">
@@ -449,11 +448,11 @@
   //   delta: 한 번 이상의 검증된 본문 조각(현재 서버는 근거 검사 후 한 번에 전송)
   //   done : 최종 텍스트로 한 번 더 그려 제품별 설명(응답 원문 기반)까지 채운다
   // 스트리밍이 불가능한 환경이면 { fallback: true } 를 던져 일괄 경로로 넘긴다.
-  async function streamRecommend(text) {
+  async function streamRecommend(text, skinProfile) {
     const res = await fetch('/api/v1/recommend/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, skin_profile: skinProfile }),
     });
 
     if (!res.ok) {
@@ -553,11 +552,11 @@
   }
 
   // 기존 일괄 응답 경로 — 스트리밍이 불가능할 때의 폴백(동작 보장).
-  async function batchRecommend(text) {
+  async function batchRecommend(text, skinProfile) {
     const res = await fetch('/api/v1/recommend', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, skin_profile: skinProfile }),
     });
 
     removeTyping();
@@ -580,9 +579,8 @@
     if (sending || !sessionReady) return;
     const text = msgEl.value.trim();
     if (!text) return;
-    const includedProfile = profilePending;
-    const requestText = profilePending && profileDescription() ? `${profileDescription()}\n${text}` : text;
-    profilePending = false;
+    const requestText = text;
+    const requestProfile = { skin: skinProfile.skin, concerns: [...skinProfile.concerns] };
 
     sending = true;
     chat.setAttribute('aria-busy', 'true');
@@ -597,16 +595,15 @@
     appendTyping();
 
     try {
-      await streamRecommend(requestText);
+      await streamRecommend(requestText, requestProfile);
     } catch (e) {
-      profilePending = includedProfile;
       if (e && e.status) {
         removeTyping();
         if (e.status === 401 || e.status === 404) markSessionExpired();
         else appendError(`오류 (${e.status}): ${e.detail || '알 수 없는 오류'}`);
       } else {
         try {
-          if (await batchRecommend(requestText)) profilePending = false;
+          await batchRecommend(requestText, requestProfile);
         } catch (e2) {
           removeTyping();
           appendError('서버와 통신 중 오류가 발생했습니다.');
@@ -615,7 +612,7 @@
     } finally {
       sending = false;
       chat.setAttribute('aria-busy', 'false');
-      document.getElementById('connection-label').textContent = sessionReady ? '상담 준비 완료' : '새 상담이 필요해요';
+      document.getElementById('connection-label').textContent = sessionReady ? '' : '새 상담이 필요해요';
       updateComparison();
       msgEl.disabled = !sessionReady;
       sendBtn.disabled = !sessionReady;
@@ -626,6 +623,12 @@
 
   sendBtn.addEventListener('click', send);
   newChatBtn.addEventListener('click', startNewChat);
+  document.getElementById('go-home').addEventListener('click', async () => {
+    closeSidebar();
+    if (sending) { notify('답변이 끝나면 홈으로 돌아갈 수 있어요.'); return; }
+    await startNewChat();
+    chat.scrollTop = 0;
+  });
 
   // ── 동의·피드백·내 데이터 관리 ─────────────────────────────────────────
   let consent = null;  // GET /api/v1/consents 결과
@@ -889,13 +892,21 @@
     return '';
   }
 
+  function safeImageUrl(value) {
+    try { const url = new URL(value, location.origin); return ['https:', 'http:'].includes(url.protocol) && value ? url.href : ''; }
+    catch (_) { return ''; }
+  }
+
   function productImageUrl(product) {
     if (product && product.image_url) {
+      if (product.goods_no && product.image_url.startsWith('https://oliveyoung-crawl-data.s3.amazonaws.com/')) {
+        return `/product-images/goodsNo=${encodeURIComponent(product.goods_no)}/main.jpg`;
+      }
       return product.image_url;
     }
     const goodsNo = product && product.goods_no ? String(product.goods_no).trim() : '';
     if (goodsNo) {
-      return `https://oliveyoung-crawl-data.s3.amazonaws.com/oliveyoung_images/goodsNo=${encodeURIComponent(goodsNo)}/main.jpg`;
+      return `/product-images/goodsNo=${encodeURIComponent(goodsNo)}/main.jpg`;
     }
     return '';
   }
@@ -911,7 +922,6 @@
   }
 
   let skinProfile = { skin: '', concerns: [] };
-  let profilePending = true;
   let latestProducts = [];
   let activeProductRow = null;
   const comparison = new Set();
@@ -939,12 +949,6 @@
     toast.hidden = false;
     toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
   }
-  function profileDescription() {
-    const parts = [];
-    if (skinProfile.skin && skinProfile.skin !== '잘 모르겠어요') parts.push(`피부 타입: ${skinProfile.skin}`);
-    if (skinProfile.concerns.length) parts.push(`피부 고민: ${skinProfile.concerns.join(', ')}`);
-    return parts.join('. ');
-  }
   function updateProfile() {
     const text = [skinProfile.skin, ...skinProfile.concerns].filter(Boolean).join(' · ');
     document.getElementById('skin-summary').textContent = text || '피부를 조금 더 알려주세요. 나에게 맞는 추천의 시작이에요.';
@@ -962,16 +966,14 @@
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     skinProfile = { skin: data.get('skin') || '', concerns: data.getAll('concern') };
-    profilePending = true;
     updateProfile();
     document.getElementById('profile-dialog').close();
-    notify('선택한 피부 정보를 다음 질문에 반영할게요.');
+    notify('질문을 우선하고, 피부 정보는 제품 제외에 활용할게요.');
     msgEl.focus();
   });
   document.getElementById('clear-profile').addEventListener('click', () => {
     document.getElementById('profile-form').reset();
     skinProfile = { skin: '', concerns: [] };
-    profilePending = true;
     updateProfile();
     notify('이 페이지의 피부 설정을 초기화했어요.');
   });
@@ -1082,7 +1084,7 @@
   chat.addEventListener('error', event => {
     if (event.target.tagName !== 'IMG') return;
     const slot = event.target.closest('.product-image-slot');
-    if (slot) slot.textContent = '이미지 준비 중';
+    if (slot) slot.textContent = '등록된 제품 사진이 없어요';
   }, true);
   syncSavedButtons();
 

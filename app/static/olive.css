@@ -87,6 +87,12 @@ button svg {
 }
 
 .brand {
+  border:0;
+  background:none;
+  color:inherit;
+  text-align:left;
+  cursor:pointer;
+  font:inherit;
   display:flex;
   gap:10px;
   align-items:center;
