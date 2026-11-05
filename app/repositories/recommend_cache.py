@@ -29,7 +29,8 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v32:"  # v32: 성분 역할 목록·고민별 연구 수·고민 연결 설명(프롬프트 v13)
+_KEY_PREFIX = "reccache:v33:"  # v33: 대체 템플릿에 역할·고민별 연구 수·고민 연결(v32에 저장된 예전 대체 답변 무효화)
+# v32: 성분 역할 목록·고민별 연구 수·고민 연결 설명(프롬프트 v13)
 # v31: 생성 입력 효능 라벨 한국어화("여드름 기미" 오역 방지)
 # v30: 모델이 고민을 못 뽑은 요청의 키워드 보완(v29의 no_products 응답 무효화)
 # v29: 배합한도 고시 원문 제거·복합 고민 성분 보장(v28 응답 무효화)

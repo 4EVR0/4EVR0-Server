@@ -1088,6 +1088,10 @@ def _build_grounded_product_response(
     wrinkle_area = next((area for area in ("입가", "눈가", "이마", "목") if area in concern_text), None)
     if Concern.WRINKLES in (concerns or []) and wrinkle_area:
         analysis = f"{wrinkle_area} 주름 관리에 맞는 성분 근거와 제품 사용 부위를 살폈습니다."
+    elif (links := [_CONCERN_ROLE_LINKS[c.value] for c in (concerns or [])[:2] if c.value in _CONCERN_ROLE_LINKS]) \
+            and any(_ingredient_roles(item) for item in highlighted):
+        # 사용자가 말하지 않은 역할(예: 모공 막힘)로 바로 넘어가지 않게 고민과 역할의 연결을 먼저 적는다.
+        analysis = " ".join(links)
     elif benefits:
         concern_prefix = f"말씀하신 “{concern_text}”를 기준으로" if concern_text else "말씀하신 피부 고민을 기준으로"
         analysis = f"{concern_prefix} {_join_korean(benefits)} 근거를 함께 살폈습니다."
@@ -1108,6 +1112,14 @@ def _build_grounded_product_response(
             display = _ingredient_display_name(item)
             benefit = _claim_benefit_phrase(item)
             evidence = _evidence_label(item.eligibility_tier, item.paper_ref)
+            roles = _ingredient_roles(item)
+            counts = [f"{_concern_label(ev['concern'])} 관련 연구 {ev['paper_count']}건"
+                      for ev in item.concern_evidence if ev.get("paper_count")]
+            if roles and counts:
+                # 연구 수는 고민(질환) 기준이다. 대표 효능 하나의 연구처럼 쓰지 않는다.
+                lines.append(f"- {display}: 연구에서 다룬 역할은 {', '.join(roles[:3])}이고, "
+                             f"{', '.join(counts)}이 있습니다.")
+                continue
             if benefit and evidence != "근거 미상":
                 line = f"- {display}: 확인된 효능은 {benefit}이며, 근거 수준은 {evidence}입니다."
             elif benefit:
@@ -2592,6 +2604,10 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
+                # 원문 없이 걸린 검사 이름만 남긴다(다음 원인 분석용).
+                logger.warning("output guard fallback kind=%s integrity=%s grounding=%s fragrance=%s", kind,
+                               [code for code, _ in integrity_issues], bool(grounding_violation),
+                               bool(fragrance_violation))
                 response_mode = kind
                 # 제품 매칭 성분의 한글명·근거를 찾도록 최종 선정이 아닌 후보 목록을 넘긴다.
                 response_text = _build_grounded_product_response(
@@ -3218,6 +3234,10 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
             if products and (integrity_issues or grounding_violation or fragrance_violation):
                 kind = "fragrance_rationale_fallback" if fragrance_violation else "quality_fallback" if integrity_issues else "grounding_fallback"
                 metrics.recommend_output_guard_total.labels(kind=kind).inc()
+                # 원문 없이 걸린 검사 이름만 남긴다(다음 원인 분석용).
+                logger.warning("output guard fallback kind=%s integrity=%s grounding=%s fragrance=%s", kind,
+                               [code for code, _ in integrity_issues], bool(grounding_violation),
+                               bool(fragrance_violation))
                 response_mode = kind
                 # 제품 매칭 성분의 한글명·근거를 찾도록 최종 선정이 아닌 후보 목록을 넘긴다.
                 response_text = _build_grounded_product_response(

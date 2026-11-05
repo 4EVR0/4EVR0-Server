@@ -166,3 +166,22 @@ def test_generation_input_gives_roles_per_concern_counts_and_links():
 def test_generation_input_without_concern_evidence_keeps_claim_line():
     content = _compose_user_content("x", [IngredientResult(name="GLYCERIN", kor_name="글리세린", claim="Hydrating")], [])
     assert "- 글리세린 (GLYCERIN): 보습 [" in content and "고민과 역할의 연결" not in content
+
+
+def test_fallback_template_uses_roles_counts_and_link():
+    # 베타(2026-11-05): 검사에 걸려 대체 템플릿이 나가면 "확인된 효능은 모공 막힘 관리이며, 근거 수준은 논문 근거 53건"
+    from app.schemas.recommend import ProductResult
+    from app.services.recommend_service import _build_grounded_product_response
+    ingredients = [
+        _evidence_ingredient("SALICYLIC ACID", "살리실릭애씨드", 53, 12,
+                             ["ANTIMICROBIAL", "COMEDOLYTIC", "KERATOLYTIC", "SEBUM_REGULATION"]),
+        _evidence_ingredient("CARNITINE", "카르니틴", 6, 5, ["BLEMISH_CARE", "SEBUM_REGULATION"]),
+    ]
+    products = [ProductResult(product_id="p1", product_name="세럼A", brand="B", category="세럼", matched_count=2,
+                              matched_ingredients=["SALICYLIC ACID", "CARNITINE"])]
+    text = _build_grounded_product_response("여드름이랑 피지", ingredients, products, [C.ACNE, C.OILY_SKIN])
+    assert "모공을 막고" in text.split("성분 설명")[0]
+    assert ("- 살리실릭애씨드 (SALICYLIC ACID): 연구에서 다룬 역할은 모공 막힘 관리, 각질 관리, 피지 조절이고, "
+            "트러블 관련 연구 53건, 피지 관련 연구 12건이 있습니다.") in text
+    assert "- 카르니틴 (CARNITINE): 연구에서 다룬 역할은 피지 조절이고," in text
+    assert "확인된 효능은 모공 막힘 관리" not in text
