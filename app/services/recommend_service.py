@@ -18,6 +18,7 @@ from app.clients.llm_health import LLMUnavailableError
 from app.clients.llm_gate import LLMOverCapacityError, get_gate_wait_seconds, llm_slot, reset_gate_wait
 from app.clients.neo4j_client import (
     query_cautioned_ingredients,
+    query_concern_evidence,
     query_ingredient_kor_names,
     query_ingredient_vocabulary,
     query_ingredients_by_effects,
@@ -402,6 +403,9 @@ async def retrieve_ingredient_candidates(profile: UserProfile) -> tuple[list[dic
         rows = merge_concern_candidates(dict(zip(effects_by_concern, results)),
                                         settings.ingredient_candidate_limit)
     rows = await apply_caution_filter(rows, concerns)
+    if rows and effects_by_concern:
+        evidence = await query_concern_evidence([row["name"] for row in rows], [c.value for c in effects_by_concern])
+        rows = [{**row, "concern_evidence": evidence.get(row["name"], [])} for row in rows]
     pool = concern_ingredient_pool(rows, list(effects_by_concern), settings.ingredient_product_pool)
     return rows, pool
 
@@ -2488,6 +2492,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     kr_limit_note=row.get("kr_limit_note"),
                     sensitive_note=row.get("sensitive_note"),
                     concerns=list(row.get("concerns") or []),
+                    concern_evidence=list(row.get("concern_evidence") or []),
                 )
                 for row in raw_ingredients
             ]
@@ -2768,6 +2773,63 @@ def _concern_label(code: str) -> str:
         return code
 
 
+# 고민과 성분 역할을 잇는 일반 설명. 생성 모델이 사용자가 말하지 않은 역할(예: 모공 막힘)로 설명을
+# 건너뛰지 않고 "왜 그 역할이 이 고민에 필요한지"를 한 문장으로 잇게 한다. 근거 수치가 아니라 일반 지식이다.
+_CONCERN_ROLE_LINKS: dict[str, str] = {
+    "ACNE": "피지와 각질이 모공을 막고 그 안에서 균이 늘어 염증이 생기면 트러블로 이어질 수 있어요. "
+            "그래서 피지 조절, 모공 막힘·각질 관리, 진정·항균 역할이 함께 거론돼요.",
+    "OILY_SKIN": "피지가 많으면 번들거리고 모공이 막히기 쉬워요. 그래서 피지 조절과 모공 막힘 관리 역할이 거론돼요.",
+    "COMEDONES": "피지와 각질이 모공에 쌓이면 블랙헤드·화이트헤드가 생겨요. 그래서 모공 막힘·각질 관리 역할이 거론돼요.",
+    "PORE_CONGESTION": "피지와 각질이 모공에 쌓이면 모공이 막혀요. 그래서 모공 막힘·각질 관리와 피지 조절 역할이 거론돼요.",
+    "ENLARGED_PORES": "피지가 많고 각질이 쌓이면 모공이 더 도드라져 보일 수 있어요. 그래서 피지 조절과 각질 관리 역할이 거론돼요.",
+    "DRY_SKIN": "피부 장벽이 약하면 수분이 쉽게 빠져나가 건조해져요. 그래서 보습·수분 유지와 장벽 회복 역할이 거론돼요.",
+    "DEHYDRATED_SKIN": "피부 속 수분이 부족하면 겉은 번들거려도 당길 수 있어요. 그래서 보습과 수분 유지 역할이 거론돼요.",
+    "FLAKY_SKIN": "각질이 제때 떨어지지 않고 건조하면 일어나요. 그래서 각질 관리와 보습 역할이 거론돼요.",
+    "HYPERPIGMENTATION": "멜라닌이 한곳에 많이 만들어지면 기미·색소 침착이 생겨요. 그래서 색소 침착 완화와 피부 톤 개선 역할이 거론돼요.",
+    "POST_ACNE_MARKS": "트러블 뒤 염증과 색소가 남으면 자국이 돼요. 그래서 진정과 색소 침착 완화 역할이 거론돼요.",
+    "SENSITIVE_SKIN": "장벽이 약하면 작은 자극에도 예민해져요. 그래서 진정과 장벽 회복 역할이 거론돼요.",
+    "REDNESS": "염증이나 자극이 이어지면 붉은기가 생겨요. 그래서 진정 역할이 거론돼요.",
+    "BARRIER_DAMAGE": "장벽이 손상되면 수분이 빠지고 자극에 약해져요. 그래서 장벽 회복과 보습 역할이 거론돼요.",
+    "WRINKLES": "피부 탄력과 수분이 줄면 주름이 깊어져요. 그래서 탄력·주름 관리와 보습 역할이 거론돼요.",
+}
+# 결과 효능(트러블 개선)은 역할이 아니라 목표라 역할 목록에서 뺀다. 구체적인 역할을 앞에 둔다.
+_ROLE_ORDER = ["COMEDOLYTIC", "KERATOLYTIC", "SEBUM_REGULATION", "ANTIMICROBIAL", "ANTI_INFLAMMATORY", "SOOTHING",
+               "DEPIGMENTING", "BRIGHTENING", "HYDRATING", "MOISTURE_RETENTION", "BARRIER_REPAIR", "ANTI_AGING",
+               "ANTIOXIDANT", "PHOTOPROTECTIVE", "WOUND_HEALING"]
+
+
+def _effect_role_ko(code: str) -> str | None:
+    key = code.strip().lower().replace("_", " ")
+    return _CLAIM_BENEFIT_PHRASES.get(key) or _CLAIM_BENEFIT_PHRASES.get(key.replace(" ", "-", 1))
+
+
+def _ingredient_roles(ingredient: IngredientResult) -> list[str]:
+    codes = {code for ev in ingredient.concern_evidence for code in ev.get("effects") or []}
+    roles: list[str] = []
+    for code in sorted(codes, key=lambda c: _ROLE_ORDER.index(c) if c in _ROLE_ORDER else 99):
+        role = _effect_role_ko(code) if code in _ROLE_ORDER else None
+        if role and role not in roles:
+            roles.append(role)
+    return roles
+
+
+def _ingredient_input_line(ingredient: IngredientResult, multi_concern: bool) -> str:
+    """생성 입력의 성분 한 줄. 고민별 근거가 있으면 역할 목록과 고민별 연구 수를 그대로 준다."""
+    name = _ingredient_display_name(ingredient)
+    evidence = f"[{_evidence_label(ingredient.eligibility_tier, ingredient.paper_ref)}]"
+    roles = _ingredient_roles(ingredient)
+    if roles:
+        counts = ", ".join(f"{_concern_label(ev['concern'])} 관련 {ev['paper_count']}건"
+                           for ev in ingredient.concern_evidence if ev.get("paper_count"))
+        line = f"- {name}: 연구에서 다룬 역할: {', '.join(roles)}" + (f" | 고민별 연구 수: {counts}" if counts else "")
+        return f"{line} {evidence}"
+    # 효능 라벨은 한국어로 바꿔 넘긴다. 영문(Comedolytic 등)을 주면 모델이 "여드름 기미"처럼 잘못 옮긴다.
+    line = f"- {name}: {_claim_benefit_phrase(ingredient) or ingredient.claim or '효능 데이터 없음'} {evidence}"
+    if multi_concern and ingredient.concerns:
+        line += f" [관련 고민: {', '.join(_concern_label(c) for c in ingredient.concerns)}]"
+    return line
+
+
 def _compose_user_content(
     message: str,
     ingredients: list[IngredientResult],
@@ -2784,14 +2846,12 @@ def _compose_user_content(
     # INCI 성분명 → 표시명·근거. 제품 매칭 결과의 영문 이름도 같은 소비자용 표기로 변환한다.
     # 국내 배합한도(kr_limit_note)는 고시 원문이라 생성 입력에 넣지 않는다.
     if ingredients:
-        ingredient_lines = "\n".join(
-            # 효능 라벨은 한국어로 바꿔 넘긴다. 영문(Comedolytic 등)을 주면 모델이 "여드름 기미"처럼 잘못 옮긴다.
-            f"- {_ingredient_display_name(i)}: {_claim_benefit_phrase(i) or i.claim or '효능 데이터 없음'} "
-            f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
-            + (f" [관련 고민: {', '.join(_concern_label(c) for c in i.concerns)}]"
-               if multi_concern and i.concerns else "")
-            for i in ingredients[:10]
-        )
+        shown = ingredients[:10]
+        links = [f"- {_concern_label(code)}: {_CONCERN_ROLE_LINKS[code]}"
+                 for code in dict.fromkeys(c for i in shown for c in i.concerns) if code in _CONCERN_ROLE_LINKS]
+        if links:
+            sections.append("고민과 역할의 연결(일반 설명, 근거 수치 아님):\n" + "\n".join(links))
+        ingredient_lines = "\n".join(_ingredient_input_line(i, multi_concern) for i in shown)
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
     else:
         sections.append("(현재 성분 데이터베이스에 해당 고민에 맞는 성분 데이터가 없습니다. 일반적인 추천을 제공해 주세요.)")
@@ -3010,7 +3070,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
                                  kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"),
                                  sensitive_note=row.get("sensitive_note"),
-                                 concerns=list(row.get("concerns") or []))
+                                 concerns=list(row.get("concerns") or []),
+                                 concern_evidence=list(row.get("concern_evidence") or []))
                 for row in raw_ingredients
             ]
             raw_products = await select_products(

@@ -34,6 +34,8 @@ class IngredientResult(BaseModel):
     kr_limit_note: str | None = None
     # 이 성분이 후보로 나온 요청 고민 코드(복합 고민에서 고민별 근거 연결용). 고민이 하나면 그 하나.
     concerns: list[str] = Field(default_factory=list)
+    # 고민별 논문 근거: [{"concern": 고민 코드, "paper_count": 연구 수, "effects": [그 연구에서 다룬 역할 코드]}]
+    concern_evidence: list[dict] = Field(default_factory=list)
     # 민감 피부 계열 요청에서 남긴 주의 성분의 안내(그래프 sensitive_caution, GraphRAG_Pipeline #49).
     sensitive_note: str | None = None
 
