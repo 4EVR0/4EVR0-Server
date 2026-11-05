@@ -119,13 +119,16 @@ async def withdraw_training_use(subject_id: str) -> None:
 async def purge_expired() -> dict[str, int]:
     """보관 기한이 지난 원문·메모를 지우고, 만료된 세션 행도 정리한다."""
     from app.core.config import settings
+    from app.services.consent_policy import RETENTION_DAYS
 
     pool = await get_pool()
     turns = await pool.execute("DELETE FROM turn_records WHERE expires_at < NOW()")
     notes = await pool.execute(
         "UPDATE feedback SET note = NULL, note_expires_at = NULL WHERE note_expires_at < NOW()")
+    feedback = await pool.execute(
+        "DELETE FROM feedback WHERE created_at < NOW() - ($1::integer * INTERVAL '1 day')", RETENTION_DAYS)
     sessions = await pool.execute(
         "DELETE FROM sessions WHERE created_at < NOW() - ($1::integer * INTERVAL '1 second')",
         settings.conversation_ttl_seconds)
-    return {"turn_records": int(turns.split()[-1]), "notes": int(notes.split()[-1]),
+    return {"turn_records": int(turns.split()[-1]), "notes": int(notes.split()[-1]), "feedback": int(feedback.split()[-1]),
             "sessions": int(sessions.split()[-1])}

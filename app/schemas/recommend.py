@@ -17,6 +17,8 @@ class RecommendRequest(BaseModel):
     message: str
     category: str | None = None
     skin_profile: SkinProfile | None = None
+    # 수집 안내를 표시한 새 클라이언트의 정책 버전. 동의 여부가 아니다.
+    collection_policy_version: str | None = Field(default=None, max_length=64)
 
 
 class IngredientResult(BaseModel):

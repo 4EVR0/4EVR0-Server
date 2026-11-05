@@ -1,4 +1,4 @@
-"""동의·피드백·내 데이터 API."""
+"""수집·이용 목적 안내, 피드백과 내 데이터 삭제 API."""
 
 import logging
 
@@ -14,54 +14,32 @@ router = APIRouter(prefix="/api/v1", tags=["data"])
 STORE_UNAVAILABLE = "지금은 요청을 처리할 수 없어요. 잠시 후 다시 시도해 주세요."
 
 
-class ConsentRequest(BaseModel):
-    quality_storage: bool
-    training_use: bool = False
-
-
 class FeedbackRequest(BaseModel):
     turn_id: str = Field(min_length=1, max_length=64)
     helpful: bool
     issues: list[str] = Field(default_factory=list, max_length=len(consent_policy.FEEDBACK_ISSUES))
     note: str | None = Field(default=None, max_length=consent_policy.NOTE_MAX_CHARS)
+    collection_policy_version: str | None = Field(default=None, max_length=64)
 
 
 def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
-@router.get("/consents")
-async def get_consents(request: Request, response: Response) -> dict:
+@router.get("/data-policy")
+async def get_data_policy(response: Response) -> dict:
     _no_store(response)
-    try:
-        granted = await collection.consents(collection.subject_from(request))
-    except Exception as exc:
-        logger.warning("consent read failed: %s", exc)
-        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
     return {"policy_version": consent_policy.POLICY_VERSION, "retention_days": consent_policy.RETENTION_DAYS,
             "texts": consent_policy.TEXTS, "feedback_issues": consent_policy.FEEDBACK_ISSUES,
-            "decided": bool(granted), "quality_storage": bool(granted.get(collection.QUALITY)),
-            "training_use": bool(granted.get(collection.TRAINING))}
+            "collection_mode": "notice", "training_use": False}
 
 
-@router.put("/consents")
-async def put_consents(body: ConsentRequest, request: Request, response: Response) -> dict:
-    _check_origin(request)
-    _no_store(response)
-    if body.training_use and not body.quality_storage:
-        raise HTTPException(status_code=422, detail="학습 이용은 대화 저장에 동의해야 선택할 수 있어요.")
-    subject = collection.ensure_subject(request, response)
-    try:
-        await repo.record_consents(subject, {collection.QUALITY: body.quality_storage,
-                                             collection.TRAINING: body.training_use},
-                                   consent_policy.POLICY_VERSION)
-        if not body.training_use:
-            await repo.withdraw_training_use(subject)
-    except Exception as exc:
-        logger.warning("consent write failed: %s", exc)
-        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
-    return {"quality_storage": body.quality_storage, "training_use": body.training_use,
-            "policy_version": consent_policy.POLICY_VERSION}
+@router.api_route("/consents", methods=["GET", "PUT"], deprecated=True)
+async def retired_consents(request: Request):
+    if request.method == "PUT":
+        _check_origin(request)
+    raise HTTPException(status_code=410, detail="데이터 수집 안내가 변경됐습니다. 페이지를 새로고침해 주세요.",
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.post("/feedback", status_code=204)
@@ -74,10 +52,11 @@ async def post_feedback(body: FeedbackRequest, request: Request, response: Respo
         raise HTTPException(status_code=404, detail="이 답변에는 의견을 남길 수 없어요.")
     subject = collection.ensure_subject(request, response)
     try:
-        granted = await collection.consents(subject)
         note = (body.note or "").strip() or None
+        if not collection.current_policy(body.collection_policy_version) or (note and not collection.safe_for_quality_storage(note)):
+            note = None
         await repo.upsert_feedback(turn_id=body.turn_id, subject_id=subject, helpful=body.helpful, issues=issues,
-                                   note=note if granted.get(collection.QUALITY) else None,
+                                   note=note,
                                    retention_days=consent_policy.RETENTION_DAYS)
     except Exception as exc:
         logger.warning("feedback write failed: %s", exc)
@@ -88,15 +67,13 @@ async def post_feedback(body: FeedbackRequest, request: Request, response: Respo
 
 @router.delete("/my-data")
 async def delete_my_data(request: Request, response: Response) -> dict:
-    """저장된 대화·의견을 지우고 동의를 철회한다. '새 대화'와 다른 동작이다."""
+    """이 브라우저의 품질 개선용 대화·의견을 지운다. 이후 새 대화는 안내에 따라 수집된다."""
     _check_origin(request)
     _no_store(response)
     subject = collection.subject_from(request)
     if subject is None:
         return {"deleted": {"turn_records": 0, "feedback": 0}}
     try:
-        await repo.record_consents(subject, {collection.QUALITY: False, collection.TRAINING: False},
-                                   consent_policy.POLICY_VERSION)
         deleted = await repo.delete_subject_data(subject)
     except Exception as exc:
         logger.warning("my-data delete failed: %s", exc)

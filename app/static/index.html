@@ -50,7 +50,7 @@
         <div class="compare-bar" id="compare-bar" hidden><span id="compare-label"></span><div><button id="clear-compare">취소</button><button class="compare-send" id="compare-send" disabled>선택 제품 비교하기 ↗</button></div></div>
         <div class="followups" id="followups" hidden aria-label="이어서 질문하기"><button data-followup="추천한 제품들의 성분을 비교해줘.">제품 성분 비교해 줘</button><button data-followup="추천한 제품들을 어떤 순서로 사용하면 돼?">사용 순서 알려줘</button><button data-followup="추천한 제품 중 크림만 보여줘.">크림만 볼래</button></div>
         <div id="input-area"><div class="composer-wrap"><label for="msg" hidden>피부 고민 입력</label><textarea id="msg" aria-describedby="privacy-input-notice" placeholder="어떤 피부 고민이 있나요? 편하게 이야기해 주세요." rows="1" maxlength="2000" disabled></textarea><button id="send" aria-label="메시지 보내기" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 19V5m-5 5 5-5 5 5"/></svg></button></div><div class="composer-bottom"><button class="profile-trigger" data-open-profile><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg><span id="composer-profile">내 피부 설정</span></button><span class="keyboard-hint">Enter 전송 · Shift + Enter 줄바꿈</span></div></div>
-        <p class="privacy-input-notice" id="privacy-input-notice">이름·연락처 등 개인정보와 진단·치료 이력 등 민감정보는 질문에 입력하지 마세요. 피부 고민은 개인을 식별할 수 없는 일반적인 표현으로 적어주세요.</p>
+        <p class="privacy-input-notice" id="privacy-input-notice">대화는 답변 오류 확인·품질 개선을 위해 30일간 보관됩니다. 이름·연락처 등 개인정보와 진단·치료 이력 등 민감정보는 입력하지 마세요.</p>
         <p class="composer-disclaimer">성분 근거를 바탕으로 한 추천이며, 개인에 따른 사용감과 효과는 다를 수 있어요.</p>
       </div>
     </section>
@@ -130,7 +130,7 @@
       document.querySelector('.chat-panel').classList.remove('has-conversation');
       msgEl.value = '';
       await createSession();
-      if (consent && !consent.decided) showConsentCard();
+      if (dataPolicy) showDataNotice();
       sessionReady = true;
       dot.classList.add('ok');
       document.getElementById('connection-label').textContent = '';
@@ -455,7 +455,7 @@
     const res = await fetch('/api/v1/recommend/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ message: text, skin_profile: skinProfile }),
+      body: JSON.stringify({ message: text, skin_profile: skinProfile, collection_policy_version: dataPolicy?.policy_version || null }),
     });
 
     if (!res.ok) {
@@ -559,7 +559,7 @@
     const res = await fetch('/api/v1/recommend', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, skin_profile: skinProfile }),
+      body: JSON.stringify({ message: text, skin_profile: skinProfile, collection_policy_version: dataPolicy?.policy_version || null }),
     });
 
     removeTyping();
@@ -633,104 +633,59 @@
     chat.scrollTop = 0;
   });
 
-  // ── 동의·피드백·내 데이터 관리 ─────────────────────────────────────────
-  let consent = null;  // GET /api/v1/consents 결과
+  // ── 수집 목적 안내·피드백·내 데이터 관리 ────────────────────────────────
+  let dataPolicy = null;
 
-  async function loadConsent() {
+  async function loadDataPolicy() {
     try {
-      const res = await fetch('/api/v1/consents', { cache: 'no-store' });
+      const res = await fetch('/api/v1/data-policy', { cache: 'no-store' });
       if (!res.ok) return;
-      consent = await res.json();
-      if (!consent.decided) showConsentCard();
-    } catch (e) { /* 동의 정보를 못 불러와도 채팅은 계속 */ }
+      dataPolicy = await res.json();
+      showDataNotice();
+    } catch (e) { /* 안내를 못 불러온 요청은 품질 개선용 원문을 저장하지 않는다. */ }
   }
 
-  function consentChoicesHtml(prefix) {
-    const t = consent.texts;
-    return `
-      <label><input type="checkbox" id="${prefix}-quality" ${consent.quality_storage ? 'checked' : ''}> <span>${escHtml(t.quality_storage)}</span></label>
-      <label id="${prefix}-training-label" class="${consent.quality_storage ? '' : 'disabled'}"><input type="checkbox" id="${prefix}-training" ${consent.training_use ? 'checked' : ''} ${consent.quality_storage ? '' : 'disabled'}> <span>${escHtml(t.training_use)}</span></label>`;
-  }
-
-  function wireConsentChoices(root, prefix) {
-    const q = root.querySelector(`#${prefix}-quality`), tr = root.querySelector(`#${prefix}-training`);
-    q.addEventListener('change', () => {
-      tr.disabled = !q.checked;
-      if (!q.checked) tr.checked = false;
-      root.querySelector(`#${prefix}-training-label`).classList.toggle('disabled', !q.checked);
-    });
-    return () => ({ quality_storage: q.checked, training_use: q.checked && tr.checked });
-  }
-
-  async function saveConsent(choice) {
-    const res = await fetch('/api/v1/consents', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(choice),
-    });
-    if (!res.ok) throw new Error('consent save failed');
-    consent = { ...consent, ...choice, decided: true };
-  }
-
-  function showConsentCard() {
-    if (document.getElementById('consent-card')) return;
-    const card = document.createElement('div');
-    card.className = 'consent-card';
-    card.id = 'consent-card';
-    card.innerHTML = `
-      <p class="muted-note">대화 저장과 학습 이용은 선택 사항이에요. 동의하지 않아도 서비스를 이용할 수 있어요.</p>
-      <details><summary>더 나은 추천을 위한 선택 안내</summary>
-      <p>${escHtml(consent.texts.intro)}</p>
-      ${consentChoicesHtml('cc')}
-      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p></details>
-      <div class="consent-actions">
-        <button class="primary" id="cc-save">선택한 대로 시작</button>
-        <button id="cc-skip">저장하지 않고 시작</button>
-      </div>`;
+  function showDataNotice() {
+    if (!dataPolicy || document.getElementById('data-notice')) return;
+    const card = document.createElement('section');
+    card.className = 'data-notice';
+    card.id = 'data-notice';
+    card.setAttribute('aria-label', '대화 데이터 수집·이용 안내');
+    card.innerHTML = `<strong>대화 데이터 수집·이용 안내</strong>
+      <p>${escHtml(dataPolicy.texts.quality_storage)}</p>
+      <p><b>개인정보·민감정보 입력 금지</b><br>${escHtml(dataPolicy.texts.input_notice)}</p>
+      <p class="muted-note">${escHtml(dataPolicy.texts.training_use)}</p>`;
     document.getElementById('sys-init').after(card);
-    const read = wireConsentChoices(card, 'cc');
-    const done = async (choice) => {
-      try { await saveConsent(choice); card.remove(); }
-      catch (e) { appendError('동의 설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
-    };
-    card.querySelector('#cc-save').addEventListener('click', () => done(read()));
-    card.querySelector('#cc-skip').addEventListener('click', () => done({ quality_storage: false, training_use: false }));
   }
 
   function openDataPanel() {
-    if (!consent) { appendError('지금은 설정을 불러올 수 없어요. 잠시 후 다시 시도해 주세요.'); return; }
+    if (!dataPolicy) { appendError('지금은 안내를 불러올 수 없어요. 잠시 후 다시 시도해 주세요.'); return; }
     document.getElementById('data-panel')?.remove();
     const panel = document.createElement('div');
     panel.className = 'data-panel';
     panel.id = 'data-panel';
-    panel.innerHTML = `
-      <p><b>내 데이터 관리</b></p>
-      ${consentChoicesHtml('dp')}
-      <p class="muted-note">${escHtml(consent.texts.withdraw)}</p>
-      <p class="muted-note">${escHtml(consent.texts.new_chat_note)}</p>
-      <div class="consent-actions">
-        <button class="primary" id="dp-save">설정 저장</button>
-        <button class="danger" id="dp-delete">저장된 데이터 삭제·동의 철회</button>
+    panel.innerHTML = `<p><b>내 데이터 관리</b></p>
+      <p>${escHtml(dataPolicy.texts.quality_storage)}</p>
+      <p>${escHtml(dataPolicy.texts.training_use)}</p>
+      <p>${escHtml(dataPolicy.texts.deletion)}</p>
+      <p class="muted-note">${escHtml(dataPolicy.texts.new_chat_note)}</p>
+      <div class="data-actions">
+        <button class="danger" id="dp-delete">저장된 대화·의견 삭제</button>
         <button id="dp-close">닫기</button>
       </div>`;
     document.querySelector('.chat-panel').classList.add('has-conversation');
     chat.prepend(panel);
     closeSidebar();
-    // 패널은 대화 맨 위에 붙으므로, 아래로 스크롤된 상태에서도 보이게 맨 위로 이동한다.
     chat.scrollTo({ top: 0, behavior: 'smooth' });
-    const read = wireConsentChoices(panel, 'dp');
-    panel.querySelector('#dp-close').addEventListener('click', () => { closeDataPanel(panel); });
-    panel.querySelector('#dp-save').addEventListener('click', async () => {
-      try { await saveConsent(read()); document.getElementById('consent-card')?.remove(); closeDataPanel(panel); }
-      catch (e) { appendError('설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
-    });
+    panel.querySelector('#dp-close').addEventListener('click', () => closeDataPanel(panel));
     panel.querySelector('#dp-delete').addEventListener('click', async () => {
-      if (!confirm('저장된 대화와 의견을 삭제하고 동의를 철회할까요? 화면의 대화는 그대로 남아요.')) return;
+      if (!confirm('품질 개선용으로 저장된 대화와 의견을 삭제할까요? 화면의 대화는 그대로 남고, 이후 새 대화는 안내에 따라 수집됩니다.')) return;
       try {
         const res = await fetch('/api/v1/my-data', { method: 'DELETE' });
         if (!res.ok) throw new Error('delete failed');
         const data = await res.json();
-        consent = { ...consent, quality_storage: false, training_use: false, decided: true };
-        panel.remove();
-        appendError(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback}건을 삭제하고 동의를 철회했어요.`);
+        closeDataPanel(panel);
+        notify(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback}건을 삭제했어요.`);
       } catch (e) { appendError('삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
     });
   }
@@ -748,7 +703,7 @@
       try {
         const res = await fetch('/api/v1/feedback', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ turn_id: turnId, helpful, issues, note: note || null }),
+          body: JSON.stringify({ turn_id: turnId, helpful, issues, note: note || null, collection_policy_version: dataPolicy?.policy_version || null }),
         });
         if (!res.ok) throw new Error('feedback failed');
         bar.innerHTML = '<span>의견 감사해요.</span>';
@@ -758,13 +713,11 @@
     bar.querySelector('[data-v="0"]').addEventListener('click', (ev) => {
       ev.currentTarget.classList.add('on');
       if (bar.querySelector('.issues')) return;
-      const issues = (consent && consent.feedback_issues) || {};
+      const issues = (dataPolicy && dataPolicy.feedback_issues) || {};
       const box = document.createElement('div');
       box.className = 'issues';
       box.innerHTML = Object.entries(issues).map(([code, label]) => `<button data-issue="${escAttr(code)}">${escHtml(label)}</button>`).join('')
-        + (consent && consent.quality_storage
-            ? `<textarea maxlength="500" placeholder="불편했던 점을 적어 주세요(선택). 개인정보·민감정보는 입력하지 마세요."></textarea>`
-            : `<span class="muted-note">자세한 메모는 대화 저장에 동의하면 남길 수 있어요.</span>`)
+        + `<textarea maxlength="500" placeholder="불편했던 점을 적어 주세요(선택). 개인정보·민감정보는 입력하지 마세요."></textarea>`
         + `<button class="send-feedback">보내기</button>`;
       bar.appendChild(box);
       box.querySelectorAll('[data-issue]').forEach(b => b.addEventListener('click', () => b.classList.toggle('on')));
@@ -779,19 +732,19 @@
   document.getElementById('my-data').addEventListener('click', openDataPanel);
   document.getElementById('open-privacy').addEventListener('click', () => {
     const content = document.getElementById('privacy-policy-content');
-    if (!consent) {
+    if (!dataPolicy) {
       content.textContent = '처리방침을 불러오지 못했어요. 잠시 후 다시 열어주세요.';
     } else {
-      content.innerHTML = `<p class="muted-note">대화 데이터 처리 안내 · 정책 버전 ${escHtml(consent.policy_version)}</p>
+      content.innerHTML = `<p class="muted-note">대화 데이터 처리 안내 · 정책 버전 ${escHtml(dataPolicy.policy_version)}</p>
         <h3>개인정보·민감정보 입력 금지</h3>
         <p>이름, 연락처, 주소, 주민등록번호와 진단·치료 이력 등 개인정보·민감정보를 질문이나 의견 메모에 입력하지 마세요. 다른 사람의 정보도 입력하지 마세요.</p>
-        <h3>대화 저장과 이용 목적</h3><p>${escHtml(consent.texts.quality_storage)}</p>
-        <h3>모델 학습 이용</h3><p>${escHtml(consent.texts.training_use)}</p>
-        <h3>동의 철회와 데이터 삭제</h3><p>${escHtml(consent.texts.withdraw)}</p>
-        <p>${escHtml(consent.texts.new_chat_note)}</p>`;
+        <h3>대화 저장과 이용 목적</h3><p>${escHtml(dataPolicy.texts.quality_storage)}</p>
+        <h3>이용 목적의 제한</h3><p>${escHtml(dataPolicy.texts.training_use)}</p>
+        <h3>데이터 삭제</h3><p>${escHtml(dataPolicy.texts.deletion)}</p>
+        <p>${escHtml(dataPolicy.texts.new_chat_note)}</p>`;
     }
     const contact = document.createElement('section');
-    contact.innerHTML = '<h3>개인정보 관련 문의</h3><p>대화 데이터 열람·정정·삭제, 동의 철회 등 개인정보 관련 문의: <a href="mailto:eru010930@gmail.com">eru010930@gmail.com</a></p>';
+    contact.innerHTML = '<h3>개인정보 관련 문의</h3><p>대화 데이터 열람·정정·삭제 등 개인정보 관련 문의: <a href="mailto:eru010930@gmail.com">eru010930@gmail.com</a></p>';
     content.append(contact);
     openDialog('privacy-dialog');
   });
@@ -1111,7 +1064,7 @@
   syncSavedButtons();
 
   initSession();
-  loadConsent();
+  loadDataPolicy();
 </script>
 </body>
 </html>
