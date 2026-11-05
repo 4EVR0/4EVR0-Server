@@ -11,6 +11,10 @@
 - 같은 계열(히알루론산류, 비타민C류, 세라마이드류 등)은 1개만.
 - 선정된 제품에 매칭된 성분은 들어 있는 제품 비율만큼 가점: graph_score × (1 + product_bonus × 함유 제품 수 / 제품 수).
   (한 제품에만 있는 성분이 모든 제품에 있는 성분과 같은 가점을 받지 않게 한다.)
+- 고민이 둘 이상이면 고민마다 근거 성분이 최소 1개 들어가게 한다. 위 규칙으로 고른 성분이 어떤 고민에도
+  연결되지 않으면, 그 고민의 후보 중 가장 앞선 성분을 더한다(최대 개수를 넘으면 다른 고민이 이미 다른 성분으로
+  채워진 성분과 바꾼다). 근거 등급이 높은 한 고민의 성분만 남아 다른 고민이 통째로 빠지는 것을 막는다.
+  후보 행의 "concerns"(그 성분이 후보로 나온 고민 코드)를 쓴다.
 """
 
 from __future__ import annotations
@@ -61,6 +65,7 @@ def select_recommended_ingredients(
     max_k: int,
     score_ratio: float,
     product_bonus: float,
+    concerns: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """후보 행에서 최종 추천 성분 행을 고른다. 반환 순서는 선정 순서(효능 커버리지 우선)."""
     if not rows:
@@ -105,4 +110,36 @@ def select_recommended_ingredients(
                 taken[g] += 1
                 progressed = True
                 break
+    if len(concerns) > 1:
+        _cover_every_concern(chosen, families, [item[3] for item in scored], list(concerns), max_k)
     return chosen
+
+
+def _serves(row: dict[str, Any], code: str) -> bool:
+    return code in (row.get("concerns") or [])
+
+
+def _cover_every_concern(chosen: list[dict[str, Any]], families: set[str],
+                         ranked: list[dict[str, Any]], concerns: list[str], max_k: int) -> None:
+    """고민마다 선정 성분이 최소 1개 있게 chosen을 고친다. 후보가 없는 고민은 그대로 둔다."""
+    for code in concerns:
+        if any(_serves(row, code) for row in chosen):
+            continue
+        candidate = next((row for row in ranked if _serves(row, code)
+                          and not any(row is picked for picked in chosen)
+                          and ingredient_family(row.get("name", "")) not in families), None)
+        if candidate is None:
+            continue
+        if len(chosen) >= max_k:
+            # 빼도 요청 고민이 모두 다른 성분으로 남는 성분 중 가장 뒤의 것과 바꾼다.
+            for i in range(len(chosen) - 1, -1, -1):
+                others = chosen[:i] + chosen[i + 1:]
+                own = [c for c in concerns if _serves(chosen[i], c)]
+                if all(any(_serves(row, c) for row in others) for c in own):
+                    families.discard(ingredient_family(chosen[i].get("name", "")))
+                    del chosen[i]
+                    break
+            else:
+                continue
+        chosen.append(candidate)
+        families.add(ingredient_family(candidate.get("name", "")))

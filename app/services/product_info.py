@@ -220,17 +220,13 @@ def default_intro(display_name: str, category: str | None, total: int, with_evid
 
 
 def render_sections(groups: list[tuple[str, list[IngredientEvidence]]], rows: list[dict[str, Any]]) -> str:
-    """효능별 성분, 배합한도, 한계, 민감 주의 안내."""
+    """효능별 성분, 한계, 민감 주의 안내."""
     lines: list[str] = []
     if groups:
         lines.append("효능별 성분")
         lines += [f"- {label}: {', '.join(it.label() for it in items)}" for label, items in groups]
     shown = {it.inci for _, items in groups for it in items}
-    limited = [f"{r.get('kor_name') or r['inci_name']}({r['kr_limit_note']})" for r in rows
-               if r["inci_name"] in shown and r.get("kr_reg_status") == "restricted" and r.get("kr_limit_note")]
-    if limited:
-        lines.append("")
-        lines.append("국내 배합한도가 있는 성분: " + "; ".join(limited))
+    # 국내 배합한도(kr_limit_note)는 식약처 고시 원문이라 소비자 답변에 쓰지 않는다.
     lines += ["", LIMITATION_NOTE]
     caution = sensitive_caution.notes_text(
         (r.get("kor_name") or r["inci_name"], sensitive_caution.CAUTION_NOTE) for r in rows
