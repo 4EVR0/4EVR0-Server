@@ -1053,7 +1053,7 @@ button svg {
   line-height:1.6
 }
 
-.consent-card,.data-panel {
+.data-notice,.data-panel {
   border:1px solid var(--line);
   background:#f4f6ed;
   border-radius:12px;
@@ -1063,42 +1063,18 @@ button svg {
   margin:20px 0
 }
 
-.consent-card summary {
-  cursor:pointer;
-  font-weight:600;
-  color:#5c7140
-}
-
-.consent-card p,.data-panel p {
-  margin:8px 0
-}
-
-.consent-card label,.data-panel label {
-  display:flex;
-  gap:8px;
-  align-items:flex-start;
-  margin:10px 0;
-  color:#778265;
-  font-size:11px
-}
-
-.consent-card input,.data-panel input {
-  margin-top:4px;
-  accent-color:#637a44
-}
-
 .disabled {
   opacity:.5
 }
 
-.consent-actions {
+.data-actions {
   display:flex;
   flex-wrap:wrap;
   gap:8px;
   margin-top:12px
 }
 
-.consent-actions button {
+.data-actions button {
   border:1px solid var(--line);
   background:white;
   border-radius:6px;
@@ -1106,13 +1082,13 @@ button svg {
   font-size:10px
 }
 
-.consent-actions .primary {
+.data-actions .primary {
   background:#647a45;
   color:white;
   border-color:#647a45
 }
 
-.consent-actions .danger {
+.data-actions .danger {
   color:#9a614c
 }
 
@@ -1583,12 +1559,9 @@ button svg {
     left:50%;
     bottom:185px
   }
-  .consent-card {
+  .data-notice {
     padding:14px;
     margin:15px 0
-  }
-  .consent-card label {
-    font-size:10px
   }
   .followups {
     gap:5px
@@ -1676,3 +1649,6 @@ button svg {
 .privacy-dialog .muted-note { font-size:12px; color:var(--muted); }
 .privacy-dialog a { color:var(--brand-2); text-underline-offset:3px; }
 .privacy-dialog .primary-action { font-size:14px; }
+
+.data-notice > strong { font-size:14px; font-weight:600; color:var(--brand-2); }
+.data-notice p,.data-panel p { margin-top:10px; font-size:13px; line-height:1.85; color:var(--soft); }

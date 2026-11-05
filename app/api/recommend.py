@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.clients.neo4j_client import query_path_by_effects
@@ -42,7 +42,8 @@ async def _browser_stream(stream):
             yield frame
 
 
-async def _collect_stream(stream, session_id: str, subject_id: str | None, message: str):
+async def _collect_stream(stream, session_id: str, subject_id: str | None, message: str,
+                          policy_version: str | None = None):
     """스트리밍 프레임을 그대로 흘리며, done까지 받은 턴만 수집 대상으로 넘긴다(끊긴 답변은 넘기지 않는다)."""
     turn: dict = {}
     texts: list[str] = []
@@ -57,7 +58,7 @@ async def _collect_stream(stream, session_id: str, subject_id: str | None, messa
                 texts.append(data.get("text") or "")
             else:
                 turn.update(response_mode=data.get("response_mode"), response_text="".join(texts))
-                collection.after_turn(session_id, subject_id, message, "stream", turn)
+                collection.after_turn(session_id, subject_id, message, "stream", turn, policy_version)
         yield frame
 
 
@@ -66,10 +67,11 @@ async def recommend_endpoint(body: RecommendRequest, request: Request):
     session_id = await _resolve_session(body, request)
     options = {'skin_profile': body.skin_profile} if body.skin_profile is not None else {}
     result = await recommend(session_id, body.message, **options)
-    collection.after_turn(session_id, collection.subject_from(request), body.message, "batch", result.model_dump())
-    if request.cookies.get(COOKIE_NAME):
-        return JSONResponse(result.model_dump(exclude={"session_id"}), headers={"Cache-Control": "no-store"})
-    return result
+    response = JSONResponse(result.model_dump(exclude={"session_id"} if request.cookies.get(COOKIE_NAME) else set()),
+                            headers={"Cache-Control": "no-store"})
+    subject = collection.ensure_subject(request, response) if collection.current_policy(body.collection_policy_version) else collection.subject_from(request)
+    collection.after_turn(session_id, subject, body.message, "batch", result.model_dump(), body.collection_policy_version)
+    return response
 
 
 @router.post("/stream")
@@ -77,15 +79,19 @@ async def recommend_stream_endpoint(body: RecommendRequest, request: Request):
     """SSE 추천 — meta(구조 데이터 즉시) → delta(검증된 본문) → done."""
     session_id = await _resolve_session(body, request)
     options = {'skin_profile': body.skin_profile} if body.skin_profile is not None else {}
+    cookies = Response()
+    subject = collection.ensure_subject(request, cookies) if collection.current_policy(body.collection_policy_version) else collection.subject_from(request)
     stream = _collect_stream(recommend_stream(session_id, body.message, **options), session_id,
-                             collection.subject_from(request), body.message)
+                             subject, body.message, body.collection_policy_version)
     if request.cookies.get(COOKIE_NAME):
         stream = _browser_stream(stream)
-    return StreamingResponse(
+    response = StreamingResponse(
         stream,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+    response.raw_headers.extend((k, v) for k, v in cookies.raw_headers if k == b"set-cookie")
+    return response
 
 
 @router.get("/path", response_model=PathResponse)
