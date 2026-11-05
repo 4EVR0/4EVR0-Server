@@ -1645,3 +1645,12 @@ button svg {
   }
 }
 
+.privacy-input-notice {
+  margin:8px 8px 0;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.6;
+}
+.privacy-dialog { max-width:680px; }
+.privacy-dialog h3 { margin:24px 0 8px; font-size:14px; color:var(--text); }
+.privacy-dialog p { line-height:1.8; }

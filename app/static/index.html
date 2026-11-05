@@ -21,6 +21,7 @@
       <button class="nav-item active" id="nav-chat"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M20 11a8 8 0 0 1-8 8H5l-3 3v-11a9 9 0 1 1 18 0Z"/><path d="M7 9h8M7 13h5"/></svg>피부 상담<span class="nav-count">AI</span></button>
       <button class="nav-item" id="saved-products"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 20-8-8a5 5 0 0 1 8-6 5 5 0 0 1 8 6Z"/></svg>관심 제품<span class="nav-count" id="saved-count">0</span></button>
       <button class="nav-item" id="open-guide"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 5v15M12 5C8 2 3 3 3 3v15s5-1 9 2c4-3 9-2 9-2V3s-5-1-9 2Z"/></svg>4EVR0 사용 가이드</button>
+      <button class="nav-item" id="open-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v5c0 6-8 10-8 10S4 17 4 11V6Z"/><path d="m8 11 3 3 5-5"/></svg>개인정보 처리방침</button>
     </nav>
     <div class="skin-card"><div class="skin-card-head"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg>나의 피부 프로필</div><p id="skin-summary">피부를 조금 더 알려주세요.<br>나에게 맞는 추천의 시작이에요.</p><button class="skin-edit" data-open-profile>피부 설정하기 <span>↗</span></button></div>
     <div class="sidebar-footer"><button id="my-data"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg>내 데이터 관리</button><small>© 2026 4EVR0 · Made for your skin</small></div>
@@ -48,7 +49,8 @@
       <div class="composer-section">
         <div class="compare-bar" id="compare-bar" hidden><span id="compare-label"></span><div><button id="clear-compare">취소</button><button class="compare-send" id="compare-send" disabled>선택 제품 비교하기 ↗</button></div></div>
         <div class="followups" id="followups" hidden aria-label="이어서 질문하기"><button data-followup="추천한 제품들의 성분을 비교해줘.">제품 성분 비교해 줘</button><button data-followup="추천한 제품들을 어떤 순서로 사용하면 돼?">사용 순서 알려줘</button><button data-followup="추천한 제품 중 크림만 보여줘.">크림만 볼래</button></div>
-        <div id="input-area"><div class="composer-wrap"><label for="msg" hidden>피부 고민 입력</label><textarea id="msg" placeholder="어떤 피부 고민이 있나요? 편하게 이야기해 주세요." rows="1" maxlength="2000" disabled></textarea><button id="send" aria-label="메시지 보내기" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 19V5m-5 5 5-5 5 5"/></svg></button></div><div class="composer-bottom"><button class="profile-trigger" data-open-profile><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg><span id="composer-profile">내 피부 설정</span></button><span class="keyboard-hint">Enter 전송 · Shift + Enter 줄바꿈</span></div></div>
+        <div id="input-area"><div class="composer-wrap"><label for="msg" hidden>피부 고민 입력</label><textarea id="msg" aria-describedby="privacy-input-notice" placeholder="어떤 피부 고민이 있나요? 편하게 이야기해 주세요." rows="1" maxlength="2000" disabled></textarea><button id="send" aria-label="메시지 보내기" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 19V5m-5 5 5-5 5 5"/></svg></button></div><div class="composer-bottom"><button class="profile-trigger" data-open-profile><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg><span id="composer-profile">내 피부 설정</span></button><span class="keyboard-hint">Enter 전송 · Shift + Enter 줄바꿈</span></div></div>
+        <p class="privacy-input-notice" id="privacy-input-notice">이름·연락처 등 개인정보와 진단·치료 이력 등 민감정보는 질문에 입력하지 마세요. 피부 고민은 개인을 식별할 수 없는 일반적인 표현으로 적어주세요.</p>
         <p class="composer-disclaimer">성분 근거를 바탕으로 한 추천이며, 개인에 따른 사용감과 효과는 다를 수 있어요.</p>
       </div>
     </section>
@@ -56,6 +58,7 @@
 </div>
 <dialog class="dialog" id="profile-dialog" aria-labelledby="profile-title"><form id="profile-form"><div class="dialog-header"><h2 id="profile-title">내 피부에 한 걸음 더.</h2><button type="button" class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>질문하신 고민을 먼저 찾고, 피부 정보는 제품 제외 조건으로만 활용해요.<br>민감함·붉은기를 선택하면 확인된 주의 성분이 있는 제품을 제외해요. 정보는 이 페이지에서만 유지돼요.</p><fieldset style="border:0"><legend class="field-title">피부 타입</legend><div class="choice-group"><label><input type="radio" name="skin" value="건성"><span>건성</span></label><label><input type="radio" name="skin" value="지성"><span>지성</span></label><label><input type="radio" name="skin" value="복합성"><span>복합성</span></label><label><input type="radio" name="skin" value="중성"><span>중성</span></label><label><input type="radio" name="skin" value="잘 모르겠어요"><span>잘 모르겠어요</span></label></div></fieldset><fieldset style="border:0"><legend class="field-title">요즘 신경 쓰이는 고민 <span class="muted-note">여러 개 선택할 수 있어요</span></legend><div class="choice-group"><label><input type="checkbox" name="concern" value="속건조"><span>속건조</span></label><label><input type="checkbox" name="concern" value="민감함"><span>민감함</span></label><label><input type="checkbox" name="concern" value="붉은기"><span>붉은기</span></label><label><input type="checkbox" name="concern" value="트러블"><span>트러블</span></label><label><input type="checkbox" name="concern" value="피지"><span>피지</span></label><label><input type="checkbox" name="concern" value="미백·잡티"><span>미백·잡티</span></label><label><input type="checkbox" name="concern" value="탄력·주름"><span>탄력·주름</span></label></div></fieldset><button class="primary-action" type="submit">이 피부 정보로 상담하기</button><button type="button" id="clear-profile" style="display:block;margin:14px auto 0;border:0;background:none;color:#879376;font-size:11px">피부 설정 초기화</button></form></dialog>
 <dialog class="dialog" id="saved-dialog" aria-labelledby="saved-title"><div class="dialog-header"><h2 id="saved-title">마음에 담아둔 제품</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>이 브라우저에 제품만 보관해요. 로그인은 필요 없어요.</p><div class="saved-list" id="saved-list"></div></dialog>
+<dialog class="dialog privacy-dialog" id="privacy-dialog" aria-labelledby="privacy-title"><div class="dialog-header"><h2 id="privacy-title">개인정보 처리방침</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><div id="privacy-policy-content"></div><button class="primary-action" data-close-dialog>닫기</button></dialog>
 <dialog class="dialog" id="guide-dialog" aria-labelledby="guide-title"><div class="dialog-header"><h2 id="guide-title">나에게 맞는 선택의 시작</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>4EVR0와 이렇게 이야기해 보세요.</p><div class="guide-step"><span class="guide-number">01</span><div><h3>피부 고민을 편하게 알려주세요</h3><p>“속당김이 있고 볼이 자주 붉어져요.”<br>피부 타입과 원하는 제형을 함께 적으면 좋아요.</p></div></div><div class="guide-step"><span class="guide-number">02</span><div><h3>추천의 이유를 확인해 보세요</h3><p>제품의 성분 상세를 펼쳐 관련 성분과 주의사항을 확인해요. 성분 근거가 제품의 효과를 보장하지는 않아요.</p></div></div><div class="guide-step"><span class="guide-number">03</span><div><h3>비교하고, 이어서 물어보세요</h3><p>제품 2~3개를 선택해 성분을 비교하거나 “사용 순서를 알려줘”, “토너만 보여줘”라고 물어보세요.</p></div></div><button class="primary-action" data-close-dialog>상담 시작하기</button></dialog>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
@@ -760,7 +763,7 @@
       box.className = 'issues';
       box.innerHTML = Object.entries(issues).map(([code, label]) => `<button data-issue="${escAttr(code)}">${escHtml(label)}</button>`).join('')
         + (consent && consent.quality_storage
-            ? `<textarea maxlength="500" placeholder="불편했던 점을 적어 주세요(선택). 이름·연락처는 적지 말아 주세요."></textarea>`
+            ? `<textarea maxlength="500" placeholder="불편했던 점을 적어 주세요(선택). 개인정보·민감정보는 입력하지 마세요."></textarea>`
             : `<span class="muted-note">자세한 메모는 대화 저장에 동의하면 남길 수 있어요.</span>`)
         + `<button class="send-feedback">보내기</button>`;
       bar.appendChild(box);
@@ -774,6 +777,25 @@
   }
 
   document.getElementById('my-data').addEventListener('click', openDataPanel);
+  document.getElementById('open-privacy').addEventListener('click', () => {
+    const content = document.getElementById('privacy-policy-content');
+    if (!consent) {
+      content.textContent = '처리방침을 불러오지 못했어요. 잠시 후 다시 열어주세요.';
+    } else {
+      content.innerHTML = `<p class="muted-note">대화 데이터 처리 안내 · 정책 버전 ${escHtml(consent.policy_version)}</p>
+        <h3>개인정보·민감정보 입력 금지</h3>
+        <p>이름, 연락처, 주소, 주민등록번호와 진단·치료 이력 등 개인정보·민감정보를 질문이나 의견 메모에 입력하지 마세요. 다른 사람의 정보도 입력하지 마세요.</p>
+        <h3>대화 저장과 이용 목적</h3><p>${escHtml(consent.texts.quality_storage)}</p>
+        <h3>모델 학습 이용</h3><p>${escHtml(consent.texts.training_use)}</p>
+        <h3>동의 철회와 데이터 삭제</h3><p>${escHtml(consent.texts.withdraw)}</p>
+        <p>${escHtml(consent.texts.new_chat_note)}</p>`;
+    }
+    const contact = document.createElement('section');
+    contact.innerHTML = '<h3>개인정보 관련 문의</h3><p>대화 데이터 열람·정정·삭제, 동의 철회 등 개인정보 관련 문의: <a href="mailto:eru010930@gmail.com">eru010930@gmail.com</a></p>';
+    content.append(contact);
+    openDialog('privacy-dialog');
+  });
+
 
   chat.addEventListener('click', e => {
     if (e.target.closest('[data-start-product]')) {
