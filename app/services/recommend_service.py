@@ -37,7 +37,7 @@ from app.services.concern_coverage import (
     order_by_coverage,
     partial_coverage_note,
 )
-from app.services.concern_summary import build_summary, render_concern_summary, summary_effects
+from app.services.concern_summary import CONCERN_LABEL_KO, build_summary, render_concern_summary, summary_effects
 from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
@@ -53,6 +53,7 @@ from app.services.ingredient_explanations import (
 )
 from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
+from app.services.regulatory_text import strip_regulatory_text
 from app.services.fragrance_policy import eligible_rationale
 from app.services import product_info, release_info, sensitive_caution, skin_profile_policy
 from app.schemas.recommend import SkinProfile
@@ -469,6 +470,16 @@ def _append_server_notes(text: str, ingredients: list[IngredientResult], product
     return _append_coverage_note(text, skin_profile_policy.note())
 
 
+def _requested_concern_codes(raw_ingredients: list[dict]) -> list[str]:
+    """후보 행에 붙은 고민 코드(조회 순서 유지). 고민별로 조회한 복합 요청에서만 둘 이상이 된다."""
+    codes: list[str] = []
+    for row in raw_ingredients:
+        for code in row.get("concerns") or []:
+            if code not in codes:
+                codes.append(code)
+    return codes
+
+
 def _finalize_ingredients(
     raw_ingredients: list[dict], raw_products: list[dict], candidates: list[IngredientResult],
 ) -> list[IngredientResult]:
@@ -487,6 +498,7 @@ def _finalize_ingredients(
         max_k=settings.ingredient_final_max,
         score_ratio=settings.ingredient_score_ratio,
         product_bonus=settings.ingredient_product_bonus,
+        concerns=_requested_concern_codes(raw_ingredients),
     )
     by_name = {item.name: item for item in candidates}
     return [by_name[row["name"]] for row in picked if row.get("name") in by_name]
@@ -592,7 +604,16 @@ def _normalize_response_text(
     text, hanja_removed = _remove_hanja(text)
     text = _normalize_consumer_language(text)
     text = _normalize_product_names(text, products)
+    text = _strip_regulatory(text)
     return text, hanja_removed
+
+
+def _strip_regulatory(text: str) -> str:
+    """식약처 고시 원문(배합한도·사용금지 조건) 문장을 지운다(app/services/regulatory_text.py)."""
+    text, removed = strip_regulatory_text(text)
+    if removed:
+        metrics.recommend_output_guard_total.labels(kind="regulatory_text_removed").inc()
+    return text
 
 
 def _apply_constraint_evidence_guard(
@@ -1085,8 +1106,7 @@ def _build_grounded_product_response(
                 line = f"- {display}: 확인된 효능은 {benefit}이지만, 근거 수준은 확인되지 않습니다."
             else:
                 line = f"- {display}: 제품 데이터의 매칭 성분이며, 효능 근거는 확인되지 않습니다."
-            limit = _kr_limit_phrase(item)
-            lines.append(f"{line} {limit}" if limit else line)
+            lines.append(line)
     elif not highlighted_cards:
         lines.append("- 제공된 제품의 매칭 성분만 사용했습니다.")
 
@@ -2463,6 +2483,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     kr_reg_status=row.get("kr_reg_status"),
                     kr_limit_note=row.get("kr_limit_note"),
                     sensitive_note=row.get("sensitive_note"),
+                    concerns=list(row.get("concerns") or []),
                 )
                 for row in raw_ingredients
             ]
@@ -2634,18 +2655,6 @@ def _ingredient_display_name(ingredient: IngredientResult) -> str:
     return ingredient.name
 
 
-_KR_LIMIT_NOTE_MAX = 80
-
-
-def _kr_limit_phrase(ingredient: IngredientResult) -> str:
-    """국내 배합한도(restricted) 안내 한 구절. 한도 없는 성분은 빈 문자열.
-    문구 전체는 API 필드(kr_limit_note)로 내려가고, 응답 문장에는 앞부분만 쓴다."""
-    if ingredient.kr_reg_status != "restricted":
-        return ""
-    note = " ".join((ingredient.kr_limit_note or "").split())
-    if len(note) > _KR_LIMIT_NOTE_MAX:
-        note = note[:_KR_LIMIT_NOTE_MAX].rstrip() + "…"
-    return f"국내 배합한도가 있는 성분입니다({note})." if note else "국내 배합한도가 있는 성분입니다."
 
 
 def _source_label(eligibility_tier: str | None, default: str) -> str:
@@ -2748,6 +2757,13 @@ def _product_evidence_lines(
     return "\n".join(_product_line(p) for p in products)
 
 
+def _concern_label(code: str) -> str:
+    try:
+        return CONCERN_LABEL_KO.get(Concern(code), code)
+    except ValueError:
+        return code
+
+
 def _compose_user_content(
     message: str,
     ingredients: list[IngredientResult],
@@ -2755,13 +2771,20 @@ def _compose_user_content(
 ) -> str:
     """생성 LLM에 줄 user 메시지(사용자 고민 + 성분/제품 데이터)를 조립한다. 스트리밍/비스트리밍 공용."""
     sections = [f"사용자 메시지: {message}"]
+    # 고민을 둘 이상 말한 요청: 고민 목록과 성분별 관련 고민을 함께 줘서 모든 고민을 다루게 한다.
+    concern_codes = list(dict.fromkeys(code for i in ingredients for code in i.concerns))
+    multi_concern = len(concern_codes) > 1
+    if multi_concern:
+        sections.append("사용자 고민(모두 다룰 것): " + ", ".join(_concern_label(c) for c in concern_codes))
 
     # INCI 성분명 → 표시명·근거. 제품 매칭 결과의 영문 이름도 같은 소비자용 표기로 변환한다.
+    # 국내 배합한도(kr_limit_note)는 고시 원문이라 생성 입력에 넣지 않는다.
     if ingredients:
         ingredient_lines = "\n".join(
             f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
             f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
-            + (f" (국내 배합한도: {i.kr_limit_note})" if i.kr_reg_status == "restricted" and i.kr_limit_note else "")
+            + (f" [관련 고민: {', '.join(_concern_label(c) for c in i.concerns)}]"
+               if multi_concern and i.concerns else "")
             for i in ingredients[:10]
         )
         sections.append(f"관련 성분 데이터:\n{ingredient_lines}")
@@ -2981,7 +3004,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                                  supported_claims=row.get("supported_claims") or [],
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
                                  kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"),
-                                 sensitive_note=row.get("sensitive_note"))
+                                 sensitive_note=row.get("sensitive_note"),
+                                 concerns=list(row.get("concerns") or []))
                 for row in raw_ingredients
             ]
             raw_products = await select_products(
@@ -3107,6 +3131,7 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 spans["generate_decode"] = gen_total - spans["generate_ttft"]
                 response_text = _normalize_consumer_language(response_text)
                 response_text = _normalize_product_names(response_text, products)
+                response_text = _strip_regulatory(response_text)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             # 고민별 요약을 쓰면 LLM은 고민 분석·성분 설명만 쓰고 추천 제품 부분은 서버가 만든다.

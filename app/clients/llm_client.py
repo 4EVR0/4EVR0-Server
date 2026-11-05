@@ -8,6 +8,7 @@ from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
 from app.prompts import load_prompt
 from app.services.taxonomy_normalization_service import infer_effects
+from app.services.taxonomy_normalization_service import normalize_concerns as keyword_concerns
 
 # 프롬프트는 app/prompts/profile_extraction.txt 로 분리(버전 관리)
 PROMPT_NAME = "profile_extraction"
@@ -76,6 +77,19 @@ _PIGMENTATION_CONCERNS = frozenset({
     Concern.BLEMISHES, Concern.POST_ACNE_MARKS, Concern.DARK_CIRCLES,
 })
 _DULLNESS_SIGNAL = re.compile(r"칙칙|생기.{0,4}없|안색.{0,6}탁|얼굴빛.{0,6}탁")
+# 사용자가 이름으로 직접 요청한 고민. 위 필터로 세부 라벨이 모두 지워져도 그 계열 고민이 하나도 남지 않으면
+# 기본 라벨을 되살린다. "보습과 피지 조절"처럼 고민을 둘 이상 말했을 때 한쪽이 통째로 사라지는 것을 막는다.
+# (신호, 같은 계열 고민, 되살릴 라벨, 다른 고민이 함께 있을 때만 적용할지)
+# 보습은 "기본 보습 화장품"처럼 단독으로는 고민이 아니라 일반 요청일 수 있어 복합 요청에서만 되살린다.
+_EXPLICIT_REQUEST_NEGATION = r"(?!.{0,6}?(?:말고|빼고|제외|없어도|필요\s*없|원하지\s*않))"
+_EXPLICIT_REQUESTS: tuple[tuple[re.Pattern[str], frozenset[Concern], Concern, bool], ...] = (
+    (re.compile(r"(?:보습|수분|촉촉)" + _EXPLICIT_REQUEST_NEGATION),
+     frozenset({Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN}), Concern.DEHYDRATED_SKIN, True),
+    (re.compile(r"모공" + _EXPLICIT_REQUEST_NEGATION),
+     frozenset({Concern.ENLARGED_PORES, Concern.PORE_CONGESTION, Concern.COMEDONES}), Concern.ENLARGED_PORES, False),
+    (re.compile(r"(?:광채|윤기|톤\s*업|생기)" + _EXPLICIT_REQUEST_NEGATION),
+     frozenset({Concern.DULLNESS, Concern.UNEVEN_SKIN_TONE}), Concern.DULLNESS, False),  # 미백(색소)과는 따로 본다
+)
 _SPECIFIC_AGING_SIGNALS = (
     (re.compile(r"잔주름|깊은\s*주름|주름(?:이\s*고민|\s*관리|\s*개선)"), Concern.WRINKLES),
     (re.compile(r"탄력(?:이\s*없|이\s*떨어|\s*저하|\s*개선)"), Concern.LOSS_OF_ELASTICITY),
@@ -174,6 +188,15 @@ def _normalize_concerns(message: str, concerns: list[Concern]) -> list[Concern]:
     if whitening and not _PIGMENTATION_CONCERNS.intersection(normalized):
         normalized.append(Concern.HYPERPIGMENTATION)
 
+    # 직접 요청한 고민 계열이 하나도 남지 않으면 기본 라벨을 되살린다(복합 고민 누락 방지).
+    # 다른 고민이 있어야 되살리는 항목(보습)은 다른 항목을 먼저 되살린 뒤에 본다.
+    for signal, family, label, needs_other in sorted(_EXPLICIT_REQUESTS, key=lambda item: item[3]):
+        if not signal.search(message) or family.intersection(normalized):
+            continue
+        if needs_other and not normalized:
+            continue
+        normalized.append(label)
+
     # The model sometimes emits the umbrella aging category despite naming a
     # specific symptom. Replace it only when the text positively names one.
     if Concern.AGING_SIGNS in normalized:
@@ -217,10 +240,13 @@ async def call_llm(message: str) -> UserProfile:
         message,
         [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_],
     )
-    concerns = _normalize_concerns(
-        message,
-        [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_],
-    )
+    model_concerns = [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_]
+    # 모델이 고민을 하나도 못 뽑으면(예: "보습과 피지조절 동시에"처럼 효과로 말한 요청) 키워드 사전으로 보완한다.
+    # 같은 필터를 거치므로 "기본 보습 화장품" 같은 일반 요청은 여전히 고민 없음으로 남는다.
+    if not model_concerns:
+        # "저자극"은 제품 조건(constraint)이지 자극 고민이 아니다.
+        model_concerns = keyword_concerns(message.replace("저자극", ""))
+    concerns = _normalize_concerns(message, model_concerns)
     constraints = [Constraint(v) for v in data.get("constraints", []) if v in Constraint._value2member_map_]
     effects = infer_effects(concerns)
 

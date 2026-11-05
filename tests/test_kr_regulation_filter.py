@@ -3,7 +3,8 @@ from unittest import mock
 
 from app.clients import neo4j_client
 from app.schemas.recommend import IngredientResult
-from app.services.recommend_service import _compose_user_content, _kr_limit_phrase
+from app.services.recommend_service import _compose_user_content, _normalize_response_text
+from app.services.regulatory_text import strip_regulatory_text
 
 ROWS = [{"name": "SALICYLIC ACID", "kor_name": "살리실릭애씨드", "claim": "Acne",
          "eligibility_tier": "pubmed_evidence", "paper_ref": "3", "graph_score": 1.0,
@@ -52,23 +53,41 @@ class IngredientQueryKrFilterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("보존제로서 0.5%", rows[0]["kr_limit_note"])
 
 
-class KrLimitPhraseTest(unittest.TestCase):
-    def test_only_restricted_gets_phrase_and_long_note_is_cut(self):
-        self.assertEqual("", _kr_limit_phrase(IngredientResult(name="TALC", kr_reg_status="conditional",
-                                                               kr_limit_note="x")))
-        self.assertEqual("국내 배합한도가 있는 성분입니다(1%).",
-                         _kr_limit_phrase(IngredientResult(name="PHENOXYETHANOL", kr_reg_status="restricted",
-                                                           kr_limit_note=" 1% ")))
-        phrase = _kr_limit_phrase(IngredientResult(name="X", kr_reg_status="restricted", kr_limit_note="가" * 200))
-        self.assertTrue(phrase.endswith("…)."))
-        self.assertLess(len(phrase), 120)
+USER_REPORTED = ("<보존제> ∙ 살리실릭애씨드로서 0.5% ∙ 영유아용 제품류 또는 만 13세 이하 어린이가 사용할 수 있음을 "
+                 "특정하여 표시하는 제품에는 사용금지(다만, 샴푸는 제외) <기타배합한도> ∙ 인체세정용 제품류에 "
+                 "살리실릭애씨드로서 2% ∙ 사용 후 씻어내는 두발용 제품류에 살리실릭애씨드로서 3% ∙ 기능성화장품의 "
+                 "유효성분으로 사용하는 경우에 한하며 기타 제품에는 사용금지")
 
-    def test_llm_context_carries_full_limit_note(self):
+
+class RegulatoryTextNotShownTest(unittest.TestCase):
+    def test_llm_context_has_no_limit_note(self):
         ingredient = IngredientResult(**{k: v for k, v in ROWS[0].items() if k != "graph_score"})
         content = _compose_user_content("여드름", [ingredient], [])
-        self.assertIn("(국내 배합한도: 보존제로서 0.5%)", content)
-        plain = _compose_user_content("여드름", [IngredientResult(name="NIACINAMIDE")], [])
-        self.assertNotIn("국내 배합한도", plain)
+        self.assertNotIn("배합한도", content)
+        self.assertNotIn("0.5%", content)
+
+    def test_strips_reported_notice_but_keeps_explanation(self):
+        text = ("성분 설명\n"
+                f"- 살리실산 (SALICYLIC ACID): 각질과 피지 관리에 도움이 된다는 연구가 있어요. (국내 배합한도: {USER_REPORTED})\n"
+                f"{USER_REPORTED}\n"
+                "- 나이아신아마이드: 피지 조절과 관련된 연구가 있어요.")
+        cleaned, removed = strip_regulatory_text(text)
+        self.assertTrue(removed)
+        for word in ("배합한도", "사용금지", "0.5%", "13세", "유효성분으로"):
+            self.assertNotIn(word, cleaned)
+        self.assertIn("각질과 피지 관리에 도움이 된다는 연구가 있어요.", cleaned)
+        self.assertIn("- 나이아신아마이드: 피지 조절과 관련된 연구가 있어요.", cleaned)
+
+    def test_sentence_level_removal_and_untouched_text(self):
+        cleaned, removed = strip_regulatory_text("좋은 성분이에요. 국내 배합한도가 있는 성분입니다. 꾸준히 써 보세요.")
+        self.assertTrue(removed)
+        self.assertEqual("좋은 성분이에요. 꾸준히 써 보세요.", cleaned)
+        plain = "함량·배합도 확인되지 않아요."
+        self.assertEqual((plain, False), strip_regulatory_text(plain))
+
+    def test_response_normalizer_applies_strip(self):
+        text, _ = _normalize_response_text("추천해요.\n" + USER_REPORTED, [])
+        self.assertEqual("추천해요.", text)
 
 
 if __name__ == "__main__":

@@ -29,8 +29,11 @@ class IngredientResult(BaseModel):
     paper_ref: str | None = None
     # 식약처 사용제한 원료 기준 국내 규제 상태. banned는 조회 단계에서 제외되므로 응답에는
     # conditional | restricted | none 만 온다. restricted면 kr_limit_note에 배합한도 문구.
+    # 고시 원문이라 응답 문장에는 쓰지 않는다(app/services/regulatory_text.py).
     kr_reg_status: str | None = None
     kr_limit_note: str | None = None
+    # 이 성분이 후보로 나온 요청 고민 코드(복합 고민에서 고민별 근거 연결용). 고민이 하나면 그 하나.
+    concerns: list[str] = Field(default_factory=list)
     # 민감 피부 계열 요청에서 남긴 주의 성분의 안내(그래프 sensitive_caution, GraphRAG_Pipeline #49).
     sensitive_note: str | None = None
 

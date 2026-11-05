@@ -119,26 +119,12 @@ docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml exec -T ap
 제외는 최종 개수 제한 전에 적용하며, 프로필별 캐시와 후속 제품 복원에도 동일한 조건을 적용한다.
 이 필터는 전성분 완전성이나 개인별 안전을 보증하지 않는다. 기존 수집 동의와 별개로 프로필 자체를 원문에 합치거나 보관하지 않는다.
 
-## 관측 (Alloy → 모니터링 서버)
+## 관측
 
-`alloy`가 내부망에서 앱 `/metrics`와 `node-exporter`를 수집하고, Docker 로그(app·caddy·redis)를
-모니터링 서버로 push한다. 호스트 포트·공개 경로는 열지 않는다.
-
-- EC2가 모니터링 서버와 **같은 tailnet**(`tailb70036`)에 가입돼 있어야 한다.
-- 목적지는 Tailscale **IP**로 적는다. 컨테이너에서 MagicDNS(`*.ts.net`)가 풀린다고 가정하지 않는다.
-- `observe.env.example`을 `observe.env`로 복사하고 `export OBSERVE_ENV_FILE="$PWD/deploy/observe.env"`를 추가한다.
-- Alloy는 `docker.sock`(읽기 전용 마운트)으로 로그를 읽는다. 소켓 API 자체는 제한되지 않으므로
-  Alloy 이미지·설정 변경은 리뷰를 거친다.
-
-연결 확인(EC2 호스트):
-
-```bash
-curl -fsS http://100.105.250.65:9090/-/ready && curl -fsS http://100.105.250.65:3100/ready
-docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml logs --tail 50 alloy
-```
-
-Grafana에서 `up{host="beta-app"}`(job `beta-app`·`beta-node`)과 Loki `{job="beta-app"}`이 보이면 정상이다.
-`-p` 프로젝트 이름을 바꾸면 `COMPOSE_PROJECT_NAME`도 같은 값으로 지정한다(로그 수집 대상 필터).
+관측(메트릭·로그·`/ready` 합성 확인)은 이 compose와 **분리된 에이전트 스택**이 담당한다
+([Monitoring_Infra `agents/beta-app`](https://github.com/4EVR0/Monitoring_Infra/tree/main/agents/beta-app)).
+에이전트는 이 프로젝트의 `proxy` 네트워크(`<프로젝트명>_proxy`)에 붙어 `app:8000`을 수집하므로
+**프로젝트 이름(`-p 4evr0-beta`)과 `PROXY_SUBNET`의 `.4` 주소는 에이전트용으로 비워 둔다.**
 SSE는 Caddy의 기본 event-stream 전달을 이용한다. 운영 GPU를 연결한 후 실제 생성 취소·지연도 별도로 검증한다.
 
 ## 데이터, 중단 및 롤백
