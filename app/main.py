@@ -1,10 +1,11 @@
 import asyncio
 import contextlib
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -77,5 +78,9 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 @app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(_STATIC_DIR / "index.html")
+async def index() -> HTMLResponse:
+    # 새 HTML과 이전 CSS가 섞이지 않도록 내용이 바뀔 때 스타일 주소도 바꾼다.
+    style_version = hashlib.sha256((_STATIC_DIR / "olive.css").read_bytes()).hexdigest()[:16]
+    html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace('href="/static/olive.css"', f'href="/static/olive.css?v={style_version}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
