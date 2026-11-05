@@ -21,7 +21,7 @@ from app.services.taxonomy_normalization_service import normalize_concerns
     ("보습과 피지조절 동시에 되는 제품 추천해줘", [C.OILY_SKIN], [C.OILY_SKIN, C.DEHYDRATED_SKIN]),
     ("수분이랑 미백 같이 되는 거", [C.HYPERPIGMENTATION], [C.HYPERPIGMENTATION, C.DEHYDRATED_SKIN]),
     # 모공: "넓다/막힌다" 없이 이름만 말해도 남는다.
-    ("보습이랑 모공 둘 다 되는 제품", [C.DEHYDRATED_SKIN, C.ENLARGED_PORES], [C.ENLARGED_PORES, C.DEHYDRATED_SKIN]),
+    ("보습이랑 모공 둘 다 되는 제품", [C.DEHYDRATED_SKIN, C.ENLARGED_PORES], [C.DEHYDRATED_SKIN, C.ENLARGED_PORES]),
     ("여드름이랑 모공 관리", [C.ACNE], [C.ACNE, C.ENLARGED_PORES]),
     # 광채·톤업
     ("주름이랑 광채 같이", [C.WRINKLES, C.DULLNESS], [C.WRINKLES, C.DULLNESS]),
@@ -32,8 +32,8 @@ def test_named_concerns_survive(message, model, expected):
 
 
 @pytest.mark.parametrize("message, model, expected", [
-    ("기본 보습 화장품을 찾습니다.", [C.DEHYDRATED_SKIN], []),  # 보습 단독은 일반 요청(기존 동작 유지)
-    ("모공 말고 보습만 원해요", [C.ENLARGED_PORES], []),  # 부정은 되살리지 않는다
+    ("기본 보습 화장품을 찾습니다.", [C.DEHYDRATED_SKIN], [C.DEHYDRATED_SKIN]),  # 단독 보습 요청도 보습 고민
+    ("모공 말고 보습만 원해요", [C.ENLARGED_PORES], [C.DEHYDRATED_SKIN]),  # 부정한 모공은 되살리지 않고 보습만
     ("지성인데 쓸 만한 거", [C.OILY_SKIN, C.ENLARGED_PORES], [C.OILY_SKIN]),  # 모공을 말하지 않음
     ("모공이 막혀요", [C.PORE_CONGESTION], [C.PORE_CONGESTION]),  # 같은 계열이 이미 있음
 ])
@@ -108,7 +108,8 @@ def _fake_llm(content):
 @pytest.mark.parametrize("message, expected", [
     # 실측(2026-11-05, Qwen3.5-9B): 효과로 말한 복합 요청에서 모델이 concerns를 비워 no_products가 났다.
     ("보습과 피지조절 동시에 되는 제품 추천해줘", [C.OILY_SKIN, C.DEHYDRATED_SKIN]),
-    ("기본 보습 화장품을 찾습니다.", []),
+    ("기본 보습 화장품을 찾습니다.", [C.DEHYDRATED_SKIN]),
+    ("촉촉한 크림 추천", [C.DEHYDRATED_SKIN]),
     ("저자극 크림 추천", []),
 ])
 def test_empty_model_concerns_fall_back_to_keywords(message, expected):
