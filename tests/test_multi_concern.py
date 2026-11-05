@@ -1,5 +1,10 @@
 """고민을 둘 이상 말한 요청에서 한쪽 고민이 빠지지 않는지(추출·성분 선정·생성 입력)."""
 
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest import mock
+
 import pytest
 
 from app.clients.llm_client import _normalize_concerns
@@ -91,3 +96,32 @@ def test_generation_input_lists_concerns_and_tags():
     assert "[관련 고민: 피지]" in content and "[관련 고민: 속건조]" in content
     single = _compose_user_content("피지", ingredients[:1], [])
     assert "사용자 고민" not in single and "[관련 고민" not in single
+
+
+def _fake_llm(content):
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(content)))])
+    client = mock.Mock()
+    client.chat.completions.create = mock.AsyncMock(return_value=response)
+    return client
+
+
+@pytest.mark.parametrize("message, expected", [
+    # 실측(2026-11-05, Qwen3.5-9B): 효과로 말한 복합 요청에서 모델이 concerns를 비워 no_products가 났다.
+    ("보습과 피지조절 동시에 되는 제품 추천해줘", [C.OILY_SKIN, C.DEHYDRATED_SKIN]),
+    ("기본 보습 화장품을 찾습니다.", []),
+    ("저자극 크림 추천", []),
+])
+def test_empty_model_concerns_fall_back_to_keywords(message, expected):
+    from app.clients import llm_client
+    fake = _fake_llm({"skin_types": [], "concerns": [], "constraints": [], "intent": "recommend"})
+    with mock.patch.object(llm_client, "get_async_llm_client", return_value=fake):
+        profile = asyncio.run(llm_client.call_llm(message))
+    assert profile.concerns == expected
+
+
+def test_model_concerns_are_not_overridden_by_keywords():
+    from app.clients import llm_client
+    fake = _fake_llm({"skin_types": [], "concerns": ["ACNE"], "constraints": [], "intent": "recommend"})
+    with mock.patch.object(llm_client, "get_async_llm_client", return_value=fake):
+        profile = asyncio.run(llm_client.call_llm("여드름 진정 크림"))
+    assert profile.concerns == [C.ACNE]

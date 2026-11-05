@@ -8,6 +8,7 @@ from app.domain.enums import Concern, Constraint, SkinType
 from app.domain.user import UserProfile
 from app.prompts import load_prompt
 from app.services.taxonomy_normalization_service import infer_effects
+from app.services.taxonomy_normalization_service import normalize_concerns as keyword_concerns
 
 # 프롬프트는 app/prompts/profile_extraction.txt 로 분리(버전 관리)
 PROMPT_NAME = "profile_extraction"
@@ -239,10 +240,13 @@ async def call_llm(message: str) -> UserProfile:
         message,
         [SkinType(v) for v in data.get("skin_types", []) if v in SkinType._value2member_map_],
     )
-    concerns = _normalize_concerns(
-        message,
-        [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_],
-    )
+    model_concerns = [Concern(v) for v in data.get("concerns", []) if v in Concern._value2member_map_]
+    # 모델이 고민을 하나도 못 뽑으면(예: "보습과 피지조절 동시에"처럼 효과로 말한 요청) 키워드 사전으로 보완한다.
+    # 같은 필터를 거치므로 "기본 보습 화장품" 같은 일반 요청은 여전히 고민 없음으로 남는다.
+    if not model_concerns:
+        # "저자극"은 제품 조건(constraint)이지 자극 고민이 아니다.
+        model_concerns = keyword_concerns(message.replace("저자극", ""))
+    concerns = _normalize_concerns(message, model_concerns)
     constraints = [Constraint(v) for v in data.get("constraints", []) if v in Constraint._value2member_map_]
     effects = infer_effects(concerns)
 
