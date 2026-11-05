@@ -1651,6 +1651,28 @@ button svg {
   font-size:11px;
   line-height:1.6;
 }
-.privacy-dialog { max-width:680px; }
-.privacy-dialog h3 { margin:24px 0 8px; font-size:14px; color:var(--text); }
-.privacy-dialog p { line-height:1.8; }
+.privacy-dialog {
+  width:min(640px,calc(100% - 32px));
+  max-width:640px;
+  overflow-y:auto;
+  font-family:inherit;
+  word-break:keep-all;
+  overflow-wrap:anywhere;
+}
+.privacy-dialog h3 {
+  margin:24px 0 8px;
+  font-size:15px;
+  font-weight:600;
+  line-height:1.5;
+  color:var(--text);
+}
+.privacy-dialog p {
+  font-size:14px;
+  font-weight:400;
+  line-height:1.85;
+  color:var(--soft);
+}
+.privacy-dialog p + p { margin-top:10px; }
+.privacy-dialog .muted-note { font-size:12px; color:var(--muted); }
+.privacy-dialog a { color:var(--brand-2); text-underline-offset:3px; }
+.privacy-dialog .primary-action { font-size:14px; }
