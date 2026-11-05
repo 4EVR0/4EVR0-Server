@@ -80,11 +80,12 @@ _DULLNESS_SIGNAL = re.compile(r"칙칙|생기.{0,4}없|안색.{0,6}탁|얼굴빛
 # 사용자가 이름으로 직접 요청한 고민. 위 필터로 세부 라벨이 모두 지워져도 그 계열 고민이 하나도 남지 않으면
 # 기본 라벨을 되살린다. "보습과 피지 조절"처럼 고민을 둘 이상 말했을 때 한쪽이 통째로 사라지는 것을 막는다.
 # (신호, 같은 계열 고민, 되살릴 라벨, 다른 고민이 함께 있을 때만 적용할지)
-# 보습은 "기본 보습 화장품"처럼 단독으로는 고민이 아니라 일반 요청일 수 있어 복합 요청에서만 되살린다.
+# 보습은 처음에 복합 요청에서만 되살렸으나 "기본 보습 화장품"이 고민 없음 → 결과 없음이 되어(2026-11-05 베타),
+# 단독 요청도 속건조(보습·수분 유지 효능) 고민으로 본다.
 _EXPLICIT_REQUEST_NEGATION = r"(?!.{0,6}?(?:말고|빼고|제외|없어도|필요\s*없|원하지\s*않))"
 _EXPLICIT_REQUESTS: tuple[tuple[re.Pattern[str], frozenset[Concern], Concern, bool], ...] = (
     (re.compile(r"(?:보습|수분|촉촉)" + _EXPLICIT_REQUEST_NEGATION),
-     frozenset({Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN}), Concern.DEHYDRATED_SKIN, True),
+     frozenset({Concern.DRY_SKIN, Concern.DEHYDRATED_SKIN}), Concern.DEHYDRATED_SKIN, False),
     (re.compile(r"모공" + _EXPLICIT_REQUEST_NEGATION),
      frozenset({Concern.ENLARGED_PORES, Concern.PORE_CONGESTION, Concern.COMEDONES}), Concern.ENLARGED_PORES, False),
     (re.compile(r"(?:광채|윤기|톤\s*업|생기)" + _EXPLICIT_REQUEST_NEGATION),

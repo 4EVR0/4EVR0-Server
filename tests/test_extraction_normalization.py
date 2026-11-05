@@ -105,10 +105,11 @@ def test_surface_dryness_does_not_imply_inner_moisture_loss():
         "뺨이 건조해요.",
         [Concern.DEHYDRATED_SKIN],
     ) == [Concern.DRY_SKIN]
+    # 단독 보습 요청은 보습 고민(속건조)으로 본다. 고민 없음이면 추천 결과가 비었다(2026-11-05).
     assert _normalize_concerns(
         "기본 보습 화장품을 찾습니다.",
         [Concern.DEHYDRATED_SKIN],
-    ) == []
+    ) == [Concern.DEHYDRATED_SKIN]
     assert _normalize_concerns(
         "오후에도 계속 건조합니다.",
         [Concern.DEHYDRATED_SKIN],
