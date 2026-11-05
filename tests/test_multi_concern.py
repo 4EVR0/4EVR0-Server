@@ -137,3 +137,32 @@ def test_generation_input_uses_korean_claim_labels():
     assert "New label" in unknown  # 사전에 없는 라벨은 원문 유지
     assert _normalize_consumer_language("여드름 기미와 관련된 연구가 있어요.") == "여드름과 관련된 연구가 있어요."
     assert _normalize_consumer_language("여드름 기미 개선") == "여드름 개선"
+
+
+def _evidence_ingredient(name, kor, acne, oily, effects):
+    return IngredientResult(name=name, kor_name=kor, claim="Comedolytic", eligibility_tier="pubmed_review",
+                            paper_ref=str(acne), concerns=["ACNE", "OILY_SKIN"],
+                            concern_evidence=[{"concern": "ACNE", "paper_count": acne, "effects": effects},
+                                              {"concern": "OILY_SKIN", "paper_count": oily,
+                                               "effects": ["SEBUM_REGULATION"]}])
+
+
+def test_generation_input_gives_roles_per_concern_counts_and_links():
+    # 베타 보고(2026-11-05): 트러블·피지 질문에 네 성분이 모두 "모공 막힘 관리 연구 N건"으로 나옴.
+    ingredients = [
+        _evidence_ingredient("SALICYLIC ACID", "살리실릭애씨드", 53, 12,
+                             ["ANTIMICROBIAL", "ANTI_INFLAMMATORY", "BLEMISH_CARE", "COMEDOLYTIC", "KERATOLYTIC",
+                              "SEBUM_REGULATION"]),
+        _evidence_ingredient("CARNITINE", "카르니틴", 6, 5, ["BLEMISH_CARE", "SEBUM_REGULATION"]),
+    ]
+    content = _compose_user_content("트러블과 과도한 피지가 고민이에요", ingredients, [])
+    assert "고민과 역할의 연결" in content and "모공을 막고" in content
+    assert ("살리실릭애씨드 (SALICYLIC ACID): 연구에서 다룬 역할: 모공 막힘 관리, 각질 관리, 피지 조절, 항균 관리, "
+            "피부 진정 | 고민별 연구 수: 트러블 관련 53건, 피지 관련 12건") in content
+    assert "카르니틴 (CARNITINE): 연구에서 다룬 역할: 피지 조절 |" in content  # 목표(트러블 개선)는 역할에서 뺀다
+    assert "Comedolytic" not in content
+
+
+def test_generation_input_without_concern_evidence_keeps_claim_line():
+    content = _compose_user_content("x", [IngredientResult(name="GLYCERIN", kor_name="글리세린", claim="Hydrating")], [])
+    assert "- 글리세린 (GLYCERIN): 보습 [" in content and "고민과 역할의 연결" not in content
