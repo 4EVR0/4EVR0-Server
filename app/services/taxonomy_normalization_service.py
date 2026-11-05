@@ -89,6 +89,16 @@ _CONCERN_SYNONYMS: dict[str, Concern] = {
     "수분 부족": Concern.DEHYDRATED_SKIN,
     "탈수": Concern.DEHYDRATED_SKIN,
     "피부 당김": Concern.DEHYDRATED_SKIN,
+    # 효과로 요청한 표현(LLM 추출 실패 시 대체 경로). 복합 요청에서 한쪽이 빠지지 않게 한다.
+    "속건조": Concern.DEHYDRATED_SKIN,
+    "보습": Concern.DEHYDRATED_SKIN,
+    "수분": Concern.DEHYDRATED_SKIN,
+    "촉촉": Concern.DEHYDRATED_SKIN,
+    "진정": Concern.IRRITATED_SKIN,
+    "장벽": Concern.BARRIER_DAMAGE,
+    "톤업": Concern.DULLNESS,
+    "광채": Concern.DULLNESS,
+    "민감": Concern.SENSITIVE_SKIN,
     # FLAKY_SKIN (각질)
     "각질": Concern.FLAKY_SKIN,
     "각질 일어남": Concern.FLAKY_SKIN,

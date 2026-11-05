@@ -1,0 +1,93 @@
+"""고민을 둘 이상 말한 요청에서 한쪽 고민이 빠지지 않는지(추출·성분 선정·생성 입력)."""
+
+import pytest
+
+from app.clients.llm_client import _normalize_concerns
+from app.domain.enums import Concern as C
+from app.schemas.recommend import IngredientResult
+from app.services.ingredient_selection import select_recommended_ingredients
+from app.services.recommend_service import _compose_user_content
+from app.services.taxonomy_normalization_service import normalize_concerns
+
+
+@pytest.mark.parametrize("message, model, expected", [
+    # 보습: 모델이 수분 고민을 냈다가 필터에서 지워지거나 아예 안 낸 경우 모두 되살린다.
+    ("보습과 피지조절 동시에 되는 제품 추천해줘", [C.OILY_SKIN, C.DEHYDRATED_SKIN], [C.OILY_SKIN, C.DEHYDRATED_SKIN]),
+    ("보습과 피지조절 동시에 되는 제품 추천해줘", [C.OILY_SKIN], [C.OILY_SKIN, C.DEHYDRATED_SKIN]),
+    ("수분이랑 미백 같이 되는 거", [C.HYPERPIGMENTATION], [C.HYPERPIGMENTATION, C.DEHYDRATED_SKIN]),
+    # 모공: "넓다/막힌다" 없이 이름만 말해도 남는다.
+    ("보습이랑 모공 둘 다 되는 제품", [C.DEHYDRATED_SKIN, C.ENLARGED_PORES], [C.ENLARGED_PORES, C.DEHYDRATED_SKIN]),
+    ("여드름이랑 모공 관리", [C.ACNE], [C.ACNE, C.ENLARGED_PORES]),
+    # 광채·톤업
+    ("주름이랑 광채 같이", [C.WRINKLES, C.DULLNESS], [C.WRINKLES, C.DULLNESS]),
+    ("미백이랑 광채 동시에", [C.HYPERPIGMENTATION], [C.HYPERPIGMENTATION, C.DULLNESS]),
+])
+def test_named_concerns_survive(message, model, expected):
+    assert _normalize_concerns(message, model) == expected
+
+
+@pytest.mark.parametrize("message, model, expected", [
+    ("기본 보습 화장품을 찾습니다.", [C.DEHYDRATED_SKIN], []),  # 보습 단독은 일반 요청(기존 동작 유지)
+    ("모공 말고 보습만 원해요", [C.ENLARGED_PORES], []),  # 부정은 되살리지 않는다
+    ("지성인데 쓸 만한 거", [C.OILY_SKIN, C.ENLARGED_PORES], [C.OILY_SKIN]),  # 모공을 말하지 않음
+    ("모공이 막혀요", [C.PORE_CONGESTION], [C.PORE_CONGESTION]),  # 같은 계열이 이미 있음
+])
+def test_no_false_restore(message, model, expected):
+    assert _normalize_concerns(message, model) == expected
+
+
+@pytest.mark.parametrize("message, expected", [
+    ("보습과 피지조절 동시에 되는 제품", {C.DEHYDRATED_SKIN, C.OILY_SKIN}),
+    ("진정이랑 장벽 같이", {C.IRRITATED_SKIN, C.BARRIER_DAMAGE}),
+    ("톤업이랑 보습", {C.DULLNESS, C.DEHYDRATED_SKIN}),
+])
+def test_keyword_fallback_finds_both(message, expected):
+    assert expected <= set(normalize_concerns(message))
+
+
+def _row(name, tier, score, concerns, claim):
+    return {"name": name, "eligibility_tier": tier, "graph_score": score, "concerns": concerns, "claim": claim}
+
+
+SEBUM = ["OILY_SKIN"]
+HYDRA = ["DEHYDRATED_SKIN"]
+ROWS = [
+    _row("NIACINAMIDE", "pubmed_review", 1.0, SEBUM, "Sebum regulation"),
+    _row("ZINC PCA", "pubmed_review", 0.9, SEBUM, "Sebum regulation"),
+    _row("SALICYLIC ACID", "pubmed_review", 0.8, SEBUM, "Sebum regulation"),
+    _row("GLYCERIN", "pubmed_evidence", 1.0, HYDRA, "Hydrating"),
+    _row("SODIUM HYALURONATE", "pubmed_evidence", 0.9, HYDRA, "Hydrating"),
+]
+KW = dict(default_k=3, max_k=3, score_ratio=0.5, product_bonus=0.0)
+
+
+def test_selection_covers_every_concern():
+    # 근거 등급이 높은 피지 성분만 자격이 되지만, 보습 성분도 하나는 들어가야 한다.
+    names = [r["name"] for r in select_recommended_ingredients(ROWS, [], concerns=SEBUM + HYDRA, **KW)]
+    assert len(names) == 3
+    assert "GLYCERIN" in names
+    assert sum(n in ("NIACINAMIDE", "ZINC PCA", "SALICYLIC ACID") for n in names) == 2
+
+
+def test_selection_single_concern_unchanged():
+    before = select_recommended_ingredients(ROWS, [], **KW)
+    assert [r["name"] for r in before] == ["NIACINAMIDE", "ZINC PCA", "SALICYLIC ACID"]
+    assert select_recommended_ingredients(ROWS, [], concerns=SEBUM, **KW) == before
+
+
+def test_selection_keeps_shared_ingredient():
+    rows = [_row("NIACINAMIDE", "pubmed_review", 1.0, SEBUM + HYDRA, "Sebum regulation"),
+            _row("ZINC PCA", "pubmed_review", 0.9, SEBUM, "Sebum regulation"),
+            _row("GLYCERIN", "pubmed_evidence", 1.0, HYDRA, "Hydrating")]
+    names = [r["name"] for r in select_recommended_ingredients(rows, [], concerns=SEBUM + HYDRA, **KW)]
+    assert "GLYCERIN" not in names  # 두 고민 모두에 연결된 성분이 이미 있으므로 더하지 않는다
+
+
+def test_generation_input_lists_concerns_and_tags():
+    ingredients = [IngredientResult(name="NIACINAMIDE", kor_name="나이아신아마이드", concerns=SEBUM),
+                   IngredientResult(name="GLYCERIN", kor_name="글리세린", concerns=HYDRA)]
+    content = _compose_user_content("보습과 피지조절", ingredients, [])
+    assert "사용자 고민(모두 다룰 것): 피지, 속건조" in content
+    assert "[관련 고민: 피지]" in content and "[관련 고민: 속건조]" in content
+    single = _compose_user_content("피지", ingredients[:1], [])
+    assert "사용자 고민" not in single and "[관련 고민" not in single

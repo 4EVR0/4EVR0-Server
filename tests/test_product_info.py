@@ -79,11 +79,11 @@ def test_group_facts_by_effect_without_unsupported_or_fragrance():
     assert "리날룰" not in names and "정제수" not in names  # 향료 추천 근거 제외, 근거 없는 성분 제외
 
 
-def test_render_sections_states_limits_and_cautions():
+def test_render_sections_states_cautions_without_regulatory_notice():
     groups = product_info.group_facts(FACTS)
     text = product_info.render_sections(groups, FACTS)
     assert text.startswith("효능별 성분\n- 보습: 우레아(논문 근거 34건)")
-    assert "국내 배합한도가 있는 성분: 살리실릭애씨드(보존제로서 0.5%)" in text
+    assert "배합한도" not in text and "0.5%" not in text  # 식약처 고시 원문은 답변에 쓰지 않는다
     assert product_info.LIMITATION_NOTE in text
     assert "참고: 우레아·살리실릭애씨드는 민감한 피부라면 좁은 부위에 먼저 사용해 확인해 주세요." in text
     assert "주성분" not in text
