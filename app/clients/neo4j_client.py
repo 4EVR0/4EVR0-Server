@@ -494,6 +494,40 @@ async def query_ingredients_by_effects(
         return []
 
 
+async def query_concern_evidence(names: list[str], concern_codes: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """성분별·고민별 논문 근거(EVIDENCE_FOR): {inci_name: [{concern, paper_count, effects}]}.
+
+    paper_count는 그 고민(질환)에 대한 사람 대상 연구 수이고, effects는 그 연구들에서 다룬 역할(효능 코드)이다.
+    대표 효능 하나(claim)만 쓰면 여러 성분이 같은 역할로 보이고 연구 수가 그 역할의 연구처럼 읽혀서,
+    생성 입력에 고민별 연구 수와 역할 목록을 그대로 넘긴다. 실패하면 빈 맵(기존 claim 표기로 폴백).
+    """
+    if not names or not concern_codes:
+        return {}
+    query = """
+    MATCH (c:Concern)<-[r:EVIDENCE_FOR]-(i:Ingredient)
+    WHERE c.concern_code IN $codes AND i.inci_name IN $names
+    RETURN i.inci_name AS name, c.concern_code AS concern, r.paper_count AS paper_count, r.effects AS effects
+    """
+    try:
+        start = time.perf_counter()
+        async with _graph_driver().session() as session:
+            result = await session.run(query, names=names, codes=concern_codes)
+            records = [dict(record) async for record in result]
+        _log_query("query_concern_evidence", {"concerns": concern_codes}, (time.perf_counter() - start) * 1000,
+                   len(records))
+    except Exception as exc:
+        logger.warning("Neo4j concern evidence query failed: %s", exc)
+        NEO4J.failed(exc)
+        return {}
+    order = {code: index for index, code in enumerate(concern_codes)}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for rec in sorted(records, key=lambda r: order.get(r["concern"], 99)):
+        out.setdefault(rec["name"], []).append({
+            "concern": rec["concern"], "paper_count": int(rec.get("paper_count") or 0),
+            "effects": [e for e in str(rec.get("effects") or "").split("|") if e]})
+    return out
+
+
 async def query_cautioned_ingredients(concern_codes: list[str]) -> set[str]:
     """주어진 고민(concern_code)에 대해 CAUTION 엣지가 있는 성분(inci_name) 집합을 반환한다.
 
