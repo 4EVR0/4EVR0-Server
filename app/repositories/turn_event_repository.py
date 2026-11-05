@@ -6,10 +6,13 @@
 
 import json
 
+from app.core.config import settings
 from app.core.db import get_pool
 
 
 async def ensure_tables() -> None:
+    if not settings.db_auto_create_schema:
+        return
     pool = await get_pool()
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS release_versions (

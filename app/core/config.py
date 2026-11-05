@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     neo4j_password: str = "password"
 
     postgres_dsn: str = "postgresql://user:password@localhost:5432/cosmetic"
+    # Production uses a separate migration account; runtime only needs DML.
+    db_auto_create_schema: bool = True
     # asyncpg 풀 크기(app/core/db.py). 세션 API는 가벼워 크게 필요 없다.
     pg_pool_min_size: int = 1
     pg_pool_max_size: int = 10

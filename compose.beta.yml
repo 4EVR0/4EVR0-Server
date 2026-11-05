@@ -53,6 +53,7 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      - ${PRODUCT_IMAGE_DIR:-product_images}:/srv/product-images:ro
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     security_opt: [no-new-privileges:true]
@@ -71,6 +72,7 @@ networks:
   datastore:
     internal: true
 volumes:
+  product_images:
   redis_data:
   caddy_data:
   caddy_config:

@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 from contextvars import ContextVar
+from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,7 +55,8 @@ from app.services.verified_ingredient_studies import verified_study_for
 from app.services.ingredient_selection import select_recommended_ingredients
 from app.services.regulatory_text import strip_regulatory_text
 from app.services.fragrance_policy import eligible_rationale
-from app.services import product_info, release_info, sensitive_caution
+from app.services import product_info, release_info, sensitive_caution, skin_profile_policy
+from app.schemas.recommend import SkinProfile
 from app.repositories import turn_event_repository
 from app.services.skin_type_defaults import apply_skin_type_defaults
 from app.services.fragrance_allergens import allergen_note, allergens_in
@@ -311,6 +313,7 @@ async def select_products(message: str, concerns: list[Concern],
         raw = [p for p in raw if not sensitive_caution.is_peel_product(p.get("product_name"))]
     raw = filter_explicit_application_area(raw, message)
     raw = await _filter_products_with_constraints(raw, constraints or [])
+    raw = await skin_profile_policy.filter_products(raw)
     raw = _rerank_by_review(raw, concerns)  # 관련도 버킷 유지 + 정확 목적 우선 + 리뷰 부연
     # 복합 고민: 요청 고민을 더 많이 충족하는 제품 우선(동률은 위 순서 유지). 단일 고민은 그대로.
     raw = order_by_coverage(raw, concerns, ingredient_scores)
@@ -463,7 +466,8 @@ def _append_server_notes(text: str, ingredients: list[IngredientResult], product
     """출력 가드 뒤에 붙이는 서버 안내(민감 피부 주의 → 향료 알레르기 표시). 본문 기준으로 대상을 고른다."""
     body = text
     text = _append_coverage_note(text, _sensitive_note(ingredients, body))
-    return _append_coverage_note(text, _fragrance_allergen_note(products, body))
+    text = _append_coverage_note(text, _fragrance_allergen_note(products, body))
+    return _append_coverage_note(text, skin_profile_policy.note())
 
 
 def _requested_concern_codes(raw_ingredients: list[dict]) -> list[str]:
@@ -480,6 +484,12 @@ def _finalize_ingredients(
     raw_ingredients: list[dict], raw_products: list[dict], candidates: list[IngredientResult],
 ) -> list[IngredientResult]:
     """후보 성분에서 최종 추천 성분을 고른다(6장 규칙). 비활성이면 후보 전체."""
+    skin = skin_profile_policy.current.get()
+    if skin and skin.sensitive:
+        # The response must not reintroduce an excluded active as an alternative.
+        matched = {name for product in raw_products for name in product.get('matched_ingredients', [])}
+        candidates = [item for item in candidates if item.name in matched]
+        raw_ingredients = [row for row in raw_ingredients if row.get('name') in matched]
     if not settings.ingredient_selection_enabled:
         return candidates
     picked = select_recommended_ingredients(
@@ -642,7 +652,16 @@ async def _filter_products_with_constraints(products: list[dict], constraints: l
     return _apply_constraint_evidence_guard(enriched, constraints)
 
 
-def _build_no_product_response(
+def _build_no_product_response(*args, **kwargs) -> str:
+    if skin_profile_policy.note():
+        return ('질문하신 목적의 제품 중 피부 프로필의 제외 조건까지 충족하는 후보를 확인하지 못했어요. '
+                '현재 데이터에서는 구체적인 제품이나 제외된 성분을 대안으로 추천하지 않을게요.\n\n'
+                + skin_profile_policy.note())
+    text = _build_no_product_response_base(*args, **kwargs)
+    return _append_coverage_note(text, skin_profile_policy.note())
+
+
+def _build_no_product_response_base(
     ingredients: list[IngredientResult],
     constraints: list[Constraint],
     concerns: list[Concern] | None = None,
@@ -1848,7 +1867,8 @@ async def _handle_followup(session_id: str, turn_id: str, message: str,
             result.append({**row, "matched_ingredients": names, "matched_count": len(names),
                            "concern_summary": None})
         return result
-    visible, source = sanitize(visible), sanitize(source)
+    visible = await skin_profile_policy.filter_products(sanitize(visible))
+    source = await skin_profile_policy.filter_products(sanitize(source))
     if active or constraints or fragrance_preference(message) is not None:
         active = {**(active or {}), "profile": {**profile_data,
                   "concerns": [c.value for c in concerns], "constraints": [c.value for c in constraints]},
@@ -2349,7 +2369,16 @@ def _record_turn(*, turn_id: str, transport: str, status: str, response_mode: st
     task.add_done_callback(_PENDING_RECORDS.discard)
 
 
-async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
+async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None,
+                    *, skin_profile: SkinProfile | None = None) -> RecommendResponse:
+    token = skin_profile_policy.current.set(skin_profile)
+    try:
+        return await _recommend_with_metrics(session_id, message, gen_prompt_name)
+    finally:
+        skin_profile_policy.current.reset(token)
+
+
+async def _recommend_with_metrics(session_id: str, message: str, gen_prompt_name: str | None = None) -> RecommendResponse:
     """일반 응답. 결과(완료·실패)를 릴리스 버전과 함께 기록한다."""
     started = time.perf_counter()
     _CACHE_HIT.set(None)
@@ -2379,6 +2408,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
         return resolution
     context = resolution if isinstance(resolution, ContextualSearch) else None
     cache_message, generation_message = _contextual_messages(message, context)
+    cache_message = skin_profile_policy.cache_identity(cache_message)
 
     # 캐시 조회(추출 이전) — 히트 시 extract·neo4j·generate를 통째로 건너뛴다 → GPU 비용 0.
     _t = time.perf_counter()
@@ -2812,7 +2842,18 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None):
+async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None,
+                           *, skin_profile: SkinProfile | None = None):
+    token = skin_profile_policy.current.set(skin_profile)
+    try:
+        async with aclosing(_recommend_stream_with_metrics(session_id, message, gen_prompt_name)) as stream:
+            async for frame in stream:
+                yield frame
+    finally:
+        skin_profile_policy.current.reset(token)
+
+
+async def _recommend_stream_with_metrics(session_id: str, message: str, gen_prompt_name: str | None = None):
     """SSE 응답. done 프레임까지 보내면 완료, error 프레임은 실패, 중간에 끊기면 취소로 기록한다.
 
     끊긴 스트리밍 답변을 완료된 답변으로 기록하지 않는다(배포 계획서 4장).
@@ -2883,6 +2924,7 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
 
     context = resolution if isinstance(resolution, ContextualSearch) else None
     cache_message, generation_message = _contextual_messages(message, context)
+    cache_message = skin_profile_policy.cache_identity(cache_message)
 
     _t = time.perf_counter()
     cached = _refresh_cached_images(await recommend_cache.get(cache_message, gen_prompt_name))

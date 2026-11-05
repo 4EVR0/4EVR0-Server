@@ -1,5 +1,4 @@
 """Runs inside the disposable app container with its Caddy's public CA certificate."""
-import base64
 import json
 import ssl
 import sys
@@ -9,24 +8,34 @@ import urllib.request
 
 context = ssl.create_default_context(cadata=sys.stdin.read())
 base = "https://beta.localhost"
-authorization = "Basic " + base64.b64encode(b"smoke:hiccup").decode()
 
 
-def request(path, *, auth=True, method="GET", headers=None):
-    combined = {"Authorization": authorization} if auth else {}
-    combined.update(headers or {})
-    req = urllib.request.Request(base + path, method=method, headers=combined)
+def request(path, *, method="GET", headers=None, data=None):
+    req = urllib.request.Request(base + path, method=method, headers=headers or {}, data=data)
     try:
         return urllib.request.urlopen(req, context=context, timeout=10)
     except urllib.error.HTTPError as error:
         return error
 
 
-for path in ("/", "/api/v1/sessions/current"):
-    with request(path, auth=False) as response:
-        assert response.status == 401, (path, response.status)
 with request("/") as response:
     assert response.status == 200
+    assert "WWW-Authenticate" not in response.headers
+    assert b"/static/olive.css" in response.read(), "redesigned UI not packaged"
+with request("/static/olive.css") as response:
+    assert response.status == 200
+    assert b".composer-section" in response.read(), "UI stylesheet missing"
+with request('/product-images/goodsNo=A000000000001/main.jpg') as response:
+    assert response.status == 200
+    assert response.headers['Content-Type'].startswith('image/png')
+    assert response.read().startswith(b'\x89PNG'), 'PNG source must work through the product image route'
+with request('/product-images/goodsNo=A000000000002/main.jpg') as response:
+    assert response.status == 404
+with request("/api/v1/sessions/current") as response:
+    assert response.status == 404, "anonymous visitor must reach session API without a login prompt"
+with request("/api/v1/recommend/stream", method="POST", headers={'Content-Type': 'application/json'},
+             data=json.dumps({'message': 'x' * 17000}).encode()) as response:
+    assert response.status == 413, "oversized request must be rejected by the proxy"
 for path in ("/health", "/live", "/ready", "/metrics", "/docs", "/openapi.json"):
     with request(path) as response:
         assert response.status == 404, (path, response.status)
@@ -54,4 +63,4 @@ except urllib.error.HTTPError as response:
     assert response.status == 503
     deps = json.load(response)["dependencies"]
     assert deps == {"postgresql": "ok", "redis": "ok", "neo4j": "error", "llm": "error"}, deps
-print("PASS: verified HTTPS, invite auth, private routes, secure session, origin, SSE and offline readiness")
+print("PASS: public HTTPS, packaged UI/CSS, request size limit, private routes, secure session, origin, SSE and offline readiness")

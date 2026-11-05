@@ -6,8 +6,15 @@
  route {
   @internal path /metrics* /health* /live* /ready* /docs* /redoc* /openapi.json*
   respond @internal 404
-  basic_auth {
-   {$BETA_USER} {$BETA_PASSWORD_HASH}
+  handle_path /product-images/* {
+   root * /srv/product-images
+   @main_jpg path_regexp main_jpg ^/(goodsNo=[AB][0-9]{12})/main[.]jpg$
+   rewrite @main_jpg /{re.main_jpg.1}/main
+   try_files {path} {path}.jpg {path}.png {path}.webp {path}.gif
+   file_server
+  }
+  request_body {
+   max_size 16KB
   }
   reverse_proxy app:8000 {
    header_up -Authorization

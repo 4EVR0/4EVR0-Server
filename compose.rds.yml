@@ -1,0 +1,8 @@
+# Production-only overlay. CA verification is configured in POSTGRES_DSN with
+# sslmode=verify-full&sslrootcert=/run/4evr0/rds-ca.pem.
+services:
+  app:
+    environment:
+      DB_AUTO_CREATE_SCHEMA: "false"
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set POSTGRES_CA_FILE to the verified AWS RDS CA bundle}:/run/4evr0/rds-ca.pem:ro

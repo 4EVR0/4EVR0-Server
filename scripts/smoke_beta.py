@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
+import base64
+import tempfile
 
 
 def main():
@@ -15,12 +17,18 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     project = "4evr0-beta-smoke-" + uuid.uuid4().hex[:10]
+    assets = tempfile.TemporaryDirectory(prefix='4evr0-product-images-')
+    image_dir = Path(assets.name) / 'goodsNo=A000000000001'
+    image_dir.mkdir()
+    (image_dir / 'main.png').write_bytes(base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII='))
     network_ids = subprocess.check_output(["docker", "network", "ls", "-q"], text=True).split()
     networks = json.loads(subprocess.check_output(["docker", "network", "inspect", *network_ids], text=True)) if network_ids else []
     used = [ipaddress.ip_network(c["Subnet"]) for n in networks for c in (n.get("IPAM", {}).get("Config") or []) if c.get("Subnet")]
     subnet = next(ipaddress.ip_network(f"172.29.{i}.0/28") for i in range(1, 255)
                   if not any(ipaddress.ip_network(f"172.29.{i}.0/28").overlaps(n) for n in used if n.version == 4))
     env = {**os.environ, "APP_IMAGE": args.image, "RUNTIME_ENV_FILE": "/dev/null", "PROXY_ENV_FILE": "/dev/null",
+           "PRODUCT_IMAGE_DIR": assets.name,
            "PROXY_SUBNET": str(subnet), "CADDY_IP": str(subnet.network_address + 2),
            "APP_IP": str(subnet.network_address + 3)}
     compose = ["docker", "compose", "--project-name", project, "--env-file", "/dev/null",
@@ -48,6 +56,7 @@ def main():
     finally:
         # Only this uniquely named disposable stack and its test volumes.
         run(compose + ["down", "--volumes", "--remove-orphans"])
+        assets.cleanup()
 
 
 if __name__ == "__main__":

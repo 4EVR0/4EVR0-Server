@@ -50,6 +50,8 @@ while True:
 
 with urllib.request.urlopen("http://127.0.0.1:8000/static/logo.png", timeout=2) as response:
     assert response.read(8) == b"\x89PNG\r\n\x1a\n", "static logo missing"
+with urllib.request.urlopen("http://127.0.0.1:8000/static/olive.css", timeout=2) as response:
+    assert b".composer-section" in response.read(), "redesigned UI stylesheet missing"
 with urllib.request.urlopen("http://127.0.0.1:8000/openapi.json", timeout=2) as response:
     schema = json.load(response)
     assert schema["info"]["version"] == "container-smoke"

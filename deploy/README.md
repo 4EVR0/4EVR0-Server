@@ -1,4 +1,4 @@
-# 초대형 베타 컨테이너 배포
+# 공개 베타 컨테이너 배포
 
 이 구성은 EC2 한 대의 앱·Caddy·Redis와 외부의 비공개 PostgreSQL·Neo4j·GPU를 연결한다.
 개발용 `docker-compose.yml`과 별개이며 클라우드 리소스나 DNS를 생성하지 않는다.
@@ -15,6 +15,28 @@
 - `172.30.90.0/28`이 VPC/VPN/Docker 대역과 충돌하지 않아야 한다. 변경할 때
   `PROXY_SUBNET`과 해당 대역 안의 서로 다른 `CADDY_IP`·`APP_IP`를 함께 지정한다.
 
+## DuckDNS 주소 연결
+
+2026-11-04 사용자 확인: 유료 독립 도메인 대신 DuckDNS의 무료 `이름.duckdns.org` 주소를 사용한다.
+`4evr0.duckdns.org`를 DuckDNS 계정에 확보했다. 처음에는 사용자 승인에 따라 A 레코드를 `0.0.0.0`으로 두었고,
+2026-11-04 공개 전환 승인 후 앱 EIP에 연결했다. 정상 HTTPS·세션·Origin·요청 상한·내부 경로 차단을 실제 주소에서 검증했다.
+현재 운영 상태와 GPU 최종 확인 여부는 인프라 저장소의 `docs/beta-runtime-deployment.md`를 따른다.
+주소를 새 서버로 옮길 때는 아래 절차로 연결한다.
+
+1. DuckDNS 계정에서 확보된 `4evr0.duckdns.org`를 확인한다.
+2. 앱 EC2에 EIP를 연결한 뒤 DuckDNS의 IPv4 레코드를 해당 EIP로 설정한다.
+   IPv6를 운영하지 않으면 접속 불가능한 AAAA 레코드를 남기지 않는다.
+3. DNS가 앱 IP를 가리키는지 확인한 뒤 `proxy.env`에 실제 주소를 적는다.
+   예: `SITE_ADDRESS=확보한이름.duckdns.org` (`https://`와 포트는 제외).
+4. 앱 EC2의 80/443과 Caddy 인증서 저장 볼륨을 준비하고, 실제 주소로 HTTPS·세션·SSE를 검증한다.
+
+EIP를 유지하는 동안에는 IP 자동 감지용 주기 작업이 필요하지 않다. EIP를 교체하면 DuckDNS를 갱신한다.
+단일 호스트의 공개 80/443 검증으로 인증서를 발급하므로, 이 배포 구성에는 DuckDNS 전용 Caddy 플러그인이나 DNS 토큰 주입이 필요하지 않다.
+주소 갱신을 자동화하게 되면 DuckDNS 토큰은 별도 비밀로 관리하고 Git·명령 인자·로그에 남기지 않는다.
+DuckDNS 주소는 무료지만 AWS 서버·공인 IPv4·GPU 비용은 별도로 발생한다.
+
+근거: [DuckDNS 안내](https://www.duckdns.org/why.jsp), [갱신 명세](https://www.duckdns.org/spec.jsp), [Caddy 자동 HTTPS](https://caddyserver.com/docs/automatic-https).
+
 ## 환경 파일
 
 `runtime.env.example`, `proxy.env.example`를 각각 `runtime.env`, `proxy.env`로 복사하고
@@ -22,17 +44,28 @@
 운영 비밀은 Git·이미지·PR·평가 산출물에 넣지 않는다. 파일은 **따옴표 없는** `KEY=value` 형식이다.
 raw 형식이므로 `$` 문자를 Compose 변수로 확장하지 않는다.
 
+### RDS와 실행 권한
+
+운영 RDS는 `compose.rds.yml`을 추가하고 `POSTGRES_CA_FILE`에 AWS 공식 RDS CA 번들의
+절대 경로를 지정한다. 번들은 앱의 `/run/4evr0/rds-ca.pem`에 읽기 전용으로 마운트한다.
+`POSTGRES_DSN`에는 실제 RDS endpoint와 `sslmode=verify-full&sslrootcert=/run/4evr0/rds-ca.pem`을
+설정한다. IP 주소로 대체하거나 인증서 검증을 끄지 않는다.
+
+DB master는 RDS 관리형 Secrets Manager 비밀로 관리하며 앱에 주입하지 않는다.
+별도의 migration 계정으로 `python -m app.core.migrate`를 한 번 실행한 뒤,
+런타임 계정에는 테이블 SELECT/INSERT/UPDATE/DELETE와 시퀀스 USAGE/SELECT만 부여한다.
+런타임은 `DB_AUTO_CREATE_SCHEMA=false`로 실행해 요청·기동 때 DDL을 실행하지 않는다.
+마이그레이션 환경 파일은 런타임 환경 파일과 분리하며 Git·이미지·SSM 명령 본문에 넣지 않는다.
+
+RDS 운영 명령은 아래 예시의 `-f compose.beta.yml` 뒤에 `-f compose.rds.yml`을 추가한다.
+이미지 pull과 런타임 비밀 조회는 호스트 역할로만 수행하고 앱 컨테이너에는 AWS 키를 전달하지 않는다.
+
 `SITE_ADDRESS`에는 `https://` 없이 실제 도메인을 지정한다. Caddy가 인증서를 자동 발급·갱신한다.
-`BETA_USER`는 공백 없는 사용자명, `BETA_PASSWORD_HASH`는 bcrypt hash다. 아래 명령은 대화형으로
-비밀번호를 받아 hash를 출력한다. 비밀번호를 CLI 인자나 셸 기록에 남기지 않는다.
 
-```bash
-docker run --rm -it caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b caddy hash-password
-```
-
-현재 Basic 인증은 소규모 초대용 공통 접근 장벽이다. 브라우저 세션 쿠키와 별개이며
-사용자별 계정/동의/회수 기능을 대신하지 않는다. 공유 비밀번호를 바꾸면 전체 초대자에게 영향을 준다.
-비밀번호/hash를 변경한 뒤에는 Caddy 컨테이너를 재생성한다.
+2026-11-04 결정에 따라 초대 인증과 로그인은 사용하지 않는다. 방문자는 HTTPS로 바로 UI와
+사용자 API를 이용하며, 대화는 기존 HttpOnly 세션 쿠키로 분리한다. 운영 상태·문서·메트릭 경로는
+공개 프록시에서 계속 404로 차단한다. 프록시 요청 본문 상한은 16KB다. 이는 요청 속도 제한이나
+GPU 비용 상한을 대신하지 않으며, 공개 전 별도로 확정·검증한다.
 
 ## 실행과 점검
 
@@ -67,7 +100,27 @@ docker compose --env-file /dev/null -p 4evr0-beta -f compose.beta.yml exec -T ap
   "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=10).read().decode())"
 ```
 
-외부 HTTPS에서는 상태·문서·메트릭 경로가 404다. 나머지 UI/API는 초대 인증이 필요하다.
+외부 HTTPS에서는 상태·문서·메트릭 경로가 404다. 나머지 UI/API는 로그인 없이 접근한다.
+
+## 상품 사진과 피부 프로필
+
+상품 사진은 비공개 S3의 JPG/PNG/WebP/GIF 원본을 운영자 인증으로 캐시한 후 Caddy에서
+`/product-images/goodsNo=…/main.jpg`로 제공한다. JPG 주소도 실제 PNG 원본을 찾으며 올바른 MIME을 반환한다.
+버킷을 공개하거나 앱 컨테이너에 AWS 키·호스트 메타데이터 접근을 허용하지 않는다.
+`scripts/sync_product_images.py --goods-file goods.json --output-dir /path/to/product-images --profile OPERATOR`
+명령의 `goods.json`은 그래프에 등록된 공개 상품 번호의 JSON 배열이다. 캐시를 EC2로 옮긴 뒤
+`PRODUCT_IMAGE_DIR=/srv/4evr0/product-images`로 Caddy에 읽기 전용 마운트하고, 앱의
+`PRODUCT_IMAGE_BASE_URL=https://실제도메인/product-images`를 지정한다. 원본이 없는 제품에는 사진 없음이 표시된다.
+
+브라우저는 질문 `message`와 선택한 `skin_profile`을 별도 JSON 필드로 매 요청 전달한다.
+프로필의 고민은 검색·LLM 추출·순위에 더하지 않는다. 민감함·붉은기는 질문 목적의 후보를 찾은 후
+전체 매핑 성분의 `sensitive_caution`(exclude/caution) 또는 민감성 CAUTION 근거로 제품을 제외한다.
+여드름 목적과 함께 있어도 이 제외를 완화하지 않는다. 성분 정보가 없거나 조회가 실패하면 해당 제품을 남기지 않는다.
+제외는 최종 개수 제한 전에 적용하며, 프로필별 캐시와 후속 제품 복원에도 동일한 조건을 적용한다.
+이 필터는 전성분 완전성이나 개인별 안전을 보증하지 않는다. 기존 수집 동의와 별개로 프로필 자체를 원문에 합치거나 보관하지 않는다.
+
+## 관측
+
 관측(메트릭·로그·`/ready` 합성 확인)은 이 compose와 **분리된 에이전트 스택**이 담당한다
 ([Monitoring_Infra `agents/beta-app`](https://github.com/4EVR0/Monitoring_Infra/tree/main/agents/beta-app)).
 에이전트는 이 프로젝트의 `proxy` 네트워크(`<프로젝트명>_proxy`)에 붙어 `app:8000`을 수집하므로
@@ -83,7 +136,7 @@ SSE는 Caddy의 기본 event-stream 전달을 이용한다. 운영 GPU를 연결
 - 중단은 동일 명령의 `stop`, 재개는 `up -d`. **운영에서 `down --volumes`를 쓰지 않는다.**
 - 앱 롤백은 이전 검증 이미지로 `APP_IMAGE`를 바꾸고 `up -d --no-deps app`을 실행한 뒤 `/ready`를 확인한다.
   앱 교체 동안 짧은 중단이 생길 수 있다. DB 호환성은 별도로 확인한다.
-- 로그는 컨테이너별 10MB × 3개로 회전한다. 요청·응답 수집 동의와 보관 기한은 실제 사용자 초대 전 확정한다.
+- 로그는 컨테이너별 10MB × 3개로 회전한다. #140·#141의 확정 정책에 따라 대화 저장과 학습 이용은 선택 사항이며, 동의한 원문은 30일 보관한다. 운영 로그·백업의 보존 정책은 별도다.
 
 ## 외부 서비스 없는 검증
 
@@ -93,5 +146,5 @@ python3 scripts/smoke_beta.py YOUR_LOCAL_IMAGE
 
 고유 프로젝트에 테스트 PostgreSQL/Redis/Caddy를 띄우며 호스트 포트는 열지 않는다.
 테스트 전용 CA만 테스트 클라이언트가 신뢰하며 시스템 인증서 저장소를 변경하지 않는다.
-HTTPS, 인증, 세션 쿠키, Origin 검증, SSE 전달, GPU/그래프 미연결 시 readiness를 검사하고
+로그인 없는 HTTPS, UI/CSS 포함 여부, 요청 본문 상한, 내부 경로 차단, 세션 쿠키, Origin 검증, SSE 전달, GPU/그래프 미연결 시 readiness를 검사하고
 자신이 만든 컨테이너/볼륨만 정리한다. 원격 이미지 다운로드 외에는 외부 DB/GPU/API에 연결하지 않는다.
