@@ -125,3 +125,15 @@ def test_model_concerns_are_not_overridden_by_keywords():
     with mock.patch.object(llm_client, "get_async_llm_client", return_value=fake):
         profile = asyncio.run(llm_client.call_llm("여드름 진정 크림"))
     assert profile.concerns == [C.ACNE]
+
+
+def test_generation_input_uses_korean_claim_labels():
+    from app.services.recommend_service import _normalize_consumer_language
+    ingredient = IngredientResult(name="SALICYLIC ACID", kor_name="살리실릭애씨드", claim="Comedolytic",
+                                  eligibility_tier="pubmed_review", paper_ref="53")
+    content = _compose_user_content("여드름", [ingredient], [])
+    assert "모공 막힘 관리" in content and "Comedolytic" not in content
+    unknown = _compose_user_content("x", [IngredientResult(name="X", claim="New label")], [])
+    assert "New label" in unknown  # 사전에 없는 라벨은 원문 유지
+    assert _normalize_consumer_language("여드름 기미와 관련된 연구가 있어요.") == "여드름과 관련된 연구가 있어요."
+    assert _normalize_consumer_language("여드름 기미 개선") == "여드름 개선"

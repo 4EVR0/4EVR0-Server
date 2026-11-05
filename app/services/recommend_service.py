@@ -551,6 +551,10 @@ def _remove_hanja(text: str) -> tuple[str, bool]:
 
 
 _PLAIN_LANGUAGE_REPLACEMENTS = {
+    # Comedolytic 오역(2026-11-05 베타). 여드름과 기미(색소)는 다른 고민이다.
+    # 받침이 달라 조사도 함께 바꾼다(기미와 → 여드름과).
+    "여드름 기미와": "여드름과", "여드름 기미가": "여드름이", "여드름 기미를": "여드름을",
+    "여드름 기미는": "여드름은", "여드름 기미": "여드름", "여드름기미": "여드름",
     "피부 심부": "피부 속",
     "심부 피부": "피부 속",
     "심부": "피부 속",
@@ -2781,7 +2785,8 @@ def _compose_user_content(
     # 국내 배합한도(kr_limit_note)는 고시 원문이라 생성 입력에 넣지 않는다.
     if ingredients:
         ingredient_lines = "\n".join(
-            f"- {_ingredient_display_name(i)}: {i.claim or '효능 데이터 없음'} "
+            # 효능 라벨은 한국어로 바꿔 넘긴다. 영문(Comedolytic 등)을 주면 모델이 "여드름 기미"처럼 잘못 옮긴다.
+            f"- {_ingredient_display_name(i)}: {_claim_benefit_phrase(i) or i.claim or '효능 데이터 없음'} "
             f"[{_evidence_label(i.eligibility_tier, i.paper_ref)}]"
             + (f" [관련 고민: {', '.join(_concern_label(c) for c in i.concerns)}]"
                if multi_concern and i.concerns else "")
