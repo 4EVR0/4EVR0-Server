@@ -38,7 +38,10 @@ from app.services.concern_coverage import (
     order_by_coverage,
     partial_coverage_note,
 )
-from app.services.concern_summary import CONCERN_LABEL_KO, build_summary, render_concern_summary, summary_effects
+from app.services.concern_summary import (
+    build_summary, concern_label, reset_request_labels, set_request_labels,
+)
+from app.services.concern_summary import render_concern_summary, summary_effects
 from app.services.taxonomy_normalization_service import CONCERN_EFFECT_MAP
 from app.core.config import settings
 from app.domain.enums import Concern, Constraint
@@ -1088,7 +1091,7 @@ def _build_grounded_product_response(
     wrinkle_area = next((area for area in ("입가", "눈가", "이마", "목") if area in concern_text), None)
     if Concern.WRINKLES in (concerns or []) and wrinkle_area:
         analysis = f"{wrinkle_area} 주름 관리에 맞는 성분 근거와 제품 사용 부위를 살폈습니다."
-    elif (links := [_CONCERN_ROLE_LINKS[c.value] for c in (concerns or [])[:2] if c.value in _CONCERN_ROLE_LINKS]) \
+    elif (links := [_concern_link(c.value) for c in (concerns or [])[:2] if _concern_link(c.value)]) \
             and any(_ingredient_roles(item) for item in highlighted):
         # 사용자가 말하지 않은 역할(예: 모공 막힘)로 바로 넘어가지 않게 고민과 역할의 연결을 먼저 적는다.
         analysis = " ".join(links)
@@ -2392,9 +2395,11 @@ def _record_turn(*, turn_id: str, transport: str, status: str, response_mode: st
 async def recommend(session_id: str, message: str, gen_prompt_name: str | None = None,
                     *, skin_profile: SkinProfile | None = None) -> RecommendResponse:
     token = skin_profile_policy.current.set(skin_profile)
+    labels = set_request_labels(message)
     try:
         return await _recommend_with_metrics(session_id, message, gen_prompt_name)
     finally:
+        reset_request_labels(labels)
         skin_profile_policy.current.reset(token)
 
 
@@ -2783,10 +2788,17 @@ def _product_evidence_lines(
 
 
 def _concern_label(code: str) -> str:
-    try:
-        return CONCERN_LABEL_KO.get(Concern(code), code)
-    except ValueError:
-        return code
+    return concern_label(code)
+
+
+# 보습으로만 요청해 속건조를 "보습"으로 부를 때의 연결 설명(피부 속·당김을 말하지 않는다).
+_MOISTURIZING_ROLE_LINK = "피부에 수분이 부족하면 건조하고 거칠어질 수 있어요. 그래서 보습과 수분 유지 역할이 거론돼요."
+
+
+def _concern_link(code: str) -> str | None:
+    if code == Concern.DEHYDRATED_SKIN.value and concern_label(code) == "보습":
+        return _MOISTURIZING_ROLE_LINK
+    return _CONCERN_ROLE_LINKS.get(code)
 
 
 # 고민과 성분 역할을 잇는 일반 설명. 생성 모델이 사용자가 말하지 않은 역할(예: 모공 막힘)로 설명을
@@ -2863,8 +2875,8 @@ def _compose_user_content(
     # 국내 배합한도(kr_limit_note)는 고시 원문이라 생성 입력에 넣지 않는다.
     if ingredients:
         shown = ingredients[:10]
-        links = [f"- {_concern_label(code)}: {_CONCERN_ROLE_LINKS[code]}"
-                 for code in dict.fromkeys(c for i in shown for c in i.concerns) if code in _CONCERN_ROLE_LINKS]
+        links = [f"- {_concern_label(code)}: {_concern_link(code)}"
+                 for code in dict.fromkeys(c for i in shown for c in i.concerns) if _concern_link(code)]
         if links:
             sections.append("고민과 역할의 연결(일반 설명, 근거 수치 아님):\n" + "\n".join(links))
         ingredient_lines = "\n".join(_ingredient_input_line(i, multi_concern) for i in shown)
@@ -2926,11 +2938,13 @@ def _sse(event: str, data: dict) -> str:
 async def recommend_stream(session_id: str, message: str, gen_prompt_name: str | None = None,
                            *, skin_profile: SkinProfile | None = None):
     token = skin_profile_policy.current.set(skin_profile)
+    labels = set_request_labels(message)
     try:
         async with aclosing(_recommend_stream_with_metrics(session_id, message, gen_prompt_name)) as stream:
             async for frame in stream:
                 yield frame
     finally:
+        reset_request_labels(labels)
         skin_profile_policy.current.reset(token)
 
 

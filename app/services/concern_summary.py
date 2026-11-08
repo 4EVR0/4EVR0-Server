@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import json
+import re
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,39 @@ CONCERN_LABEL_KO: dict[Concern, str] = {
     Concern.SUNBURN: "자외선", Concern.AGING_SIGNS: "노화", Concern.WRINKLES: "주름",
     Concern.LOSS_OF_ELASTICITY: "탄력", Concern.SAGGING_SKIN: "처짐",
 }
+# 요청별 고민 이름 바꾸기. "기본 보습 화장품"처럼 보습으로만 요청하면 내부 고민은 속건조(DEHYDRATED_SKIN)지만
+# 사용자는 속건조를 말하지 않았으므로 답변·제품 요약·안내에서 "보습"이라고 부른다.
+_LABEL_OVERRIDES: ContextVar[dict[Concern, str]] = ContextVar("concern_label_overrides", default={})
+_MOISTURIZING_REQUEST = re.compile(r"(?:보습|수분|촉촉)(?!.{0,6}?(?:말고|빼고|제외|없어도|필요\s*없|원하지\s*않))")
+_DEHYDRATION_WORDS = re.compile(
+    r"속\s*건조|속\s*당김|피부\s*속.{0,6}(?:건조|수분|당)|수분.{0,6}부족|수분감.{0,4}없|탈수|당기|당김|당겨")
+
+
+def request_label_overrides(message: str) -> dict[Concern, str]:
+    """사용자 표현에 맞춘 고민 이름. 보습 요청이고 속건조·당김을 직접 말하지 않았으면 속건조를 "보습"으로."""
+    text = message or ""
+    if _MOISTURIZING_REQUEST.search(text) and not _DEHYDRATION_WORDS.search(text):
+        return {Concern.DEHYDRATED_SKIN: "보습"}
+    return {}
+
+
+def set_request_labels(message: str):
+    return _LABEL_OVERRIDES.set(request_label_overrides(message))
+
+
+def reset_request_labels(token) -> None:
+    _LABEL_OVERRIDES.reset(token)
+
+
+def concern_label(concern: Concern | str) -> str:
+    """사용자에게 보이는 고민 이름(요청별 바꾸기 반영)."""
+    try:
+        key = concern if isinstance(concern, Concern) else Concern(concern)
+    except ValueError:
+        return str(concern)
+    return _LABEL_OVERRIDES.get().get(key) or CONCERN_LABEL_KO.get(key, key.value)
+
+
 # 고민 → 식약처 기능성 고시 기능(mfds_functional_ingredients.json의 function)
 _FUNCTION_BY_CONCERN: dict[Concern, str] = {
     **{c: "whitening" for c in (Concern.HYPERPIGMENTATION, Concern.DULLNESS, Concern.UNEVEN_SKIN_TONE,
@@ -145,7 +180,7 @@ def build_summary(concerns: list[Concern], rows: list[dict[str, Any]],
     concern_items = []
     for concern, by_ing in per_concern:
         names = sorted({_display(ev[0]) for ev in by_ing.values()})
-        concern_items.append({"concern": concern.value, "label": CONCERN_LABEL_KO.get(concern, concern.value),
+        concern_items.append({"concern": concern.value, "label": concern_label(concern),
                               "count": len(by_ing), "names": names})
     return {"concerns": concern_items, "key_ingredients": list(chosen.values()),
             "sentence": render_sentence(concern_items)}

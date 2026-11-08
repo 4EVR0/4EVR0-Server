@@ -186,3 +186,36 @@ def test_fallback_template_uses_roles_counts_and_link():
             "트러블 관련 연구 53건, 피지 관련 연구 12건이 있습니다.") in text
     assert "- 카르니틴 (CARNITINE): 연구에서 다룬 역할은 피지 조절이고," in text
     assert "확인된 효능은 모공 막힘 관리" not in text
+
+
+@pytest.mark.parametrize("message, label", [
+    ("기본 보습 화장품 찾아요", "보습"),
+    ("촉촉한 크림 추천", "보습"),
+    ("속건조가 심해요", "속건조"),
+    ("보습 크림인데 속이 당겨요", "속건조"),  # 당김을 직접 말하면 속건조 그대로
+    ("수분 부족 피부", "속건조"),
+])
+def test_moisturizing_request_label(message, label):
+    from app.services.concern_summary import concern_label, reset_request_labels, set_request_labels
+    token = set_request_labels(message)
+    try:
+        assert concern_label(C.DEHYDRATED_SKIN) == label
+        assert concern_label(C.OILY_SKIN) == "피지"
+    finally:
+        reset_request_labels(token)
+    assert concern_label(C.DEHYDRATED_SKIN) == "속건조"  # 요청이 끝나면 원래 이름
+
+
+def test_generation_input_calls_plain_moisturizing_request_moisturizing():
+    from app.services.concern_summary import reset_request_labels, set_request_labels
+    ingredient = IngredientResult(name="UREA", kor_name="우레아", claim="Hydrating", eligibility_tier="pubmed_review",
+                                  paper_ref="34", concerns=HYDRA,
+                                  concern_evidence=[{"concern": "DEHYDRATED_SKIN", "paper_count": 34,
+                                                     "effects": ["HYDRATING", "MOISTURE_RETENTION"]}])
+    token = set_request_labels("기본 보습 화장품 찾아요")
+    try:
+        content = _compose_user_content("기본 보습 화장품 찾아요", [ingredient], [])
+    finally:
+        reset_request_labels(token)
+    assert "속건조" not in content and "피부 속" not in content
+    assert "보습 관련 34건" in content and "- 보습: 피부에 수분이 부족하면" in content
