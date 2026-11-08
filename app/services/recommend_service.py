@@ -102,7 +102,11 @@ _CATEGORY_SYNONYMS: dict[str, tuple[str, ...]] = {
     "필링스크럽": ("필링스크럽", "스크럽"),
 }
 # '스킨' 오탐 방지: 제품이 아닌 합성어(스킨케어/스킨타입 등)는 매칭 전에 지운다.
-_SKIN_COMPOUNDS = ("스킨케어", "스킨 케어", "스킨타입", "스킨 타입", "스킨톤", "스킨십")
+# 선크림은 그래프에 카테고리가 없다. '크림'으로 잡혀 일반 크림을 선크림처럼 보여 주지 않게 지운다(2026-11-08).
+_SKIN_COMPOUNDS = ("스킨케어", "스킨 케어", "스킨타입", "스킨 타입", "스킨톤", "스킨십",
+                   "선크림", "선 크림", "썬크림", "썬 크림", "선블록", "선블럭", "선스크린")
+_SUNSCREEN_REQUEST = re.compile(r"선\s*크림|썬\s*크림|선블[록럭]|선스크린|자외선\s*차단(?:제|\s*제품)")
+SUNSCREEN_NOTE = "선크림(자외선 차단제)은 아직 추천 데이터에 없어요."
 
 
 def _requested_categories(message: str) -> set[str]:
@@ -469,6 +473,27 @@ def _sensitive_note(ingredients: list[IngredientResult], text: str) -> str | Non
         if i.sensitive_note and any(a and a.casefold() in folded for a in (i.kor_name, i.name)))
 
 
+# 진단받은 질환·처방 치료를 화장품으로 대신하려는 질문(2026-11-08 베타: "아토피 진단받았는데 스테로이드 연고
+# 대신 쓸 크림")에는 답변 맨 앞에 서버가 안내를 붙인다. 화장품 추천 자체는 막지 않는다.
+_TREATMENT_REPLACEMENT = re.compile(
+    r"(?:연고|약|처방|스테로이드|치료|주사|시술)[^.?!\n]{0,15}(?:대신|대체|끊|중단|말고|안\s*쓰|그만)"
+    r"|(?:대신|대체)[^.?!\n]{0,10}(?:연고|약|처방|스테로이드|치료)")
+_DIAGNOSED = re.compile(r"진단\s*받|처방\s*받|피부과에서|스테로이드|연고를?\s*(?:쓰|바르)")
+MEDICAL_NOTICE = ("화장품은 진단받은 피부 질환의 치료나 처방받은 연고·약을 대신할 수 없어요. "
+                  "지금 받는 치료는 의사와 상의 없이 바꾸거나 중단하지 마세요. "
+                  "아래 내용은 보습·진정 같은 일상 관리를 위한 화장품 정보예요.")
+DIAGNOSED_NOTICE = ("진단받은 피부 질환이 있다면 화장품을 쓰기 전에 담당 의사와 상의해 주세요. "
+                    "아래 내용은 일상 관리를 위한 화장품 정보이며 치료를 대신하지 않아요.")
+
+
+def _medical_notice(message: str) -> str | None:
+    if _TREATMENT_REPLACEMENT.search(message or ""):
+        return MEDICAL_NOTICE
+    if _DIAGNOSED.search(message or ""):
+        return DIAGNOSED_NOTICE
+    return None
+
+
 def _append_server_notes(text: str, ingredients: list[IngredientResult], products: list[ProductResult]) -> str:
     """출력 가드 뒤에 붙이는 서버 안내(민감 피부 주의 → 향료 알레르기 표시). 본문 기준으로 대상을 고른다."""
     body = text
@@ -710,6 +735,18 @@ def _build_no_product_response_base(
         return (
             "현재 제공된 제품 데이터에서 조건에 맞는 제품을 찾지 못해 구체적인 "
             f"제품명을 추천하지 않겠습니다. 성분 표시에서 {names}의 포함 여부를 확인해 보세요."
+        )
+    if not concerns:
+        # 고민을 하나도 말하지 않은 요청("추천해줘", "선크림 추천해줘", 피부와 무관한 질문)은 결과가 없어서가 아니라
+        # 찾을 기준이 없는 것이다. 다시 물어볼 수 있게 안내한다(2026-11-08 베타).
+        categories = sorted(_requested_categories(message))
+        lead = f"{'·'.join(categories)} 제품을 찾으시는군요. " if categories else ""
+        if _SUNSCREEN_REQUEST.search(message or ""):
+            lead = f"{SUNSCREEN_NOTE} "
+        return (
+            f"{lead}4EVR0는 피부 고민에 맞춰 근거가 있는 성분과 제품을 찾아 드려요. "
+            "어떤 피부 고민이 있는지 함께 알려 주세요.\n"
+            "예: '건조하고 각질이 일어나요', '트러블과 피지가 고민이에요', '기미가 신경 쓰여요'"
         )
     return (
         "현재 제공된 성분과 제품 데이터에서 조건에 맞는 결과를 찾지 못해 "
@@ -1384,6 +1421,9 @@ def _points_to_shown_product(message: str, history: list[dict]) -> bool:
     return False
 
 
+_USE_PERMISSION_QUESTION = re.compile(r"(?:써도|사용해도|발라도|써\s*봐도)\s*(?:돼|될까|되나|되나요|될지|괜찮)")
+
+
 def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     """휴리스틱 분류: 'followup' | 'new' | None(애매 → LLM)."""
     if not history:
@@ -1393,6 +1433,9 @@ def _heuristic_kind(message: str, history: list[dict]) -> str | None:
     if _is_product_comparison_request(message) and any(
         _comparison_product_indexes(message, turn.get("products") or []) for turn in history[-3:]
     ):
+        return "followup"
+    # "민감한 피부인데 써도 될까?"처럼 보여 준 제품을 써도 되는지 묻는 말은 고민 단어가 있어도 후속 질문이다.
+    if _USE_PERMISSION_QUESTION.search(message) and "추천" not in message and any(t.get("products") for t in history):
         return "followup"
     if any(c in message for c in _CONCERN_CUES):
         return "new"
@@ -2759,6 +2802,10 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     response_text = f"{skin_type_note}\n\n{response_text}"
                 if llm_unavailable:
                     response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
+                if _SUNSCREEN_REQUEST.search(message):
+                    response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
+                if notice := _medical_notice(message):
+                    response_text = f"{notice}\n\n{response_text}"
             spans["generate"] = time.perf_counter() - _t
 
             # 같은 문장 재요청이 GPU를 다시 치지 않도록 콘텐츠를 캐시에 저장(session/turn 제외).
@@ -3430,6 +3477,10 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                     response_text = f"{skin_type_note}\n\n{response_text}"
                 if llm_unavailable:
                     response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
+                if _SUNSCREEN_REQUEST.search(message):
+                    response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
+                if notice := _medical_notice(message):
+                    response_text = f"{notice}\n\n{response_text}"
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
             if products:
