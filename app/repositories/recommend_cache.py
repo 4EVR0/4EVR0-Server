@@ -29,7 +29,8 @@ from app.services.ingredient_explanations import CARD_SHA256, POLICY_SHA256
 logger = logging.getLogger(__name__)
 
 # 이전 폴백 문장까지 캐시에서 재서빙하지 않도록 품질 변경 시 네임스페이스 갱신.
-_KEY_PREFIX = "reccache:v37:"  # v37: 처방 치료 대체 안내·고민 없는 요청 안내·선크림 카테고리 오매칭 수정
+_KEY_PREFIX = "reccache:v38:"  # v38: 선크림 요청의 제품 없음 안내
+# v37: 처방 치료 대체 안내·고민 없는 요청 안내·선크림 카테고리 오매칭 수정
 # v36: 고민 분석에 다른 고민 설명이 섞이면 교체, 프롬프트 v14(예시 문장 제거)
 # v35: 보습으로만 요청하면 속건조를 "보습"으로 표시
 # v34: 단독 보습 요청을 보습 고민으로(v33의 결과 없음 응답 무효화)

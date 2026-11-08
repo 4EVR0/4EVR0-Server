@@ -56,3 +56,10 @@ def test_sunscreen_is_not_matched_as_cream():
     assert service._requested_categories("건조한 피부 썬크림") == set()
     assert service._requested_categories("수분크림이랑 선크림") == {"크림"}
     assert service._requested_categories("아이크림 추천") == {"크림"}
+
+
+def test_sunscreen_with_concern_and_no_products():
+    text = service._build_no_product_response_base(
+        [service.IngredientResult(name="BUTYL METHOXYDIBENZOYLMETHANE")], [], [Concern.SUNBURN, Concern.DRY_SKIN],
+        "건조한 피부에 맞는 선크림 추천해줘")
+    assert text.startswith(service.SUNSCREEN_NOTE) and "BUTYL" not in text
