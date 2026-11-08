@@ -486,6 +486,43 @@ DIAGNOSED_NOTICE = ("진단받은 피부 질환이 있다면 화장품을 쓰기
                     "아래 내용은 일상 관리를 위한 화장품 정보이며 치료를 대신하지 않아요.")
 
 
+# 치료 대체 질문에서 모델이 사용자 계획을 받아 주는 문장("처방약 중단 후 화장품으로 트러블 관리를 원하시는 분께")은
+# 서버가 지운다. "치료를 대신할 수 없어요"처럼 부정·상의 권유 문장은 남긴다(2026-11-08 사용자 요청).
+_TREATMENT_ENDORSEMENT = re.compile(
+    r"(?:처방\s*약|처방|약|연고|스테로이드|치료)[^.!?\n]{0,12}(?:중단|끊|대신|대체|그만|없이)"
+    r"|화장품\s*(?:으로만|만으로)")
+_TREATMENT_CAUTION = re.compile(r"수\s*없|않|마세요|말아|상의|의사|전문의")
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?。])\s+")
+
+
+def _strip_treatment_endorsement(text: str, ingredients: list[IngredientResult]) -> str:
+    """치료 중단·대체를 받아 주는 문장을 지운다. 고민 분석이 비면 고민 연결 설명으로 채운다."""
+    removed = False
+    lines: list[str] = []
+    for line in text.split("\n"):
+        kept = [sentence for sentence in _SENTENCE_BREAK.split(line)
+                if not (_TREATMENT_ENDORSEMENT.search(sentence) and not _TREATMENT_CAUTION.search(sentence))]
+        if len(kept) != len(_SENTENCE_BREAK.split(line)):
+            removed = True
+            rebuilt = " ".join(kept).strip()
+            if rebuilt and not re.fullmatch(r"[-*•]\s*", rebuilt):
+                lines.append(rebuilt)
+            continue
+        lines.append(line)
+    if not removed:
+        return text
+    metrics.recommend_output_guard_total.labels(kind="treatment_endorsement_removed").inc()
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines))
+    head, sep, rest = out.partition("고민 분석")
+    if sep:
+        body, sep2, tail = rest.partition("성분 설명")
+        if not body.strip():
+            links = _analysis_links(ingredients)
+            filler = " ".join(links[:2]) if links else "일상 관리에 도움이 될 수 있는 성분을 중심으로 골랐어요."
+            out = f"{head}고민 분석\n{filler}\n\n{sep2}{tail}"
+    return out
+
+
 def _medical_notice(message: str) -> str | None:
     if _TREATMENT_REPLACEMENT.search(message or ""):
         return MEDICAL_NOTICE
@@ -2810,6 +2847,8 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                 if _SUNSCREEN_REQUEST.search(message):
                     response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
                 if notice := _medical_notice(message):
+                    if notice == MEDICAL_NOTICE:
+                        response_text = _strip_treatment_endorsement(response_text, candidate_ingredients)
                     response_text = f"{notice}\n\n{response_text}"
             spans["generate"] = time.perf_counter() - _t
 
@@ -3485,6 +3524,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 if _SUNSCREEN_REQUEST.search(message):
                     response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
                 if notice := _medical_notice(message):
+                    if notice == MEDICAL_NOTICE:
+                        response_text = _strip_treatment_endorsement(response_text, candidate_ingredients)
                     response_text = f"{notice}\n\n{response_text}"
             # 출력 무결성과 제품-성분 연결을 검사한 뒤에만 본문을 전송한다.
             # meta(성분/제품 카드)는 이미 먼저 전송되어 빈 화면은 유지되지 않는다.
