@@ -957,7 +957,8 @@
   function ingredientNotes(name, ingredients) {
     const ing = ingredientByInci(name, ingredients);
     if (!ing) return '';
-    return [ing.sensitive_note, ing.kr_reg_status === 'restricted' ? ing.kr_limit_note : null]
+    // 배합한도(kr_limit_note)는 식약처 고시 원문이라 화면에 보이지 않는다(서버도 보내지 않음).
+    return [ing.sensitive_note]
       .filter(Boolean).map(note => `<div class="ingredient-note">${escHtml(note)}</div>`).join('');
   }
   function notify(message) {

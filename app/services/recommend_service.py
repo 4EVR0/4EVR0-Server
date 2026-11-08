@@ -2631,8 +2631,7 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     eligibility_tier=row.get("eligibility_tier"),
                     paper_ref=row.get("paper_ref"),
                     kr_reg_status=row.get("kr_reg_status"),
-                    kr_limit_note=row.get("kr_limit_note"),
-                    sensitive_note=row.get("sensitive_note"),
+                                        sensitive_note=row.get("sensitive_note"),
                     concerns=list(row.get("concerns") or []),
                     concern_evidence=list(row.get("concern_evidence") or []),
                 )
@@ -3256,8 +3255,7 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 IngredientResult(name=row["name"], kor_name=row.get("kor_name"), claim=row.get("claim"),
                                  supported_claims=row.get("supported_claims") or [],
                                  eligibility_tier=row.get("eligibility_tier"), paper_ref=row.get("paper_ref"),
-                                 kr_reg_status=row.get("kr_reg_status"), kr_limit_note=row.get("kr_limit_note"),
-                                 sensitive_note=row.get("sensitive_note"),
+                                 kr_reg_status=row.get("kr_reg_status"),                                  sensitive_note=row.get("sensitive_note"),
                                  concerns=list(row.get("concerns") or []),
                                  concern_evidence=list(row.get("concern_evidence") or []))
                 for row in raw_ingredients

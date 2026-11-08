@@ -31,7 +31,7 @@ class IngredientResult(BaseModel):
     paper_ref: str | None = None
     # 식약처 사용제한 원료 기준 국내 규제 상태. banned는 조회 단계에서 제외되므로 응답에는
     # conditional | restricted | none 만 온다. restricted면 kr_limit_note에 배합한도 문구.
-    # 고시 원문이라 응답 문장에는 쓰지 않는다(app/services/regulatory_text.py).
+    # 고시 원문이라 응답 문장·API 응답 어디에도 내보내지 않는다(항상 None, 호환을 위해 필드만 유지).
     kr_reg_status: str | None = None
     kr_limit_note: str | None = None
     # 이 성분이 후보로 나온 요청 고민 코드(복합 고민에서 고민별 근거 연결용). 고민이 하나면 그 하나.

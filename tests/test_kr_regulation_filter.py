@@ -92,3 +92,13 @@ class RegulatoryTextNotShownTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_web_ui_and_api_do_not_carry_limit_note():
+    # 베타(2026-11-08): 올리브 UI 성분 카드가 API의 kr_limit_note(고시 원문)를 그대로 그림
+    from pathlib import Path
+    import inspect
+    from app.services import recommend_service
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    assert "ing.kr_limit_note" not in html
+    assert 'kr_limit_note=row.get("kr_limit_note")' not in inspect.getsource(recommend_service)
