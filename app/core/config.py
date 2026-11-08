@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     pg_pool_min_size: int = 1
     pg_pool_max_size: int = 10
 
+    # 개발자용 내부 조회(app/api/internal.py). 기본 꺼짐. 켜도 아래 대역(기본 Tailscale)에서 온 요청만 받는다.
+    internal_viewer_enabled: bool = False
+    internal_allowed_networks: str = "100.64.0.0/10"
+
     redis_url: str = "redis://localhost:6379"
     # 추천 응답 캐시(app/repositories/recommend_cache.py). 같은 고민 문장 반복 시 GPU를 건너뛴다.
     # 데이터가 거의 안 변해 TTL을 길게(기본 24h). 부하 테스트 on/off 비교용으로 토글 가능.

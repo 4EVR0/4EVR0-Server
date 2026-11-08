@@ -18,7 +18,7 @@ from app.core.warmup import run_warmup
 from app.clients import neo4j_client
 from app.clients.llm_factory import close_llm_client
 from app.clients.llm_gate import LLMOverCapacityError
-from app.api import data_collection as data_api, health, sessions, profile, recommend
+from app.api import data_collection as data_api, health, internal, sessions, profile, recommend
 from app.repositories import recommend_cache
 from app.services import data_collection, release_info
 # app.core.metrics 를 import 해 커스텀 메트릭을 기본 레지스트리에 등록한다.
@@ -70,6 +70,7 @@ app.include_router(sessions.router)
 app.include_router(profile.router)
 app.include_router(recommend.router)
 app.include_router(data_api.router)
+app.include_router(internal.router)
 
 # 기본 HTTP 메트릭 계측 + GET /metrics 노출 (커스텀 비즈니스 메트릭도 함께 실림)
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)

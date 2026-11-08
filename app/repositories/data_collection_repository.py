@@ -174,3 +174,22 @@ async def purge_expired() -> dict[str, int]:
         "DELETE FROM developer_reports WHERE created_at < NOW() - ($1::integer * INTERVAL '1 day')", RETENTION_DAYS)
     return {"turn_records": int(turns.split()[-1]), "notes": int(notes.split()[-1]), "feedback": int(feedback.split()[-1]),
             "sessions": int(sessions.split()[-1]), "reports": int(reports.split()[-1])}
+
+
+async def list_turn_records(*, modes: list[str] | None, days: int, limit: int) -> list[dict]:
+    """개발자 조회용 최근 질문·답변(내부 API). subject_id는 돌려주지 않는다."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT turn_id, created_at, response_mode, transport, release_id, question, answer, products "
+        "FROM turn_records WHERE created_at > NOW() - ($1::integer * INTERVAL '1 day') "
+        "AND ($2::text[] IS NULL OR response_mode = ANY($2::text[])) "
+        "ORDER BY created_at DESC LIMIT $3", days, modes or None, limit)
+    return [dict(row) for row in rows]
+
+
+async def count_turn_records_by_mode(days: int) -> dict[str, int]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT coalesce(response_mode, 'unknown') AS mode, count(*) AS n FROM turn_records "
+        "WHERE created_at > NOW() - ($1::integer * INTERVAL '1 day') GROUP BY 1 ORDER BY 2 DESC", days)
+    return {row["mode"]: int(row["n"]) for row in rows}
