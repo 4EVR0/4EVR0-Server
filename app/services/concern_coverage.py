@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from app.domain.enums import Concern
-from app.services.concern_summary import CONCERN_LABEL_KO
+from app.services.concern_summary import concern_label
 
 
 def _rank(row: dict[str, Any]) -> tuple:
@@ -177,13 +177,13 @@ def partial_coverage_note(products: list[tuple[str, list[str]]], concerns: list[
     wanted = set(codes)
     if any(wanted <= set(coverage) for _, coverage in products):
         return None
-    labels = [CONCERN_LABEL_KO.get(Concern(code), code) for code in codes]
+    labels = [concern_label(code) for code in codes]
     lines = [
         f"참고: 요청하신 {'·'.join(labels)} 고민을 모두 뒷받침하는 대표 근거 성분이 함께 들어 있는 제품은 "
         "이번 검색에서 찾지 못해, 고민별로 나눠 골랐어요."
     ]
     for name, coverage in products:
-        covered = [CONCERN_LABEL_KO.get(Concern(code), code) for code in coverage if code in wanted]
+        covered = [concern_label(code) for code in coverage if code in wanted]
         lines.append(f"- {name}: " + (f"{'·'.join(covered)} 고민 관련 성분 포함" if covered
                                       else "요청 고민의 대표 근거 성분은 확인되지 않음"))
     return "\n".join(lines)

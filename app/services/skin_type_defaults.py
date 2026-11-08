@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from app.domain.enums import Concern, SkinType
 from app.domain.user import UserProfile
-from app.services.concern_summary import CONCERN_LABEL_KO
+from app.services.concern_summary import concern_label
 from app.services.taxonomy_normalization_service import infer_effects
 
 DEFAULT_CONCERNS: dict[SkinType, tuple[Concern, ...]] = {
@@ -43,6 +43,6 @@ def apply_skin_type_defaults(profile: UserProfile) -> tuple[UserProfile, str | N
     if profile.skin_types == [SkinType.NORMAL]:
         note = "중성 피부라 기본 보습 위주로 골랐어요. 특별한 고민이 있으면 알려 주세요."
     else:
-        labels = "·".join(CONCERN_LABEL_KO.get(c, c.value) for c in concerns)
+        labels = "·".join(concern_label(c) for c in concerns)
         note = f"{types} 피부를 {labels} 고민으로 보고 골랐어요. 특별한 고민이 있으면 알려 주세요."
     return profile.model_copy(update={"concerns": concerns, "effects": infer_effects(concerns)}), note
