@@ -2714,6 +2714,8 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     ingredients, constraints, profile.concerns, generation_message,
                 )
             response_text, hanja_removed = _normalize_response_text(response_text, products)
+            if response_mode == "generated":
+                response_text = _ground_concern_analysis(response_text, generation_message, ingredients)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             # 고민별 요약을 쓰면 LLM은 고민 분석·성분 설명만 쓰고 추천 제품 부분은 서버가 만든다.
@@ -2981,6 +2983,37 @@ def _ingredient_input_line(ingredient: IngredientResult, multi_concern: bool) ->
     if multi_concern and ingredient.concerns:
         line += f" [관련 고민: {', '.join(_concern_label(c) for c in ingredient.concerns)}]"
     return line
+
+
+# 고민 분석 문장에서 확인하는 고민 단어. 질문·제공한 연결 설명·성분 역할 어디에도 없는 고민 단어가 나오면
+# 모델이 다른 고민의 설명(예: 프롬프트 예시의 트러블 설명)을 가져온 것으로 본다(2026-11-08 베타: 탄력·주름 질문에
+# "피지와 각질이 모공을 막으면 트러블로…").
+_ANALYSIS_CONCERN_TERMS = ("트러블", "여드름", "피지", "모공", "각질", "블랙헤드", "주름", "탄력", "미백", "색소", "기미",
+                           "붉은기", "홍조", "민감", "장벽", "자국", "속건조", "다크서클", "자외선")
+
+
+def _analysis_links(ingredients: list[IngredientResult]) -> list[str]:
+    codes = dict.fromkeys(c for i in ingredients[:10] for c in i.concerns)
+    return [link for code in codes if (link := _concern_link(code))]
+
+
+def _ground_concern_analysis(text: str, message: str, ingredients: list[IngredientResult]) -> str:
+    """'고민 분석' 문단에 질문과 무관한 고민 단어가 있으면 그 질문의 고민 연결 설명으로 바꾼다."""
+    if "고민 분석" not in text:
+        return text
+    head, _, rest = text.partition("고민 분석")
+    body, sep, tail = rest.partition("성분 설명")
+    links = _analysis_links(ingredients)
+    if not links:
+        return text
+    allowed = " ".join([message, *links, *(role for i in ingredients[:10] for role in _ingredient_roles(i)),
+                        *(_concern_label(c) for i in ingredients[:10] for c in i.concerns)])
+    off_topic = [t for t in _ANALYSIS_CONCERN_TERMS if t in body and t not in allowed]
+    if not off_topic:
+        return text
+    metrics.recommend_output_guard_total.labels(kind="analysis_off_topic").inc()
+    logger.warning("concern analysis replaced: off-topic terms=%s", off_topic)
+    return f"{head}고민 분석\n{' '.join(links[:2])}\n\n{sep}{tail}"
 
 
 def _compose_user_content(
@@ -3353,6 +3386,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                 response_text = _normalize_consumer_language(response_text)
                 response_text = _normalize_product_names(response_text, products)
                 response_text = _strip_regulatory(response_text)
+                if response_mode == "generated":
+                    response_text = _ground_concern_analysis(response_text, generation_message, ingredients)
             if hanja_removed:
                 metrics.recommend_output_guard_total.labels(kind="hanja_removed").inc()
             # 고민별 요약을 쓰면 LLM은 고민 분석·성분 설명만 쓰고 추천 제품 부분은 서버가 만든다.
