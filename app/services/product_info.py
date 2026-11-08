@@ -79,6 +79,75 @@ def looks_like_product_info(message: str) -> bool:
     return bool(INFO_CUE.search(message))
 
 
+# ── 이름으로 두 제품 비교 ────────────────────────────────────────────────────
+COMPARE_CUE = re.compile(r"차이|비교|공통점|뭐가\s*(?:더\s*)?(?:나아|좋아|달라)|어떤\s*게\s*(?:더\s*)?(?:나아|좋아)|\bvs\b",
+                         re.IGNORECASE)
+# 비교 질문의 꼬리("~의 차이가 뭐야", "~ 비교해줘")는 제품 이름이 아니다.
+_COMPARE_TAIL = re.compile(r"\s*(?:의|중에?서?|사이의?|둘\s*중)?\s*(?:차이|비교|공통점|뭐가|어떤\s*게|\bvs\b\s*$).*$",
+                           re.IGNORECASE | re.DOTALL)
+# 제품 이름 사이의 연결: "A와 B", "A랑 B", "A하고 B", "A vs B", "A, B"
+_COMPARE_JOIN = re.compile(r"(?<=[0-9A-Za-z가-힣)\]])(?:이랑|랑|와|과|하고)\s+|\s*(?:\bvs\.?\b|,|/)\s*", re.IGNORECASE)
+
+
+def comparison_splits(message: str) -> list[list[str]]:
+    """비교 질문을 제품 이름 후보 2~3개로 나누는 방법들. 비교 질문이 아니면 빈 목록.
+
+    "와/과"가 제품 이름 안에 있을 수도 있어 연결 위치마다 나눠 보고, 실제 조회로 맞는 쪽을 고른다.
+    """
+    if not COMPARE_CUE.search(message):
+        return []
+    body = _COMPARE_TAIL.sub("", message.strip()).strip()
+    joins = list(_COMPARE_JOIN.finditer(body))
+    splits: list[list[str]] = []
+    for join in joins:
+        parts = [body[:join.start()].strip(), body[join.end():].strip()]
+        if all(parts):
+            splits.append(parts)
+    if 2 <= len(joins) <= 2:  # 세 제품: 모든 연결에서 나눈다
+        cuts = [0, *[x for j in joins for x in (j.start(), j.end())], len(body)]
+        parts = [body[cuts[i]:cuts[i + 1]].strip() for i in range(0, len(cuts), 2)]
+        if len(parts) == 3 and all(parts):
+            splits.append(parts)
+    return splits
+
+
+def comparison_effect_lines(names: list[str], groups_per_product: list[list[tuple[str, list]]]) -> str:
+    """효능별 근거 성분을 제품마다 나란히 적는다. 한쪽에만 있는 효능 묶음이 제품 간 차이다."""
+    labels: list[str] = []
+    for groups in groups_per_product:
+        for label, _ in groups:
+            if label not in labels:
+                labels.append(label)
+    if not labels:
+        return ""
+    lines = ["효능별 근거 성분"]
+    for label in labels:
+        cells = []
+        for index, groups in enumerate(groups_per_product, 1):
+            items = dict(groups).get(label) or []
+            shown = ", ".join(it.name for it in items[:3]) + (" 등" if len(items) > 3 else "")
+            cells.append(f"제품 {index} {len(items)}개" + (f"({shown})" if items else ""))
+        lines.append(f"- {label}: " + " · ".join(cells))
+    return "\n".join(lines)
+
+
+def comparison_summary(names: list[str], groups_per_product: list[list[tuple[str, list]]]) -> str:
+    """제품 간 차이 요약: 한 제품에만 근거 성분이 있는 효능 묶음. 차이가 없으면 그렇다고 적는다."""
+    labels = [label for groups in groups_per_product for label, _ in groups]
+    lines = []
+    for index, groups in enumerate(groups_per_product):
+        mine = {label for label, items in groups if items}
+        others = set().union(*({label for label, items in g if items}
+                               for pos, g in enumerate(groups_per_product) if pos != index))
+        only = [label for label in dict.fromkeys(labels) if label in mine - others]
+        if only:
+            examples = ", ".join(it.name for label in only for it in (dict(groups).get(label) or [])[:2])
+            lines.append(f"- {names[index]}: {', '.join(only)} 관련 근거 성분이 확인돼요({examples}).")
+    if not lines:
+        return "요약: 효능 묶음으로는 큰 차이가 없고, 아래 표의 개별 성분에서 차이가 있어요."
+    return "요약: 한쪽 제품에서만 확인된 효능이에요.\n" + "\n".join(lines)
+
+
 # ── 되묻기 후 선택 ───────────────────────────────────────────────────────────
 _ORDINALS = {"첫": 1, "두": 2, "세": 3, "네": 4, "다섯": 5}
 
