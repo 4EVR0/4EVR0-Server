@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.api.sessions import COOKIE_NAME, _check_origin
 from app.repositories import data_collection_repository as repo
+from app.core.config import settings
 from app.services import consent_policy, data_collection as collection
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,12 @@ class FeedbackRequest(BaseModel):
     collection_policy_version: str | None = Field(default=None, max_length=64)
 
 
+class DeveloperReportRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    message: str = Field(min_length=1, max_length=consent_policy.REPORT_MAX_CHARS)
+    turn_id: str | None = Field(default=None, max_length=64)
+
+
 def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
@@ -31,6 +38,7 @@ async def get_data_policy(response: Response) -> dict:
     _no_store(response)
     return {"policy_version": consent_policy.POLICY_VERSION, "retention_days": consent_policy.RETENTION_DAYS,
             "texts": consent_policy.TEXTS, "feedback_issues": consent_policy.FEEDBACK_ISSUES,
+            "report_kinds": consent_policy.REPORT_KINDS, "report_max_chars": consent_policy.REPORT_MAX_CHARS,
             "collection_mode": "notice", "training_use": False}
 
 
@@ -65,6 +73,38 @@ async def post_feedback(body: FeedbackRequest, request: Request, response: Respo
     return response
 
 
+@router.post("/developer-reports", status_code=201)
+async def post_developer_report(body: DeveloperReportRequest, request: Request, response: Response) -> dict:
+    """사이드바 '개발자에게 의견 보내기'. 원문은 로그에 남기지 않고 DB에만 보관한다(보관 기한 동일)."""
+    _check_origin(request)
+    _no_store(response)
+    if body.kind not in consent_policy.REPORT_KINDS:
+        raise HTTPException(status_code=422, detail="알 수 없는 종류예요.")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="내용을 적어 주세요.")
+    if not collection.safe_for_quality_storage(message):
+        raise HTTPException(status_code=422, detail="이름·연락처 같은 개인정보나 진단·치료 이력은 빼고 다시 보내 주세요.")
+    subject = collection.ensure_subject(request, response)
+    # 답변 번호는 이 브라우저 세션의 답변일 때만 붙인다(다른 사람의 대화를 가리키지 못하게).
+    turn_id = body.turn_id if body.turn_id and await collection.owns_turn(
+        body.turn_id, request.cookies.get(COOKIE_NAME)) else None
+    try:
+        if await repo.count_recent_reports(subject, consent_policy.REPORT_RATE_WINDOW_MINUTES) \
+                >= consent_policy.REPORT_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="잠시 후 다시 보내 주세요.")
+        report_id = await repo.insert_developer_report(
+            subject_id=subject, kind=body.kind, message=message, turn_id=turn_id,
+            app_version=settings.app_version)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("developer report write failed: %s", exc)
+        raise HTTPException(status_code=503, detail=STORE_UNAVAILABLE) from exc
+    logger.info("developer report received id=%s kind=%s with_turn=%s", report_id, body.kind, turn_id is not None)
+    return {"id": report_id}
+
+
 @router.delete("/my-data")
 async def delete_my_data(request: Request, response: Response) -> dict:
     """이 브라우저의 품질 개선용 대화·의견을 지운다. 이후 새 대화는 안내에 따라 수집된다."""
@@ -72,7 +112,7 @@ async def delete_my_data(request: Request, response: Response) -> dict:
     _no_store(response)
     subject = collection.subject_from(request)
     if subject is None:
-        return {"deleted": {"turn_records": 0, "feedback": 0}}
+        return {"deleted": {"turn_records": 0, "feedback": 0, "reports": 0}}
     try:
         deleted = await repo.delete_subject_data(subject)
     except Exception as exc:

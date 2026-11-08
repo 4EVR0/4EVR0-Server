@@ -1652,3 +1652,23 @@ button svg {
 
 .data-notice > strong { font-size:14px; font-weight:600; color:var(--brand-2); }
 .data-notice p,.data-panel p { margin-top:10px; font-size:13px; line-height:1.85; color:var(--soft); }
+
+/* 개발자에게 의견 보내기 */
+.report-dialog textarea {
+  width:100%;
+  min-height:110px;
+  padding:11px;
+  border:1px solid #dfe5d4;
+  border-radius:8px;
+  font:inherit;
+  font-size:13px;
+  line-height:1.55;
+  resize:vertical;
+  box-sizing:border-box
+}
+.report-dialog textarea:focus-visible { outline:3px solid #8a9e70; border-color:#9faf88 }
+.report-count { text-align:right; font-size:11px; color:#8b957a; margin-top:4px }
+.report-attach { display:block; margin-top:12px; font-size:12px; color:#56613f }
+.report-attach input { margin-right:6px }
+.report-attach small { display:block; margin:3px 0 0 22px; color:#8b957a; font-size:11px }
+.dialog .report-error { color:#a2482f; font-size:12px; margin:10px 0 0 }
