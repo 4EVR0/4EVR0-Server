@@ -476,8 +476,8 @@ def _sensitive_note(ingredients: list[IngredientResult], text: str) -> str | Non
 # 진단받은 질환·처방 치료를 화장품으로 대신하려는 질문(2026-11-08 베타: "아토피 진단받았는데 스테로이드 연고
 # 대신 쓸 크림")에는 답변 맨 앞에 서버가 안내를 붙인다. 화장품 추천 자체는 막지 않는다.
 _TREATMENT_REPLACEMENT = re.compile(
-    r"(?:연고|약|처방|스테로이드|치료|주사|시술)[^.?!\n]{0,15}(?:대신|대체|끊|중단|말고|안\s*쓰|그만)"
-    r"|(?:대신|대체)[^.?!\n]{0,10}(?:연고|약|처방|스테로이드|치료)")
+    r"(?:연고|약|처방|스테로이드|치료|주사|시술)[^.?!\n]{0,15}(?:대신|대체|대용|끊|중단|말고|안\s*쓰|그만)"
+    r"|(?:대신|대체|대용)[^.?!\n]{0,10}(?:연고|약|처방|스테로이드|치료)")
 _DIAGNOSED = re.compile(r"진단\s*받|처방\s*받|피부과에서|스테로이드|연고를?\s*(?:쓰|바르)")
 MEDICAL_NOTICE = ("화장품은 진단받은 피부 질환의 치료나 처방받은 연고·약을 대신할 수 없어요. "
                   "지금 받는 치료는 의사와 상의 없이 바꾸거나 중단하지 마세요. "
@@ -489,7 +489,7 @@ DIAGNOSED_NOTICE = ("진단받은 피부 질환이 있다면 화장품을 쓰기
 # 치료 대체 질문에서 모델이 사용자 계획을 받아 주는 문장("처방약 중단 후 화장품으로 트러블 관리를 원하시는 분께")은
 # 서버가 지운다. "치료를 대신할 수 없어요"처럼 부정·상의 권유 문장은 남긴다(2026-11-08 사용자 요청).
 _TREATMENT_ENDORSEMENT = re.compile(
-    r"(?:처방\s*약|처방|약|연고|스테로이드|치료)[^.!?\n]{0,12}(?:중단|끊|대신|대체|그만|없이)"
+    r"(?:처방\s*약|처방|약|연고|스테로이드|치료)[^.!?\n]{0,12}(?:중단|끊|대신|대체|대용|그만|없이)"
     r"|화장품\s*(?:으로만|만으로)")
 _TREATMENT_CAUTION = re.compile(r"수\s*없|않|마세요|말아|상의|의사|전문의")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?。])\s+")
@@ -726,6 +726,14 @@ async def _filter_products_with_constraints(products: list[dict], constraints: l
 
 
 def _build_no_product_response(*args, **kwargs) -> str:
+    # 치료 대체 질문은 제품이 없어도 안내를 맨 앞에 둔다(2026-11-08 실제 웹: "스테로이드 연고 끊고 쓸 크림").
+    message = kwargs.get("message", args[3] if len(args) > 3 else "")
+    text = _build_no_product_response_inner(*args, **kwargs)
+    notice = _medical_notice(message) if message else None
+    return f"{notice}\n\n{text}" if notice else text
+
+
+def _build_no_product_response_inner(*args, **kwargs) -> str:
     if skin_profile_policy.note():
         return ('질문하신 목적의 제품 중 피부 프로필의 제외 조건까지 충족하는 후보를 확인하지 못했어요. '
                 '현재 데이터에서는 구체적인 제품이나 제외된 성분을 대안으로 추천하지 않을게요.\n\n'
