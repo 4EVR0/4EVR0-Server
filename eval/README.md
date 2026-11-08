@@ -45,6 +45,22 @@ that checkout's ignored `mlruns/` directory. To use a shared tracking server, se
 retrieved evidence, and possibly human-calibration summaries: review data access
 before using a remote server. Raw human-label JSONL files are not logged.
 
+### Shared tracking server (monitoring server)
+
+The team MLflow server runs on the monitoring server and is reachable only over Tailscale
+(no login; see Monitoring_Infra README "MLflow"). Run metadata is stored on the server,
+artifacts (report JSON) in S3 `4evr0-monitoring/mlflow-artifacts/` through the server proxy,
+so no AWS keys are needed on the client.
+
+```bash
+export MLFLOW_TRACKING_URI=http://monitoring-server-1.tailb70036.ts.net:5000
+python eval/run_response_eval.py ...          # live evaluation is logged to the shared server
+python eval/mlflow_tracking.py eval/results/*.json   # backfill saved reports (idempotent)
+```
+
+Open `http://monitoring-server-1.tailb70036.ts.net:5000` in a browser on the tailnet for the UI.
+Only evaluation reports go there; never log raw user conversations from production.
+
 Import previously saved reports without calling the GPU or judge again:
 
 ```bash
