@@ -100,3 +100,29 @@ def test_no_product_path_gets_medical_notice():
     assert "4EVR0는 피부 고민에 맞춰" in text
     plain = service._build_no_product_response([], [], [], "추천해줘")
     assert not plain.startswith(service.MEDICAL_NOTICE)
+
+
+@pytest.mark.parametrize("message, note", [
+    ("폼클렌징 추천해줘", service.CLEANSER_NOTE),
+    ("지성 피부 클렌징폼 추천", service.CLEANSER_NOTE),
+    ("클렌징 오일 뭐가 좋아?", service.CLEANSER_NOTE),
+    ("세안제 추천", service.CLEANSER_NOTE),
+    ("선크림 추천해줘", service.SUNSCREEN_NOTE),
+    ("클렌징 후 바르는 토너 추천", None),
+    ("세안 후 당김이 심해요", None),
+    ("보습 크림 추천", None),
+])
+def test_unsupported_category_note(message, note):
+    assert service._unsupported_category_note(message) == note
+
+
+def test_cleanser_not_matched_as_other_category():
+    assert service._requested_categories("클렌징크림 추천") == set()
+    assert service._requested_categories("클렌징 후 바르는 토너") == {"토너"}
+
+
+def test_cleanser_only_request_says_not_available():
+    text = service._build_no_product_response_base([], [], [], "폼클렌징 추천해줘")
+    assert text.startswith(service.CLEANSER_NOTE)
+    with_concern = service._build_no_product_response_base([], [], [Concern.OILY_SKIN], "지성 피부 폼클렌징 추천")
+    assert with_concern.startswith(service.CLEANSER_NOTE)

@@ -102,11 +102,22 @@ _CATEGORY_SYNONYMS: dict[str, tuple[str, ...]] = {
     "필링스크럽": ("필링스크럽", "스크럽"),
 }
 # '스킨' 오탐 방지: 제품이 아닌 합성어(스킨케어/스킨타입 등)는 매칭 전에 지운다.
-# 선크림은 그래프에 카테고리가 없다. '크림'으로 잡혀 일반 크림을 선크림처럼 보여 주지 않게 지운다(2026-11-08).
-_SKIN_COMPOUNDS = ("스킨케어", "스킨 케어", "스킨타입", "스킨 타입", "스킨톤", "스킨십",
-                   "선크림", "선 크림", "썬크림", "썬 크림", "선블록", "선블럭", "선스크린")
+_SKIN_COMPOUNDS = ("스킨케어", "스킨 케어", "스킨타입", "스킨 타입", "스킨톤", "스킨십")
+# 추천하지 않는 제품 종류. 선크림은 그래프에 카테고리가 없고, 클렌징 제품은 씻어 내는 제품이라 추천 대상(_LEAVE_ON)이
+# 아니다. 이런 요청은 다른 제품을 그 종류처럼 보여 주지 않고 없다고 안내한다(2026-11-08). '클렌징크림'이 '크림'으로
+# 잡히지 않게 카테고리 매칭 전에 지운다. "클렌징 후 바르는 토너"처럼 순서를 말하는 경우는 요청이 아니다.
 _SUNSCREEN_REQUEST = re.compile(r"선\s*크림|썬\s*크림|선블[록럭]|선스크린|자외선\s*차단(?:제|\s*제품)")
+_CLEANSER_REQUEST = re.compile(
+    r"(?:폼\s*클렌(?:징|저)|클렌징\s*(?:폼|오일|워터|밤|젤|밀크|크림|티슈|패드)?|클렌저|세안제|세안\s*(?:폼|젤|용품))"
+    r"(?!\s*(?:후|다음|뒤|하고|하면|하는|할\s*때|한\s*뒤))")
 SUNSCREEN_NOTE = "선크림(자외선 차단제)은 아직 추천 데이터에 없어요."
+CLEANSER_NOTE = "폼클렌징 같은 클렌징 제품(세안제)은 아직 추천 데이터에 없어요."
+_UNSUPPORTED_CATEGORIES = ((_SUNSCREEN_REQUEST, SUNSCREEN_NOTE), (_CLEANSER_REQUEST, CLEANSER_NOTE))
+
+
+def _unsupported_category_note(message: str) -> str | None:
+    notes = [note for pattern, note in _UNSUPPORTED_CATEGORIES if pattern.search(message or "")]
+    return " ".join(notes) or None
 
 
 def _requested_categories(message: str) -> set[str]:
@@ -116,6 +127,8 @@ def _requested_categories(message: str) -> set[str]:
     m = message
     for w in _SKIN_COMPOUNDS:
         m = m.replace(w, "")
+    for pattern, _ in _UNSUPPORTED_CATEGORIES:
+        m = pattern.sub(" ", m)
     return {cat for cat, kws in _CATEGORY_SYNONYMS.items() if any(kw in m for kw in kws)}
 
 
@@ -775,10 +788,10 @@ def _build_no_product_response_base(
             "구체적인 제품명을 추천하지 않겠습니다. 구매 전 향료 표시와 전성분을 "
             "확인하고, 증상이 계속되면 피부과에서 상담해 주세요."
         )
-    if concerns and _SUNSCREEN_REQUEST.search(message or ""):  # 고민 없이 선크림만 물으면 아래 안내
-        # 선크림 카테고리가 그래프에 없어 자외선 차단 고민으로는 제품을 찾지 못한다. 자외선 차단 성분 목록 대신
-        # 데이터가 없다는 사실과 다른 질문 방법을 안내한다(2026-11-08 실제 웹 점검).
-        return (f"{SUNSCREEN_NOTE} 다른 피부 고민은 '건조한 피부에 맞는 크림 추천해줘'처럼 "
+    if concerns and (unsupported := _unsupported_category_note(message)):  # 고민 없이 물으면 아래 안내
+        # 선크림·클렌징처럼 추천하지 않는 종류를 찾다 제품이 없으면, 성분 목록 대신 없다는 사실과
+        # 다른 질문 방법을 안내한다(2026-11-08 실제 웹 점검).
+        return (f"{unsupported} 다른 피부 고민은 '건조한 피부에 맞는 크림 추천해줘'처럼 "
                 "제품 종류를 바꿔 물어봐 주세요.")
     if ingredients:
         names = ", ".join(_ingredient_display_name(item) for item in ingredients[:3])
@@ -791,8 +804,8 @@ def _build_no_product_response_base(
         # 찾을 기준이 없는 것이다. 다시 물어볼 수 있게 안내한다(2026-11-08 베타).
         categories = sorted(_requested_categories(message))
         lead = f"{'·'.join(categories)} 제품을 찾으시는군요. " if categories else ""
-        if _SUNSCREEN_REQUEST.search(message or ""):
-            lead = f"{SUNSCREEN_NOTE} "
+        if unsupported := _unsupported_category_note(message):
+            lead = f"{unsupported} "
         return (
             f"{lead}4EVR0는 피부 고민에 맞춰 근거가 있는 성분과 제품을 찾아 드려요. "
             "어떤 피부 고민이 있는지 함께 알려 주세요.\n"
@@ -2852,8 +2865,8 @@ async def _recommend(session_id: str, message: str, gen_prompt_name: str | None 
                     response_text = f"{skin_type_note}\n\n{response_text}"
                 if llm_unavailable:
                     response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
-                if _SUNSCREEN_REQUEST.search(message):
-                    response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
+                if unsupported := _unsupported_category_note(message):
+                    response_text = f"{unsupported} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
                 if notice := _medical_notice(message):
                     if notice == MEDICAL_NOTICE:
                         response_text = _strip_treatment_endorsement(response_text, candidate_ingredients)
@@ -3529,8 +3542,8 @@ async def _recommend_stream(session_id: str, message: str, gen_prompt_name: str 
                     response_text = f"{skin_type_note}\n\n{response_text}"
                 if llm_unavailable:
                     response_text = f"{LLM_UNAVAILABLE_NOTE}\n\n{response_text}"
-                if _SUNSCREEN_REQUEST.search(message):
-                    response_text = f"{SUNSCREEN_NOTE} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
+                if unsupported := _unsupported_category_note(message):
+                    response_text = f"{unsupported} 같은 고민에 맞는 다른 제품을 보여 드려요.\n\n{response_text}"
                 if notice := _medical_notice(message):
                     if notice == MEDICAL_NOTICE:
                         response_text = _strip_treatment_endorsement(response_text, candidate_ingredients)
