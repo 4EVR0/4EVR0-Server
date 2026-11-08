@@ -219,3 +219,31 @@ def test_generation_input_calls_plain_moisturizing_request_moisturizing():
         reset_request_labels(token)
     assert "속건조" not in content and "피부 속" not in content
     assert "보습 관련 34건" in content and "- 보습: 피부에 수분이 부족하면" in content
+
+
+def _wrinkle_ingredient():
+    return IngredientResult(name="RETINOL", kor_name="레티놀", claim="Anti-aging", eligibility_tier="pubmed_review",
+                            paper_ref="47", concerns=["WRINKLES", "LOSS_OF_ELASTICITY"],
+                            concern_evidence=[{"concern": "WRINKLES", "paper_count": 47, "effects": ["ANTI_AGING"]}])
+
+
+def test_off_topic_concern_analysis_is_replaced():
+    # 베타(2026-11-08): 탄력·주름 질문에 프롬프트 예시의 트러블 설명이 그대로 나옴
+    from app.services.recommend_service import _ground_concern_analysis
+    text = ("고민 분석\n피지와 각질이 모공을 막으면 트러블로 이어질 수 있어 피지 조절과 모공 관리 성분을 함께 골랐어요.\n\n"
+            "성분 설명\n- 레티놀 (RETINOL): 탄력과 주름 관리에 도움이 된다는 연구 결과가 47 건 있어요.")
+    fixed = _ground_concern_analysis(text, "탄력과 주름이 고민이에요. 근거가 있는 성분과 제품을 추천해줘.",
+                                     [_wrinkle_ingredient()])
+    analysis = fixed.split("성분 설명")[0]
+    assert "트러블" not in analysis and "피지" not in analysis and "주름" in analysis
+    assert "- 레티놀 (RETINOL): 탄력과 주름 관리에" in fixed  # 성분 설명은 그대로
+
+
+def test_on_topic_concern_analysis_is_kept():
+    from app.services.recommend_service import _ground_concern_analysis
+    acne = _evidence_ingredient("SALICYLIC ACID", "살리실릭애씨드", 53, 12, ["COMEDOLYTIC", "SEBUM_REGULATION"])
+    text = ("고민 분석\n피지와 각질이 모공을 막으면 트러블로 이어질 수 있어 피지 조절 성분을 골랐어요.\n\n"
+            "성분 설명\n- 살리실릭애씨드: …")
+    assert _ground_concern_analysis(text, "트러블과 과도한 피지가 고민이에요", [acne]) == text
+    wrinkle = ("고민 분석\n피부 탄력과 수분이 줄면 주름이 깊어져 탄력·주름 관리 성분을 골랐어요.\n\n성분 설명\n- 레티놀: …")
+    assert _ground_concern_analysis(wrinkle, "탄력과 주름이 고민이에요", [_wrinkle_ingredient()]) == wrinkle
