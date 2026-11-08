@@ -2220,6 +2220,126 @@ async def _product_choice_response(session_id: str, turn_id: str, message: str, 
                              response_text=text, model_used=settings.gpu_model, response_mode="product_choice")
 
 
+def _facts_to_ingredients(facts: list[dict]) -> tuple[list[IngredientResult], list[tuple[str, list]]]:
+    """제품 성분 근거 행 → (근거 있는 성분 목록, 효능별 묶음). 제품 설명·이름 비교가 함께 쓴다."""
+    groups = product_info.group_facts(facts)
+    by_inci: dict[str, product_info.IngredientEvidence] = {}
+    codes: dict[str, set[str]] = {}
+    for _, items in groups:
+        for it in items:
+            by_inci.setdefault(it.inci, it)
+            codes.setdefault(it.inci, set()).update(it.effects)
+    ingredients = [
+        IngredientResult(
+            name=inci, kor_name=it.name,
+            claim=product_info.effect_name_en(sorted(codes[inci])[0]) if codes[inci] else None,
+            supported_claims=[product_info.effect_name_en(c) for c in sorted(codes[inci])],
+            eligibility_tier="pubmed_review" if it.papers else "reference_book",
+            paper_ref=str(it.papers) if it.papers else None,
+        )
+        for inci, it in by_inci.items()
+    ]
+    return ingredients, groups
+
+
+_RESOLVE_SCORE = {"one": 2, "many": 1, "broad": 0, "none": 0}
+
+
+async def _resolve_comparison(message: str) -> list[tuple[str, str, list[dict]]] | None:
+    """비교 질문의 제품 이름들을 조회한다. [(이름 조각, 'one'|'many'|..., 후보)] 또는 비교 질문이 아니면 None.
+
+    나누는 방법이 여러 개면 모든 조각이 한 제품으로 찾아지는 쪽(조각이 많은 쪽 우선), 없으면 점수가 높은 쪽.
+    """
+    splits = product_info.comparison_splits(message)
+    best: list[tuple[str, str, list[dict]]] | None = None
+    best_key: tuple[int, int, int] | None = None
+    for parts in splits:
+        resolved = []
+        for part in parts:
+            tokens = product_info.mention_tokens(part)
+            kind, rows = await _resolve_product_mention(tokens) if tokens else ("none", [])
+            resolved.append((part, kind, rows))
+        all_one = all(kind == "one" for _, kind, _ in resolved)
+        key = (int(all_one), sum(_RESOLVE_SCORE[kind] for _, kind, _ in resolved), len(parts))
+        if best_key is None or key > best_key:
+            best, best_key = resolved, key
+    if not best or not any(kind in ("one", "many") for _, kind, _ in best):
+        return None  # 어느 조각도 제품이 아니면 이름 비교가 아니다(기존 흐름)
+    return best
+
+
+async def _product_comparison_by_name(session_id: str, turn_id: str, message: str,
+                                      active: dict | None = None) -> RecommendResponse | None:
+    """"A와 B의 차이가 뭐야?"처럼 이름으로 2~3개 제품을 비교한다. 생성 모델 없이 그래프 성분으로만 답한다."""
+    resolved = await _resolve_comparison(message)
+    if resolved is None:
+        return None
+    # 직전 추천이 있으면 "A랑 B 비교"는 보여준 제품을 가리킬 수 있다. 모든 이름이 한 제품으로 찾아질 때만
+    # 여기서 답하고, 아니면 기존 후속 비교(보여준 제품 중에서 고르기)에 맡긴다.
+    if (active or {}).get("visible_products") and not all(kind == "one" for _, kind, _ in resolved):
+        return None
+    text: str | None = None
+    mode = "product_comparison"
+    products: list[ProductResult] = []
+    ingredients: list[IngredientResult] = []
+    missing = [part for part, kind, _ in resolved if kind in ("none", "broad")]
+    ambiguous = [(part, rows) for part, kind, rows in resolved if kind == "many"]
+    if missing:
+        names = ", ".join(f"‘{part}’" for part in missing)
+        text = (f"{names} 제품을 찾지 못해 비교하지 못했어요. 브랜드와 제품명을 조금 다르게"
+                "(띄어쓰기·영문 표기 등) 적어 다시 물어봐 주세요.")
+        mode = "product_not_found"
+    elif ambiguous:
+        lines = ["비교할 제품 이름에 해당하는 제품이 여러 개예요. 정확한 제품명으로 다시 물어봐 주세요."]
+        for part, rows in ambiguous:
+            options = ", ".join(_product_display_name(r.get("brand"), r.get("product_name"))
+                                for r in rows[:product_info.MAX_CHOICES])
+            lines.append(f"- ‘{part}’: {options}")
+        text = "\n".join(lines)
+        mode = "product_choice"
+    else:
+        rows = [rows[0] for _, _, rows in resolved]
+        if len({str(r["product_id"]) for r in rows}) < len(rows):
+            text = "같은 제품을 두 번 말씀하신 것 같아요. 비교할 다른 제품 이름을 알려 주세요."
+            mode = "product_not_found"
+        else:
+            facts_list = [await query_product_ingredient_facts(r["product_id"]) for r in rows]
+            if any(facts is None for facts in facts_list):
+                text = "제품 성분 정보를 불러오지 못했어요. 잠시 후 다시 물어봐 주세요."
+                mode = "product_info_unavailable"
+            else:
+                per_product = [_facts_to_ingredients(facts) for facts in facts_list]
+                products = [_product_result(r, [i.name for i in found],
+                                            allergens_in({"name": f["inci_name"]} for f in facts))
+                            for r, (found, _), facts in zip(rows, per_product, facts_list)]
+                seen: set[str] = set()
+                for found, _ in per_product:
+                    for item in found:
+                        if item.name not in seen:
+                            seen.add(item.name)
+                            ingredients.append(item)
+                inventory = await query_product_ingredient_inventory([p.product_id for p in products])
+                built = _build_ingredient_comparison(products, inventory, ingredients)
+                if built is None:
+                    text = ("선택한 제품 중 성분 데이터가 확인되지 않는 제품이 있어 비교표를 만들 수 없어요. "
+                            "제품 상세 정보의 전성분을 함께 확인해 주세요.")
+                    mode = "product_info_unavailable"
+                else:
+                    table, _ = built
+                    names = [_product_display_name(p.brand, p.product_name) for p in products]
+                    groups = [g for _, g in per_product]
+                    text = "\n\n".join(part for part in (
+                        "말씀하신 제품을 그래프에서 확인된 성분 기준으로 비교했어요.",
+                        product_info.comparison_summary(names, groups),
+                        product_info.comparison_effect_lines(names, groups),
+                        table) if part)
+    metrics.recommend_requests_total.labels(status="ok").inc()
+    active = _active_recommendation(UserProfile(), message, products, turn_id, ingredients) if products else None
+    await _store_turn(session_id, message, products, text, active_state=active)
+    return RecommendResponse(session_id=session_id, turn_id=turn_id, ingredients=ingredients, products=products,
+                             response_text=text, model_used=settings.gpu_model, response_mode=mode)
+
+
 async def _product_info_by_rule(session_id: str, turn_id: str, message: str,
                                 active: dict | None) -> RecommendResponse | None:
     """규칙 경로: 되묻기 선택 또는 '제품 A 어때?'. 해당하지 않으면 None(기존 흐름)."""
@@ -2288,6 +2408,11 @@ async def _resolve_conversation_response(
     """
     history = await conversation_store.load_recent(session_id)
     active = await conversation_store.load_active(session_id)
+    # 이름으로 제품 비교: "A와 B의 차이가 뭐야?"는 직전 추천과 관계없이 먼저 본다(직전 추천이 없으면
+    # 후속 비교로 넘어가 "비교할 제품이 없습니다"가 됐다).
+    comparison = await _product_comparison_by_name(session_id, turn_id, message, active)
+    if comparison is not None:
+        return comparison
     # 특정 제품 설명(#124): 되묻기 선택·"제품 A 어때?"는 후속 판단보다 먼저 본다.
     product_response = await _product_info_by_rule(session_id, turn_id, message, active)
     if product_response is not None:
