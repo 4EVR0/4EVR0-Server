@@ -83,3 +83,20 @@ def test_treatment_endorsement_is_removed_but_cautions_kept():
 def test_text_without_endorsement_unchanged():
     text = "고민 분석\n트러블 관리 성분을 골랐어요.\n\n성분 설명\n- 살리실릭애씨드: …"
     assert service._strip_treatment_endorsement(text, []) == text
+
+
+def test_daeyong_counts_as_replacement():
+    assert service._medical_notice("스테로이드 연고 대용으로 쓸 크림") == service.MEDICAL_NOTICE
+    text = ("고민 분석\n스테로이드 연고 대용으로 피부 진정과 보습에 도움이 되는 크림을 추천해 드립니다.\n\n"
+            "성분 설명\n- 우레아: 보습과 관련된 연구가 41건 있어요.")
+    atopy = service.IngredientResult(name="UREA", kor_name="우레아", concerns=["ATOPIC_PRONE"])
+    out = service._strip_treatment_endorsement(text, [atopy])
+    assert "대용" not in out and "우레아: 보습과 관련된 연구가 41건" in out
+
+
+def test_no_product_path_gets_medical_notice():
+    text = service._build_no_product_response([], [], [], "스테로이드 연고 끊고 쓸 수 있는 크림 추천해줘")
+    assert text.startswith(service.MEDICAL_NOTICE)
+    assert "4EVR0는 피부 고민에 맞춰" in text
+    plain = service._build_no_product_response([], [], [], "추천해줘")
+    assert not plain.startswith(service.MEDICAL_NOTICE)
