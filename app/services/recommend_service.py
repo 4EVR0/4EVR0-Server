@@ -730,6 +730,11 @@ def _build_no_product_response_base(
             "구체적인 제품명을 추천하지 않겠습니다. 구매 전 향료 표시와 전성분을 "
             "확인하고, 증상이 계속되면 피부과에서 상담해 주세요."
         )
+    if concerns and _SUNSCREEN_REQUEST.search(message or ""):  # 고민 없이 선크림만 물으면 아래 안내
+        # 선크림 카테고리가 그래프에 없어 자외선 차단 고민으로는 제품을 찾지 못한다. 자외선 차단 성분 목록 대신
+        # 데이터가 없다는 사실과 다른 질문 방법을 안내한다(2026-11-08 실제 웹 점검).
+        return (f"{SUNSCREEN_NOTE} 다른 피부 고민은 '건조한 피부에 맞는 크림 추천해줘'처럼 "
+                "제품 종류를 바꿔 물어봐 주세요.")
     if ingredients:
         names = ", ".join(_ingredient_display_name(item) for item in ingredients[:3])
         return (
