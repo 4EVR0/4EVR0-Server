@@ -102,3 +102,11 @@ def test_web_ui_and_api_do_not_carry_limit_note():
     html = Path("app/static/index.html").read_text(encoding="utf-8")
     assert "ing.kr_limit_note" not in html
     assert 'kr_limit_note=row.get("kr_limit_note")' not in inspect.getsource(recommend_service)
+
+
+def test_web_effect_labels_are_korean_only():
+    # 베타(2026-11-08): 성분 카드가 "면포 용해 (Comedolytic)"처럼 영문을 함께 표시
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    assert "${ko} (${escHtml(claim)})" not in html
+    assert "'comedolytic': '모공 막힘 관리'" in html and "면포 용해" not in html
