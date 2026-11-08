@@ -22,6 +22,7 @@
       <button class="nav-item" id="saved-products"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="m12 20-8-8a5 5 0 0 1 8-6 5 5 0 0 1 8 6Z"/></svg>관심 제품<span class="nav-count" id="saved-count">0</span></button>
       <button class="nav-item" id="open-guide"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M12 5v15M12 5C8 2 3 3 3 3v15s5-1 9 2c4-3 9-2 9-2V3s-5-1-9 2Z"/></svg>4EVR0 사용 가이드</button>
       <button class="nav-item" id="open-privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v5c0 6-8 10-8 10S4 17 4 11V6Z"/><path d="m8 11 3 3 5-5"/></svg>개인정보 처리방침</button>
+      <button class="nav-item" id="open-report"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4m0 0h11l-1.5 4L15 12H4"/></svg>개발자에게 의견 보내기</button>
     </nav>
     <div class="skin-card"><div class="skin-card-head"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M19 4C7 2 3 8 6 14s13 5 13-10Z"/><path d="M4 21 16 8M9 15l-1-5m5 1 4 1"/></svg>나의 피부 프로필</div><p id="skin-summary">피부를 조금 더 알려주세요.<br>나에게 맞는 추천의 시작이에요.</p><button class="skin-edit" data-open-profile>피부 설정하기 <span>↗</span></button></div>
     <div class="sidebar-footer"><button id="my-data"><svg viewBox="0 0 24 24" aria-hidden="true" class=""><path d="M5 6h14M5 12h14M5 18h14M9 3v6m6 0v6M9 15v6"/></svg>내 데이터 관리</button><small>© 2026 4EVR0 · Made for your skin</small></div>
@@ -60,8 +61,10 @@
 <dialog class="dialog" id="saved-dialog" aria-labelledby="saved-title"><div class="dialog-header"><h2 id="saved-title">마음에 담아둔 제품</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>이 브라우저에 제품만 보관해요. 로그인은 필요 없어요.</p><div class="saved-list" id="saved-list"></div></dialog>
 <dialog class="dialog privacy-dialog" id="privacy-dialog" aria-labelledby="privacy-title"><div class="dialog-header"><h2 id="privacy-title">개인정보 처리방침</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><div id="privacy-policy-content"></div><button class="primary-action" data-close-dialog>닫기</button></dialog>
 <dialog class="dialog" id="guide-dialog" aria-labelledby="guide-title"><div class="dialog-header"><h2 id="guide-title">나에게 맞는 선택의 시작</h2><button class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>4EVR0와 이렇게 이야기해 보세요.</p><div class="guide-step"><span class="guide-number">01</span><div><h3>피부 고민을 편하게 알려주세요</h3><p>“속당김이 있고 볼이 자주 붉어져요.”<br>피부 타입과 원하는 제형을 함께 적으면 좋아요.</p></div></div><div class="guide-step"><span class="guide-number">02</span><div><h3>추천의 이유를 확인해 보세요</h3><p>제품의 성분 상세를 펼쳐 관련 성분과 주의사항을 확인해요. 성분 근거가 제품의 효과를 보장하지는 않아요.</p></div></div><div class="guide-step"><span class="guide-number">03</span><div><h3>비교하고, 이어서 물어보세요</h3><p>제품 2~3개를 선택해 성분을 비교하거나 “사용 순서를 알려줘”, “토너만 보여줘”라고 물어보세요.</p></div></div><button class="primary-action" data-close-dialog>상담 시작하기</button></dialog>
+<dialog class="dialog report-dialog" id="report-dialog" aria-labelledby="report-title"><form id="report-form"><div class="dialog-header"><h2 id="report-title">개발자에게 의견 보내기</h2><button type="button" class="dialog-close" data-close-dialog aria-label="닫기">×</button></div><p>답변이 이상했거나 불편했던 점, 있었으면 하는 기능을 알려 주세요. 보내신 내용은 오류 확인과 서비스 개선에만 쓰고 30일 뒤 삭제돼요.</p><div class="field-title">종류</div><div class="choice-group" id="report-kinds"><label><input type="radio" name="kind" value="bug" checked><span>오류 신고</span></label><label><input type="radio" name="kind" value="improvement"><span>개선 제안</span></label><label><input type="radio" name="kind" value="other"><span>기타</span></label></div><label class="field-title" for="report-message">내용</label><textarea id="report-message" name="message" maxlength="1000" rows="5" required placeholder="예: 두 제품을 비교해 달라고 했는데 제품을 찾지 못했어요."></textarea><div class="report-count"><span id="report-length">0</span>/1000</div><label class="report-attach" id="report-attach-wrap" hidden><input type="checkbox" id="report-attach" checked> 마지막 답변 번호도 함께 보내기<small>대화 내용은 보내지 않고, 개발자가 어떤 답변인지 찾을 수 있는 번호만 보내요.</small></label><p class="muted-note">이름·연락처 등 개인정보와 진단·치료 이력 등 민감정보는 적지 마세요.</p><p class="report-error" id="report-error" role="alert" hidden></p><button class="primary-action" id="report-send" type="submit">보내기</button></form></dialog>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
+  let lastTurnId = null;  // '개발자에게 의견 보내기'에 붙일 마지막 답변 번호
   const chat    = document.getElementById('chat');
   const msgEl   = document.getElementById('msg');
   const sendBtn = document.getElementById('send');
@@ -412,7 +415,7 @@
         ${productCardsHtml || ingredientCardsHtml}
       </div>`;
     row._products = products || [];
-    if (turnId) row.querySelector('.bubble.ai').appendChild(feedbackBar(turnId));
+    if (turnId) { row.querySelector('.bubble.ai').appendChild(feedbackBar(turnId)); lastTurnId = turnId; }
     if (replaceEl) replaceEl.replaceWith(row); else chat.appendChild(row);
     syncRecommendationUI(products || [], row);
     scrollBottom();
@@ -685,7 +688,7 @@
         if (!res.ok) throw new Error('delete failed');
         const data = await res.json();
         closeDataPanel(panel);
-        notify(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback}건을 삭제했어요.`);
+        notify(`저장된 대화 ${data.deleted.turn_records}건과 의견 ${data.deleted.feedback + (data.deleted.reports || 0)}건을 삭제했어요.`);
       } catch (e) { appendError('삭제하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
     });
   }
@@ -749,6 +752,46 @@
     openDialog('privacy-dialog');
   });
 
+
+  const reportForm = document.getElementById('report-form');
+  const reportMsg = document.getElementById('report-message');
+  const reportError = document.getElementById('report-error');
+  reportMsg.addEventListener('input', () => { document.getElementById('report-length').textContent = reportMsg.value.length; });
+  document.getElementById('open-report').addEventListener('click', () => {
+    reportError.hidden = true;
+    document.getElementById('report-attach-wrap').hidden = !lastTurnId;
+    openDialog('report-dialog');
+    reportMsg.focus();
+  });
+  reportForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const message = reportMsg.value.trim();
+    if (!message) { reportError.textContent = '내용을 적어 주세요.'; reportError.hidden = false; return; }
+    const sendButton = document.getElementById('report-send');
+    sendButton.disabled = true;
+    reportError.hidden = true;
+    try {
+      const attach = lastTurnId && document.getElementById('report-attach').checked;
+      const res = await fetch('/api/v1/developer-reports', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: new FormData(reportForm).get('kind'), message, turn_id: attach ? lastTurnId : null }),
+      });
+      if (!res.ok) {
+        let detail = '보내지 못했어요. 잠시 후 다시 시도해 주세요.';
+        try { const data = await res.json(); if (typeof data.detail === 'string') detail = data.detail; } catch (e) {}
+        throw new Error(detail);
+      }
+      reportForm.reset();
+      document.getElementById('report-length').textContent = '0';
+      document.getElementById('report-dialog').close();
+      notify('의견을 보냈어요. 알려 주셔서 고마워요!');
+    } catch (e) {
+      reportError.textContent = e.message;
+      reportError.hidden = false;
+    } finally {
+      sendButton.disabled = false;
+    }
+  });
 
   chat.addEventListener('click', e => {
     if (e.target.closest('[data-start-product]')) {

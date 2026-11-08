@@ -57,6 +57,20 @@ async def ensure_tables() -> None:
             PRIMARY KEY (turn_id, subject_id)
         )
     """)
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS developer_reports (
+            id              BIGSERIAL PRIMARY KEY,
+            subject_id      TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            message         TEXT NOT NULL,
+            turn_id         TEXT,
+            app_version     TEXT,
+            status          TEXT NOT NULL DEFAULT 'new',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    await pool.execute("CREATE INDEX IF NOT EXISTS developer_reports_created_idx ON developer_reports (created_at)")
+    await pool.execute("CREATE INDEX IF NOT EXISTS developer_reports_subject_idx ON developer_reports (subject_id)")
 
 
 async def current_consents(subject_id: str) -> dict[str, bool]:
@@ -103,12 +117,38 @@ async def upsert_feedback(*, turn_id: str, subject_id: str, helpful: bool, issue
 
 
 async def delete_subject_data(subject_id: str) -> dict[str, int]:
-    """저장된 대화 원문과 피드백을 지운다(동의 기록은 남긴다 — 언제 무엇에 동의·철회했는지 증빙)."""
+    """저장된 대화 원문·피드백·개발자 의견을 지운다(동의 기록은 남긴다 — 언제 무엇에 동의·철회했는지 증빙)."""
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         turns = await conn.execute("DELETE FROM turn_records WHERE subject_id = $1", subject_id)
         feedback = await conn.execute("DELETE FROM feedback WHERE subject_id = $1", subject_id)
-    return {"turn_records": int(turns.split()[-1]), "feedback": int(feedback.split()[-1])}
+        reports = await conn.execute("DELETE FROM developer_reports WHERE subject_id = $1", subject_id)
+    return {"turn_records": int(turns.split()[-1]), "feedback": int(feedback.split()[-1]),
+            "reports": int(reports.split()[-1])}
+
+
+async def count_recent_reports(subject_id: str, minutes: int) -> int:
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        "SELECT COUNT(*) FROM developer_reports WHERE subject_id = $1 "
+        "AND created_at > NOW() - ($2::integer * INTERVAL '1 minute')", subject_id, minutes) or 0)
+
+
+async def insert_developer_report(*, subject_id: str, kind: str, message: str, turn_id: str | None,
+                                  app_version: str | None) -> int:
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        "INSERT INTO developer_reports (subject_id, kind, message, turn_id, app_version) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id", subject_id, kind, message, turn_id, app_version))
+
+
+async def list_developer_reports(limit: int = 50, status: str | None = None) -> list[dict]:
+    """개발자 확인용 최근 의견(scripts/list_developer_reports.py)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT id, kind, message, turn_id, app_version, status, created_at FROM developer_reports "
+        "WHERE ($2::text IS NULL OR status = $2) ORDER BY created_at DESC LIMIT $1", limit, status)
+    return [dict(row) for row in rows]
 
 
 async def withdraw_training_use(subject_id: str) -> None:
@@ -130,5 +170,7 @@ async def purge_expired() -> dict[str, int]:
     sessions = await pool.execute(
         "DELETE FROM sessions WHERE created_at < NOW() - ($1::integer * INTERVAL '1 second')",
         settings.conversation_ttl_seconds)
+    reports = await pool.execute(
+        "DELETE FROM developer_reports WHERE created_at < NOW() - ($1::integer * INTERVAL '1 day')", RETENTION_DAYS)
     return {"turn_records": int(turns.split()[-1]), "notes": int(notes.split()[-1]), "feedback": int(feedback.split()[-1]),
-            "sessions": int(sessions.split()[-1])}
+            "sessions": int(sessions.split()[-1]), "reports": int(reports.split()[-1])}

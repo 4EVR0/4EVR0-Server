@@ -30,3 +30,13 @@ FEEDBACK_ISSUES = {
     "other": "기타",
 }
 NOTE_MAX_CHARS = 500
+
+# 개발자에게 보내는 오류·개선 의견(사이드바). 의견 메모와 같은 보관·삭제 기준을 따른다.
+REPORT_KINDS = {
+    "bug": "오류 신고",
+    "improvement": "개선 제안",
+    "other": "기타",
+}
+REPORT_MAX_CHARS = 1000
+REPORT_RATE_WINDOW_MINUTES = 10
+REPORT_RATE_LIMIT = 5
